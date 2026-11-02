@@ -19,6 +19,7 @@ dependencies = [
     "langgraph>=1.2.19",
     "pypdf>=6.21.4",
     "python-multipart>=0.0.33",
+    "nats-py>=2.16.0",
 ]
 
 [dependency-groups]
