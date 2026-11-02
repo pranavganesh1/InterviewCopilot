@@ -69,10 +69,11 @@ async def _upsert_user(db: AsyncSession, userinfo: dict) -> User:
 
 @router.get("/google/url")
 async def google_auth_url(request: Request):
-    resp = await request.app.state.oauth.google.authorize_redirect(
+    # 302 straight to Google consent. Browsers and the future frontend both
+    # just follow it (state is stored in the session cookie by authlib).
+    return await request.app.state.oauth.google.authorize_redirect(
         request, get_settings().google_redirect_uri
     )
-    return {"url": resp.headers["location"]}
 
 
 @router.get("/google/callback")

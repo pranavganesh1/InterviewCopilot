@@ -7,13 +7,13 @@ from app.main import create_app
 
 
 @pytest.mark.asyncio
-async def test_google_url_returns_accounts_google():
+async def test_google_url_redirects_to_google():
     app = create_app()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/auth/google/url")
-    assert resp.status_code == 200
-    assert "accounts.google.com" in resp.json()["url"]
+    assert resp.status_code in (302, 307)
+    assert "accounts.google.com" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
