@@ -7,7 +7,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # backend/app/core/config.py -> parents[3] is the repo root (shared .env with docker-compose)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
-_INSECURE_DEFAULTS = {"", "dev-secret-change-me", "dev-session-secret-change-me"}
+_INSECURE_DEFAULTS = {
+    "",
+    "dev-secret-change-me",
+    "dev-session-secret-change-me",
+    "change-me-to-a-long-random-string",
+}
 
 
 class Settings(BaseSettings):

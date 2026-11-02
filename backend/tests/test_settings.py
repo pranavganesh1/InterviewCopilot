@@ -41,4 +41,4 @@ def test_local_allows_dev_defaults():
     from app.core.config import Settings
 
     s = Settings(app_env="local")
-    assert s.jwt_secret == "dev-secret-change-me"
+    assert s.jwt_secret  # local constructs with whatever .env provides
