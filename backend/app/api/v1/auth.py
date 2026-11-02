@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,12 +16,6 @@ from app.db.sqlalchemy import get_db
 from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-SIGNED_IN_PAGE = """<!doctype html><html><head><style>
-body { font-family: sans-serif; display: grid; place-items: center; height: 100vh; }
-</style></head><body>
-<div><h2>Signed in to InterviewCopilot</h2><p>You can close this tab.</p></div>
-</body></html>"""
 
 
 def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
@@ -83,7 +77,8 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     if not userinfo:
         raise HTTPException(status_code=401, detail="Google sign-in failed")
     user = await _upsert_user(db, userinfo)
-    response = HTMLResponse(SIGNED_IN_PAGE)
+    # Cookies ride on the redirect; the SPA then bootstraps via /auth/me.
+    response = RedirectResponse(url=get_settings().frontend_url, status_code=303)
     _set_auth_cookies(
         response, create_access_token(str(user.id)), create_refresh_token(str(user.id))
     )
