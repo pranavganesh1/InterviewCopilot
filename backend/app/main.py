@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.v1.auth import router as auth_router
@@ -56,6 +57,13 @@ def register_routes(app: FastAPI) -> None:
 def register_middleware(app: FastAPI) -> None:
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(SessionMiddleware, secret_key=get_settings().jwt_secret)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[get_settings().frontend_url],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 app = create_app()
