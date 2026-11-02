@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     # Postgres
     database_url: str = "postgresql+asyncpg://interview:interview@localhost:5432/interviewcopilot"
 
-    # MongoDB
-    mongo_url: str = "mongodb://localhost:27017"
+    # MongoDB (host port 27018 — see infra/docker-compose.yml)
+    mongo_url: str = "mongodb://localhost:27018"
     mongo_db: str = "interviewcopilot"
 
     # Auth (backend-issued JWT cookie pair)
@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # LLM gateway (LiteLLM proxy)
     litellm_url: str = "http://localhost:4000"
     litellm_master_key: str = "sk-local-master"
+    llm_client_timeout: int = 90
+
+    # S3-compatible object storage (SeaweedFS)
+    s3_endpoint_url: str = "http://localhost:9000"
+    s3_access_key: str = "local"
+    s3_secret_key: str = "local"
 
 
 @lru_cache

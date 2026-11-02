@@ -38,3 +38,11 @@ Prerequisites: Python 3.13+, uv, Node 20+ (later milestones), Docker Desktop run
    Model: `openai/gpt-oss-120b` via Groq (the old `llama-3.3-70b-versatile` was retired by Groq).
 2. `curl -s -X POST http://localhost:8000/api/v1/dev/llm-check -H "Content-Type: application/json" -d '{"prompt":"Say hi in 5 words"}'`
    → returns the model's reply; the call is logged in Mongo `llm_call_logs`.
+
+### Onboarding & vault (M3)
+
+With the API running and signed in via the browser flow above (you have an `ic_access` cookie):
+
+- Chat with the Onboarding Agent: `curl -s -X POST http://localhost:8000/api/v1/onboarding/chat -H "Content-Type: application/json" --cookie "ic_access=<token>" -d '{"message":"I built a line-following robot"}'`
+- See the vault: `curl -s http://localhost:8000/api/v1/vault/items --cookie "ic_access=<token>"`
+- Upload a resume: `curl -s -X POST http://localhost:8000/api/v1/vault/resume --cookie "ic_access=<token>" -F "file=@resume.pdf"`
