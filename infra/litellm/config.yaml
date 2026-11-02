@@ -1,21 +1,22 @@
 model_list:
   - model_name: interview-chat
     litellm_params:
-      model: groq/llama-3.3-70b-versatile
+      model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
-  - model_name: interview-chat
-    litellm_params:
-      model: gemini/gemini-2.0-flash
-      api_key: os.environ/GEMINI_API_KEY
+  # Re-enable these once GEMINI_API_KEY is set in .env (optional fallback):
+  # - model_name: interview-chat
+  #   litellm_params:
+  #     model: gemini/gemini-2.0-flash
+  #     api_key: os.environ/GEMINI_API_KEY
   - model_name: structured-json
     litellm_params:
-      model: groq/llama-3.3-70b-versatile
+      model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
       response_format: {"type": "json_object"}
-  - model_name: structured-json
-    litellm_params:
-      model: gemini/gemini-2.0-flash
-      api_key: os.environ/GEMINI_API_KEY
+  # - model_name: structured-json
+  #   litellm_params:
+  #     model: gemini/gemini-2.0-flash
+  #     api_key: os.environ/GEMINI_API_KEY
 
 litellm_settings:
   num_retries: 2

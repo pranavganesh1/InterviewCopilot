@@ -19,8 +19,10 @@ services:
 
   mongo:
     image: mongo:7
+    # Host port 27018: a native MongoDB service may already occupy 127.0.0.1:27017
+    # on Windows dev machines, which would silently capture localhost connections.
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
