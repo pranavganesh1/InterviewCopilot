@@ -17,7 +17,7 @@ class CreateTrack(BaseModel):
     track_type: Literal["topic", "role", "company_jd"]
     subject: str = Field(max_length=255)
     company: str | None = Field(default=None, max_length=255)
-    jd_text: str | None = None
+    jd_text: str | None = Field(default=None, max_length=20000)
 
 
 @router.post("", status_code=201)

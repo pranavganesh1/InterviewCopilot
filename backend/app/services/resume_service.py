@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from io import BytesIO
 
@@ -40,9 +41,12 @@ async def process_resume(
     request_id: str | None = None,
 ) -> dict:
     key = f"{user.id}/{uuid.uuid4()}-{filename}"
-    s3.put_object(Bucket=RESUME_BUCKET, Key=key, Body=data, ContentType="application/pdf")
+    # boto3 and pypdf are synchronous — keep them off the event loop (audit #6).
+    await asyncio.to_thread(
+        s3.put_object, Bucket=RESUME_BUCKET, Key=key, Body=data, ContentType="application/pdf"
+    )
 
-    text = extract_pdf_text(data)[:MAX_RESUME_CHARS]
+    text = (await asyncio.to_thread(extract_pdf_text, data))[:MAX_RESUME_CHARS]
     async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
         extraction = await structured_completion(
             client,

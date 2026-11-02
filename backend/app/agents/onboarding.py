@@ -9,6 +9,15 @@ from app.gateway.structured import structured_completion
 
 ITEM_CATEGORIES = Literal["project", "internship", "skill", "achievement", "education", "other"]
 
+ITEM_CATEGORIES_SET = {
+    "project",
+    "internship",
+    "skill",
+    "achievement",
+    "education",
+    "other",
+}
+
 SYSTEM_PROMPT = """You are the InterviewCopilot onboarding interviewer. Your job is to
 truly understand the student behind the resume.
 

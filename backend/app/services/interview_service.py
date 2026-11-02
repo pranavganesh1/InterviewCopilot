@@ -2,7 +2,7 @@ import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.interviewer import TurnDecision, build_interviewer_graph
@@ -150,12 +150,20 @@ async def _turns(db: AsyncSession, session_id) -> list[SessionTurn]:
 
 
 async def _count_turns(db: AsyncSession, session_id) -> int:
-    return len(await _turns(db, session_id))
+    result = await db.execute(
+        select(func.count()).select_from(SessionTurn).where(SessionTurn.session_id == session_id)
+    )
+    return int(result.scalar_one())
 
 
 async def _latest_turn(db: AsyncSession, session_id) -> SessionTurn | None:
-    turns = await _turns(db, session_id)
-    return turns[-1] if turns else None
+    result = await db.execute(
+        select(SessionTurn)
+        .where(SessionTurn.session_id == session_id)
+        .order_by(SessionTurn.turn_index.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _complete(db: AsyncSession, session: InterviewSession) -> None:
