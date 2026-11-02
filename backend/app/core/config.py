@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     mongo_url: str = "mongodb://localhost:27018"
     mongo_db: str = "interviewcopilot"
 
+    # NATS
+    nats_url: str = "nats://localhost:4222"
+
     # Auth (backend-issued JWT cookie pair)
     jwt_secret: str = "dev-secret-change-me"
     jwt_algorithm: str = "HS256"

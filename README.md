@@ -58,3 +58,11 @@ With the API running and signed in via the browser flow above (you have an `ic_a
 - Start a Strict interview on a track: `curl -s -X POST http://localhost:8000/api/v1/tracks/{track_id}/sessions --cookie "ic_access=<token>" -H "Content-Type: application/json" -d '{"mode":"strict"}'` → returns the first question.
 - Answer: `curl -s -X POST http://localhost:8000/api/v1/sessions/{session_id}/turns --cookie "ic_access=<token>" -H "Content-Type: application/json" -d '{"answer":"..."}'` → returns the evaluation and the next question, or `completed: true`.
 - Transcript / resume after restart: `GET /api/v1/sessions/{session_id}` (state lives in Postgres rows).
+
+### Feedback & progression (M6)
+
+1. Start the feedback worker in a second terminal: `cd backend && uv run python -m app.workers.feedback_worker`
+2. Complete an interview — the worker generates the report asynchronously.
+3. Read it: `curl -s http://localhost:8000/api/v1/sessions/{session_id}/report --cookie "ic_access=<token>"`
+4. Track progression (Guided unlocks after 3 struggling strict attempts): `curl -s http://localhost:8000/api/v1/tracks/{track_id}/progression --cookie "ic_access=<token>"`
+5. Backlog healing (process sessions with missing reports, no NATS needed): `uv run python -m app.workers.feedback_worker --catch-up`
