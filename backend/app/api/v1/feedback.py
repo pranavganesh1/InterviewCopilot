@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +13,7 @@ router = APIRouter(tags=["feedback"])
 
 @router.get("/sessions/{session_id}/report")
 async def get_report(
-    session_id,
+    session_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -26,7 +28,7 @@ async def get_report(
 
 @router.get("/tracks/{track_id}/progression")
 async def get_progression(
-    track_id,
+    track_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

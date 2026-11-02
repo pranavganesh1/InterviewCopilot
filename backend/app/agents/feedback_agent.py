@@ -80,7 +80,7 @@ async def run_feedback_agent(*, payload: dict) -> FeedbackReportContent:
         return await structured_completion(
             client,
             system=ASSESS_PROMPT,
-            user_payload={**payload, "extracted_evidence": evidence.items},
+            user_payload={**payload, "extracted_evidence": evidence.model_dump()["items"]},
             schema=FeedbackReportContent,
         )
 

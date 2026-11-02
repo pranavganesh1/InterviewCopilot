@@ -93,6 +93,8 @@ Four graphs; **the Member LLD documents are the source of truth for node-level d
 3. **Interviewer Agent** — per-session state machine: question plan from Brief + per-track question history → ask → evaluate answer → bounded adaptive follow-ups → next question. Strict mode (no aids). Guided mode (hint ladder: nudge → clue → explanation) gated by progression policy.
 4. **Feedback Agent** — NATS-triggered job: per-Q&A evidence extraction → competency assessment (only assessed topics scored) → feedback report → progression decision (3 strict attempts rule gates Guided unlock).
 
+> **Implementation deviation (M6, 2026-11-02):** the MVP report implements the core of the Member-4 LLD schema (per-question evidence with excerpts, competency assessments, strengths, improvement areas, unassessed topics, recommendations) and trims infrastructure-dependent meta-fields (`profile_version_id`, `source_integrity`, `assistance_summary`). Per LLD invariant 11, the progression transition is owned by policy code, not the agent.
+
 Shared rules: LangGraph Postgres checkpointer for crash recovery; structured outputs validated against JSON schemas with bounded repair retries; agents mutate state only via the Agent Tool Layer and reach LLMs only via the gateway.
 
 > **Implementation deviation (M5, 2026-11-02):** crash recovery is DB-native instead of a LangGraph checkpointer. Interview state *is* the `interview_sessions`/`session_turns` rows — `GET /sessions/{id}` rebuilds everything from them, so a checkpointer would duplicate persistence without adding guarantees.

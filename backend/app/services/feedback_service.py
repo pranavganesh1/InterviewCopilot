@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +21,7 @@ async def process_session_feedback(db: AsyncSession, session_id) -> dict:
 
     Idempotent: one report per session (reprocessing replaces it).
     """
-    session = await db.get(InterviewSession, session_id)
+    session = await db.get(InterviewSession, uuid.UUID(str(session_id)))
     if session is None:
         raise LookupError("session_not_found")
     if session.status != "completed":
