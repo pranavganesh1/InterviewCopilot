@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.dev import router as dev_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIdMiddleware
@@ -39,6 +40,7 @@ def register_routes(app: FastAPI) -> None:
         return {"status": "ok"}
 
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(dev_router, prefix="/api/v1")
 
 
 def register_middleware(app: FastAPI) -> None:
