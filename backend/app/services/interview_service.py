@@ -40,7 +40,7 @@ async def start_session(db: AsyncSession, user: User, track_id, mode: str = "str
     return {"session": _session_dict(session), "turn": _turn_dict(turn)}
 
 
-async def submit_answer(db: AsyncSession, user: User, session_id, answer: str) -> dict:
+async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, nc=None) -> dict:
     session = await _owned_session(db, user, session_id)
     last_turn = await _latest_turn(db, session.id)
     if last_turn is None or last_turn.answer is not None:
@@ -62,7 +62,7 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str) -
     turns_so_far = await _count_turns(db, session.id)
     if decision.decision == "complete" or turns_so_far >= get_settings().interview_max_turns:
         await _complete(db, session)
-        _dispatch_feedback(session)
+        _dispatch_feedback(session, nc=nc)
         return {"completed": True, "evaluation": decision.evaluation.model_dump()}
 
     turn = await _append_turn(db, session, decision)
@@ -164,11 +164,11 @@ async def _complete(db: AsyncSession, session: InterviewSession) -> None:
     await db.commit()
 
 
-def _dispatch_feedback(session: InterviewSession) -> None:
+def _dispatch_feedback(session: InterviewSession, nc=None) -> None:
     """Fire the feedback job without blocking the HTTP response."""
     with suppress(RuntimeError):
         asyncio.get_running_loop().create_task(
-            publish_feedback_job(session.id, session.track_id, session.user_id)
+            publish_feedback_job(session.id, session.track_id, session.user_id, nc=nc)
         )  # no running loop (rare sync contexts); catch-up scan heals
 
 
