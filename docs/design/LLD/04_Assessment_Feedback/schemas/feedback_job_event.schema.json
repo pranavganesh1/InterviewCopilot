@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://interviewcopilot.dev/schemas/feedback_job_event.schema.json",
+  "title": "Feedback Job Event",
+  "type": "object",
+  "required": ["event_id", "event_type", "event_version", "job_id", "correlation_id", "occurred_at", "payload"],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique event identifier"
+    },
+    "event_type": {
+      "type": "string",
+      "const": "session.feedback.requested",
+      "description": "Event type discriminator"
+    },
+    "event_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Event schema version"
+    },
+    "job_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Backend-generated feedback job ID"
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Cross-service trace correlation ID"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Event timestamp in UTC"
+    },
+    "payload": {
+      "type": "object",
+      "required": ["session_id", "track_id"],
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Session being evaluated"
+        },
+        "track_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Track scope"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

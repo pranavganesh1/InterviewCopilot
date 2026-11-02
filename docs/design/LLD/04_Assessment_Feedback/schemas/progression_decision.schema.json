@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://interviewcopilot.dev/schemas/progression_decision.schema.json",
+  "title": "Progression Decision",
+  "type": "object",
+  "required": ["track_id", "status", "completed_strict_count", "policy_version", "rubric_version", "evidence_summary", "reason_code", "explanation"],
+  "properties": {
+    "track_id": { "type": "string", "format": "uuid" },
+    "status": { "type": "string", "enum": ["LOCKED", "PENDING_EVIDENCE", "LOCKED_SUFFICIENT", "UNLOCKED"] },
+    "completed_strict_count": { "type": "integer", "minimum": 0 },
+    "last_evaluated_at": { "type": "string", "format": "date-time" },
+    "policy_version": { "type": "string" },
+    "rubric_version": { "type": "string" },
+    "evidence_summary": {
+      "type": "object",
+      "required": ["competency_coverage", "evidence_sufficiency", "independent_evidence_ratio", "consistency_score"],
+      "properties": {
+        "competency_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence_sufficiency": { "type": "number", "minimum": 0, "maximum": 1 },
+        "independent_evidence_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "consistency_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source_session_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } }
+      },
+      "additionalProperties": false
+    },
+    "reason_code": { "type": "string", "enum": ["INSUFFICIENT_ATTEMPTS", "INSUFFICIENT_EVIDENCE", "SUFFICIENT_PERFORMANCE", "CONSISTENT_INSUFFICIENCY", "ALREADY_UNLOCKED"] },
+    "explanation": { "type": "string" },
+    "unlocked_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "additionalProperties": false
+}

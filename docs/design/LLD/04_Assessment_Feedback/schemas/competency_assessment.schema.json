@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://interviewcopilot.dev/schemas/competency_assessment.schema.json",
+  "title": "Competency Assessment",
+  "type": "object",
+  "required": ["competency_id", "competency_name", "assessment_status", "observation", "evidence_ids", "independent_evidence_count", "assisted_evidence_count", "confidence", "coverage"],
+  "properties": {
+    "competency_id": { "type": "string", "format": "uuid" },
+    "competency_name": { "type": "string" },
+    "assessment_status": { "type": "string", "enum": ["ASSESSED", "PARTIALLY_ASSESSED", "NOT_ASSESSED", "INSUFFICIENT_EVIDENCE"] },
+    "observation": { "type": "string" },
+    "evidence_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+    "independent_evidence_count": { "type": "integer", "minimum": 0 },
+    "assisted_evidence_count": { "type": "integer", "minimum": 0 },
+    "confidence": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+    "coverage": {
+      "type": "object",
+      "required": ["planned", "questions_asked", "questions_answered"],
+      "properties": {
+        "planned": { "type": "boolean" },
+        "questions_asked": { "type": "integer", "minimum": 0 },
+        "questions_answered": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

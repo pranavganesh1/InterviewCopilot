@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://interviewcopilot.dev/schemas/feedback_report.schema.json",
+  "title": "Feedback Report",
+  "type": "object",
+  "required": ["report_id", "report_version", "user_id", "track_id", "session_id", "session_mode", "profile_version_id", "interview_brief_version_id", "generated_at", "summary", "question_assessments", "competency_assessments", "strengths", "improvement_areas", "unassessed_topics", "assistance_summary", "recommendations", "limitations", "source_integrity"],
+  "properties": {
+    "report_id": { "type": "string", "format": "uuid" },
+    "report_version": { "type": "integer", "minimum": 1 },
+    "user_id": { "type": "string", "format": "uuid" },
+    "track_id": { "type": "string", "format": "uuid" },
+    "session_id": { "type": "string", "format": "uuid" },
+    "session_mode": { "type": "string", "enum": ["STRICT", "GUIDED"] },
+    "profile_version_id": { "type": "string", "format": "uuid" },
+    "interview_brief_version_id": { "type": "string", "format": "uuid" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "summary": {
+      "type": "object",
+      "required": ["overview", "coverage_status", "confidence"],
+      "properties": {
+        "overview": { "type": "string" },
+        "coverage_status": { "type": "string", "enum": ["COMPLETE", "PARTIAL", "MINIMAL"] },
+        "confidence": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] }
+      },
+      "additionalProperties": false
+    },
+    "question_assessments": { "type": "array", "items": { "$ref": "#/$defs/questionAssessment" } },
+    "competency_assessments": { "type": "array", "items": { "$ref": "#/$defs/competencyAssessment" } },
+    "strengths": { "type": "array", "items": { "$ref": "#/$defs/strength" } },
+    "improvement_areas": { "type": "array", "items": { "$ref": "#/$defs/improvementArea" } },
+    "unassessed_topics": { "type": "array", "items": { "$ref": "#/$defs/unassessedTopic" } },
+    "assistance_summary": {
+      "type": "object",
+      "required": ["assistance_used", "events"],
+      "properties": {
+        "assistance_used": { "type": "boolean" },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/assistanceEvent" } }
+      },
+      "additionalProperties": false
+    },
+    "recommendations": { "type": "array", "items": { "$ref": "#/$defs/recommendation" } },
+    "limitations": { "type": "array", "items": { "type": "string" } },
+    "source_integrity": {
+      "type": "object",
+      "required": ["transcript_complete", "source_turn_count"],
+      "properties": {
+        "transcript_complete": { "type": "boolean" },
+        "source_turn_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "questionAssessment": {
+      "type": "object",
+      "required": ["question_assessment_id", "question_turn_id", "answer_turn_ids", "competency_id", "assessment_status", "observation", "demonstrated_points", "gaps_observed", "evidence_ids", "assistance_status", "confidence"],
+      "properties": {
+        "question_assessment_id": { "type": "string", "format": "uuid" },
+        "question_turn_id": { "type": "string", "format": "uuid" },
+        "answer_turn_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "competency_id": { "type": "string", "format": "uuid" },
+        "assessment_status": { "type": "string", "enum": ["ASSESSED", "PARTIALLY_ASSESSED", "NOT_ASSESSED", "INSUFFICIENT_EVIDENCE"] },
+        "observation": { "type": "string" },
+        "demonstrated_points": { "type": "array", "items": { "type": "string" } },
+        "gaps_observed": { "type": "array", "items": { "type": "string" } },
+        "evidence_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "assistance_status": { "type": "string", "enum": ["INDEPENDENT", "ASSISTED", "CLARIFIED", "UNKNOWN"] },
+        "confidence": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "recommendation_refs": { "type": "array", "items": { "type": "string", "format": "uuid" } }
+      },
+      "additionalProperties": false
+    },
+    "competencyAssessment": {
+      "type": "object",
+      "required": ["competency_id", "competency_name", "assessment_status", "observation", "evidence_ids", "independent_evidence_count", "assisted_evidence_count", "confidence", "coverage"],
+      "properties": {
+        "competency_id": { "type": "string", "format": "uuid" },
+        "competency_name": { "type": "string" },
+        "assessment_status": { "type": "string", "enum": ["ASSESSED", "PARTIALLY_ASSESSED", "NOT_ASSESSED", "INSUFFICIENT_EVIDENCE"] },
+        "observation": { "type": "string" },
+        "evidence_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "independent_evidence_count": { "type": "integer", "minimum": 0 },
+        "assisted_evidence_count": { "type": "integer", "minimum": 0 },
+        "confidence": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "coverage": {
+          "type": "object",
+          "required": ["planned", "questions_asked", "questions_answered"],
+          "properties": {
+            "planned": { "type": "boolean" },
+            "questions_asked": { "type": "integer", "minimum": 0 },
+            "questions_answered": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "strength": {
+      "type": "object",
+      "required": ["topic", "evidence_ids", "description"],
+      "properties": {
+        "topic": { "type": "string" },
+        "evidence_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "improvementArea": {
+      "type": "object",
+      "required": ["topic", "evidence_ids", "description", "priority"],
+      "properties": {
+        "topic": { "type": "string" },
+        "evidence_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "description": { "type": "string" },
+        "priority": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] }
+      },
+      "additionalProperties": false
+    },
+    "unassessedTopic": {
+      "type": "object",
+      "required": ["competency_id", "topic", "reason"],
+      "properties": {
+        "competency_id": { "type": "string", "format": "uuid" },
+        "topic": { "type": "string" },
+        "reason": { "type": "string", "enum": ["NOT_COVERED", "NO_ANSWER", "NO_EVIDENCE", "INCOMPLETE_SESSION"] }
+      },
+      "additionalProperties": false
+    },
+    "assistanceEvent": {
+      "type": "object",
+      "required": ["assistance_event_id", "session_id", "mode", "requesting_turn_id", "assistance_turn_id", "assistance_type", "assistance_level", "topic", "related_question_turn_id", "created_at"],
+      "properties": {
+        "assistance_event_id": { "type": "string", "format": "uuid" },
+        "session_id": { "type": "string", "format": "uuid" },
+        "mode": { "type": "string", "const": "GUIDED" },
+        "requesting_turn_id": { "type": "string", "format": "uuid" },
+        "assistance_turn_id": { "type": "string", "format": "uuid" },
+        "assistance_type": { "type": "string", "enum": ["GENTLE_HINT", "SPECIFIC_CLUE", "GUIDED_REASONING", "FULL_EXPLANATION", "EXAMPLE"] },
+        "assistance_level": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "topic": { "type": "string" },
+        "related_question_turn_id": { "type": "string", "format": "uuid" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "recommendation": {
+      "type": "object",
+      "required": ["recommendation_id", "competency_id", "topic", "priority", "reason", "suggested_action", "supporting_evidence_ids", "suggested_practice_type"],
+      "properties": {
+        "recommendation_id": { "type": "string", "format": "uuid" },
+        "competency_id": { "type": "string", "format": "uuid" },
+        "topic": { "type": "string" },
+        "priority": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "reason": { "type": "string" },
+        "suggested_action": { "type": "string" },
+        "supporting_evidence_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "suggested_practice_type": { "type": "string", "enum": ["CONCEPT_REVIEW", "MOCK_QUESTION", "CONCEPT_REVIEW_AND_MOCK_QUESTION", "GUIDED_PRACTICE", "DEEP_DIVE"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

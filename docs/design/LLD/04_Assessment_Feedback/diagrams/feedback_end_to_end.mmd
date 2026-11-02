@@ -1,0 +1,35 @@
+sequenceDiagram
+    actor Candidate
+    participant API as FastAPI / Session Service
+    participant PG as PostgreSQL
+    participant NATS as NATS JetStream
+    participant W as Feedback Worker
+    participant M as MongoDB
+    participant G as Feedback LangGraph
+    participant GW as LLM Gateway
+    participant P as Progression Policy
+    participant UI as Frontend
+
+    Candidate->>API: Finish interview
+    API->>PG: ACTIVE -> COMPLETING; reject new turns
+    API->>M: Verify complete transcript is durable
+    API->>PG: Create feedback job (idempotent)
+    API->>NATS: Publish session.feedback.requested
+    API-->>UI: FEEDBACK_PENDING
+
+    NATS->>W: Deliver job
+    W->>PG: Validate job and session
+    W->>M: Load exact transcript and artifacts
+    W->>PG: Load session metadata and version references
+    W->>G: Invoke Feedback graph
+    G->>GW: Evidence extraction / assessment / report calls
+    GW-->>G: Structured model responses
+    G-->>W: Validated feedback result
+
+    W->>M: Persist detailed report and evidence
+    W->>PG: Persist structured assessment summary
+    W->>M: Apply track memory and question-history updates
+    W->>P: Evaluate Strict/Guided policy
+    P->>PG: Persist eligibility decision and audit
+    W->>PG: Mark session COMPLETED
+    W-->>UI: Report ready notification/status

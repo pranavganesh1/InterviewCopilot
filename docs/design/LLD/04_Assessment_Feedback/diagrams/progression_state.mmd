@@ -1,0 +1,11 @@
+stateDiagram-v2
+    [*] --> LOCKED
+    LOCKED --> LOCKED: Strict completed count < 3
+    LOCKED --> PENDING_EVIDENCE: 3 Strict sessions; evidence insufficient
+    LOCKED --> LOCKED_SUFFICIENT: 3 Strict sessions; sufficient evidence / performance not insufficient
+    LOCKED --> UNLOCKED: 3 Strict sessions; consistently insufficient evidence
+    PENDING_EVIDENCE --> PENDING_EVIDENCE: more evidence still insufficient
+    PENDING_EVIDENCE --> LOCKED_SUFFICIENT: sufficient evidence; unlock condition not met
+    PENDING_EVIDENCE --> UNLOCKED: sufficient evidence; unlock condition met
+    LOCKED_SUFFICIENT --> LOCKED_SUFFICIENT: later evidence does not change policy outcome
+    UNLOCKED --> UNLOCKED: permanent for this track

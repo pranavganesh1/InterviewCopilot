@@ -1,0 +1,40 @@
+flowchart TD
+    subgraph PG[PostgreSQL]
+        JOB[feedback_jobs]
+        SUM[session_assessment_summaries]
+        ELIG[track_guided_eligibility]
+        AUDIT[progression_decision_events]
+        SESS[sessions]
+    end
+
+    subgraph MGO[MongoDB]
+        RPT[session_feedback_reports]
+        MEM[track_memories]
+        HIST[track_question_history]
+        TURNS[conversation_turns]
+    end
+
+    subgraph RECON[Reconciliation Checks]
+        C1{Job SUCCEEDED\nbut RPT missing?}
+        C2{RPT exists\nbut SUM missing?}
+        C3{SUM exists\nbut ELIG missing?}
+        C4{ELIG decided\nbut SESS not COMPLETED?}
+        C5{SESS COMPLETED\nbut RPT ref missing?}
+        C6{MEM missing\nsession update?}
+    end
+
+    JOB -.->|status=SUCCEEDED| C1
+    RPT -.-> C2
+    SUM -.-> C3
+    ELIG -.-> C4
+    SESS -.->|status=COMPLETED| C5
+    MEM -.-> C6
+
+    C1 -->|Repair: regenerate| RPT
+    C2 -->|Repair: write summary| SUM
+    C3 -->|Repair: evaluate policy| ELIG
+    C4 -->|Repair: finalize session| SESS
+    C5 -->|Alert: data loss| MANUAL[Manual Investigation]
+    C6 -->|Repair: merge memory| MEM
+
+    style MANUAL fill:#ffcccc,stroke:#f00

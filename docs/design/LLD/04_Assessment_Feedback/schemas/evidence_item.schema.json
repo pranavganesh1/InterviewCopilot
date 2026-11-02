@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://interviewcopilot.dev/schemas/evidence_item.schema.json",
+  "title": "Evidence Item",
+  "type": "object",
+  "required": ["evidence_id", "session_id", "question_turn_id", "answer_turn_ids", "competency_id", "topic", "evidence_type", "observation", "evidence_excerpt", "assistance_status", "evidence_sufficiency", "confidence"],
+  "properties": {
+    "evidence_id": { "type": "string", "format": "uuid" },
+    "session_id": { "type": "string", "format": "uuid" },
+    "question_turn_id": { "type": "string", "format": "uuid" },
+    "answer_turn_ids": { "type": "array", "items": { "type": "string", "format": "uuid" }, "minItems": 1 },
+    "competency_id": { "type": "string", "format": "uuid" },
+    "topic": { "type": "string" },
+    "evidence_type": { "type": "string", "enum": ["CANDIDATE_EXPLANATION", "CODE_SNIPPET", "DIAGRAM_DESCRIPTION", "TRADE_OFF_ANALYSIS", "PROBLEM_SOLVING_STEPS", "DEBUGGING_APPROACH", "ARCHITECTURE_DECISION"] },
+    "observation": { "type": "string" },
+    "evidence_excerpt": { "type": "string", "maxLength": 500 },
+    "assistance_status": { "type": "string", "enum": ["INDEPENDENT", "ASSISTED", "CLARIFIED", "UNKNOWN"] },
+    "evidence_sufficiency": { "type": "string", "enum": ["SUFFICIENT", "INSUFFICIENT"] },
+    "confidence": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] }
+  },
+  "additionalProperties": false
+}

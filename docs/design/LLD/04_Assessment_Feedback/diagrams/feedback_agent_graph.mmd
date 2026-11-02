@@ -1,0 +1,19 @@
+flowchart TD
+    START([START]) --> JOB[Validate job and session context]
+    JOB --> TRANSCRIPT[Load exact ordered transcript]
+    TRANSCRIPT --> SNAPSHOT[Load candidate snapshot and brief version]
+    SNAPSHOT --> SEGMENT[Segment questions and candidate answers]
+    SEGMENT --> ASSIST[Identify Strict / Guided assistance metadata]
+    ASSIST --> MAP[Map questions to competencies]
+    MAP --> EVIDENCE[Extract turn-linked evidence]
+    EVIDENCE --> QASSESS[Assess question-level observations]
+    QASSESS --> AGG[Aggregate competency observations]
+    AGG --> COVERAGE[Evaluate coverage and sufficiency]
+    COVERAGE --> CONFIDENCE[Determine confidence and limitations]
+    CONFIDENCE --> RECOMMEND[Generate strengths and improvement actions]
+    RECOMMEND --> REPORT[Compose feedback report]
+    REPORT --> VALIDATE{Schema and references valid?}
+    VALIDATE -->|No| REPAIR[Bounded repair / validation retry]
+    REPAIR --> VALIDATE
+    VALIDATE -->|Yes| OUTPUT[Return structured report to worker]
+    OUTPUT --> END([END])
