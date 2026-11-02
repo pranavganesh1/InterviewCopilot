@@ -99,6 +99,11 @@ export interface Turn {
   question_area: string;
   question: string;
   answer: string | null;
+  evaluation?: {
+    coverage: "none" | "partial" | "good" | "excellent";
+    strengths: string[];
+    gaps: string[];
+  } | null;
 }
 
 export interface TurnResult {

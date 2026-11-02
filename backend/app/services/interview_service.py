@@ -52,6 +52,13 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str) -
     track_brief = await get_track_with_brief(db, user, session.track_id)
     decision = await _decide(db, session, track_brief["brief"]["content"], last_answer=answer)
 
+    # Persist the evaluation on the answered turn so feedback survives refreshes.
+    last_turn.evaluation_coverage = decision.evaluation.coverage
+    last_turn.evaluation_strengths = decision.evaluation.strengths
+    last_turn.evaluation_gaps = decision.evaluation.gaps
+    last_turn.interviewer_notes = decision.notes_for_report
+    await db.commit()
+
     turns_so_far = await _count_turns(db, session.id)
     if decision.decision == "complete" or turns_so_far >= get_settings().interview_max_turns:
         await _complete(db, session)
@@ -185,4 +192,10 @@ def _turn_dict(t: SessionTurn) -> dict:
 def _turn_dict_full(t: SessionTurn) -> dict:
     d = _turn_dict(t)
     d["answer"] = t.answer
+    if t.evaluation_coverage is not None:
+        d["evaluation"] = {
+            "coverage": t.evaluation_coverage,
+            "strengths": t.evaluation_strengths or [],
+            "gaps": t.evaluation_gaps or [],
+        }
     return d
