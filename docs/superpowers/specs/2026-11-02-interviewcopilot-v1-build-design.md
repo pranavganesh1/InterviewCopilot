@@ -95,6 +95,8 @@ Four graphs; **the Member LLD documents are the source of truth for node-level d
 
 Shared rules: LangGraph Postgres checkpointer for crash recovery; structured outputs validated against JSON schemas with bounded repair retries; agents mutate state only via the Agent Tool Layer and reach LLMs only via the gateway.
 
+> **Implementation deviation (M5, 2026-11-02):** crash recovery is DB-native instead of a LangGraph checkpointer. Interview state *is* the `interview_sessions`/`session_turns` rows — `GET /sessions/{id}` rebuilds everything from them, so a checkpointer would duplicate persistence without adding guarantees.
+
 ## 9. Data ownership
 
 - **PostgreSQL (authoritative):** users, vault_items, tracks, interview_briefs (versioned), interview_sessions, session_turns, evidence_items, competency_assessments, feedback_reports, progression_state, question_asked_history — plus LangGraph checkpointer tables (infrastructure, created by the library).
