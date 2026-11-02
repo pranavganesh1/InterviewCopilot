@@ -7,9 +7,13 @@ from app.models.user import User
 
 
 @pytest.mark.asyncio
-async def test_user_roundtrip():
+async def test_user_roundtrip(clean_users_table):
     async with SessionFactory() as session:
-        user = User(google_sub=f"sub-{uuid.uuid4()}", email="t@example.com", name="T")
+        user = User(
+            google_sub=f"sub-{uuid.uuid4()}",
+            email=f"t-{uuid.uuid4()}@example.com",
+            name="T",
+        )
         session.add(user)
         await session.commit()
         await session.refresh(user)
