@@ -1,12 +1,12 @@
 # InterviewCopilot — Member 4 Low-Level Design
 ## Assessment, Feedback & Progression
 
-**Document type:** Low-Level Design (LLD)  
-**Module owner:** Member 4  
-**Architecture baseline:** InterviewCopilot HLD v0.2, dated 31 October 2026  
-**Orchestration framework:** LangGraph  
-**Backend:** FastAPI modular monolith with background workers  
-**Primary workflow:** Asynchronous feedback processing after a text interview  
+**Document type:** Low-Level Design (LLD)
+**Module owner:** Member 4
+**Architecture baseline:** InterviewCopilot HLD v0.2, dated 31 October 2026
+**Orchestration framework:** LangGraph
+**Backend:** FastAPI modular monolith with background workers
+**Primary workflow:** Asynchronous feedback processing after a text interview
 **Status:** Detailed design proposal for team review
 
 ---

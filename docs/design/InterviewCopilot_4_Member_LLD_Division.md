@@ -60,7 +60,7 @@ against the following decisions.
   Primary application database        PostgreSQL
 
   Conversation, memory and detailed   MongoDB
-  report storage                      
+  report storage
 
   Asynchronous jobs and events        NATS JetStream
 
@@ -117,35 +117,35 @@ against the following decisions.
 
   -----------------------------------------------------------------------
   Member            Primary ownership Logical agent     Main output
-                                      ownership         
+                                      ownership
   ----------------- ----------------- ----------------- -----------------
   Member 1          Platform, data,   Onboarding Agent  Foundation LLD
                     shared LangGraph                    and shared
                     integration,                        technical
                     authentication,                     standards
-                    profile,                            
-                    documents and                       
-                    infrastructure                      
+                    profile,
+                    documents and
+                    infrastructure
 
   Member 2          Track lifecycle,  Track Creator     Track Management
                     preparation,      Agent             and Track Creator
                     research and                        LLD
-                    Interview Brief                     
+                    Interview Brief
 
   Member 3          Session           Interviewer Agent Interview Engine
                     lifecycle,                          LLD
-                    interview turns,                    
-                    Strict/Guided                       
-                    runtime and                         
-                    adaptive                            
-                    interviewing                        
+                    interview turns,
+                    Strict/Guided
+                    runtime and
+                    adaptive
+                    interviewing
 
   Member 4          Transcript        Feedback Agent    Assessment and
                     assessment,                         Feedback LLD
-                    feedback reports,                   
-                    memory updates                      
-                    and progression                     
-                    policy                              
+                    feedback reports,
+                    memory updates
+                    and progression
+                    policy
   -----------------------------------------------------------------------
 
 ### Ownership boundary
@@ -1371,29 +1371,29 @@ LLD/
                           module boundaries       dependencies
 
   2                       Member 1 publishes      Common contracts draft
-                          shared conventions; all 
-                          members identify        
-                          interfaces              
+                          shared conventions; all
+                          members identify
+                          interfaces
 
   3--4                    Individual component,   Module design drafts
-                          database and API design 
+                          database and API design
 
   5--6                    LangGraph nodes, state, Agent graph designs
-                          edges, tools and        
-                          workflows               
+                          edges, tools and
+                          workflows
 
   7                       Sequence diagrams,      End-to-end module flows
-                          lifecycle and failure   
-                          handling                
+                          lifecycle and failure
+                          handling
 
   8                       Security, observability Operational design
-                          and testing design      
+                          and testing design
 
   9                       Cross-member            Resolved interface
                           integration review      conflicts
 
   10                      Consolidation and HLD   Final integrated LLD
-                          traceability review     
+                          traceability review
   -----------------------------------------------------------------------
 
 If the team has more time, use it to validate schemas and workflows with

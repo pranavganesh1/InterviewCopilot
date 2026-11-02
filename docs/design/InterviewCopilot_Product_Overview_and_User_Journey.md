@@ -2,12 +2,12 @@
 
 ## Product Overview, User Journey, Feature Definition, and Student Improvement Cycle
 
-**Document type:** Product vision and experience definition  
-**Version:** 0.1 — Working product specification  
-**Status:** Product direction consolidated; detailed agent architecture and implementation design intentionally deferred  
-**Product name:** InterviewCopilot  
-**Product category:** AI-powered interview preparation, simulation, assessment, and coaching platform  
-**Primary audience:** University students and fresh graduates across academic disciplines  
+**Document type:** Product vision and experience definition
+**Version:** 0.1 — Working product specification
+**Status:** Product direction consolidated; detailed agent architecture and implementation design intentionally deferred
+**Product name:** InterviewCopilot
+**Product category:** AI-powered interview preparation, simulation, assessment, and coaching platform
+**Primary audience:** University students and fresh graduates across academic disciplines
 **Product philosophy:** Understand the candidate, conduct a realistic interview, identify genuine gaps, and help the candidate improve.
 
 > **Working tagline:** Know your story. Face your interview. Close your gaps.
@@ -918,9 +918,9 @@ A useful report item should show:
 
 Example:
 
-**Competency:** Binary search and complexity analysis  
-**Observation:** The student identified that the search space is reduced by half but could not explain the invariant or derive the logarithmic time complexity.  
-**Recommendation:** Review the binary-search invariant and practice explaining why each iteration reduces the remaining search space.  
+**Competency:** Binary search and complexity analysis
+**Observation:** The student identified that the search space is reduced by half but could not explain the invariant or derive the logarithmic time complexity.
+**Recommendation:** Review the binary-search invariant and practice explaining why each iteration reduces the remaining search space.
 **Evidence:** Strict Interview 02, Question 4, candidate response excerpt.
 
 ## 12.4 Not Assessed must remain distinct from weak
@@ -1096,9 +1096,9 @@ This example demonstrates how one student can use several tracks while maintaini
 
 ## 15.1 Student background
 
-**Student:** Aarav (fictional example)  
-**Academic background:** Third-year Computer Science student  
-**Career goals:** Backend engineering and software engineering internships  
+**Student:** Aarav (fictional example)
+**Academic background:** Third-year Computer Science student
+**Career goals:** Backend engineering and software engineering internships
 **Profile inputs:** Resume, academic details, two projects, one internship, skills, and a detailed onboarding conversation.
 
 ### Candidate Context Vault summary
@@ -1114,9 +1114,9 @@ The profile records which details are candidate-reported, document-derived, or c
 
 ## 15.2 Track A — Data Structures & Algorithms
 
-**Track name:** `Data Structures & Algorithms`  
-**Track type:** Topic-based  
-**Scope:** Arrays, strings, binary search, trees, graphs, complexity analysis  
+**Track name:** `Data Structures & Algorithms`
+**Track type:** Topic-based
+**Scope:** Arrays, strings, binary search, trees, graphs, complexity analysis
 **Initial mode:** Strict Interview
 
 | Session | Mode | Example outcome |
@@ -1136,9 +1136,9 @@ He can then voluntarily start DSA Strict Interview 04 when he wants another inde
 
 ## 15.3 Track B — Database Fundamentals
 
-**Track name:** `Database Fundamentals`  
-**Track type:** Topic-based  
-**Scope:** SQL, joins, normalization, indexing, transactions  
+**Track name:** `Database Fundamentals`
+**Track type:** Topic-based
+**Scope:** SQL, joins, normalization, indexing, transactions
 **Initial mode:** Strict Interview
 
 Aarav has only completed two Strict sessions. Guided Interview remains locked because the three-session initial sequence has not yet been completed.
@@ -1147,8 +1147,8 @@ This track has its own interview plan, evidence, and unlock state. The DSA resul
 
 ## 15.4 Track C — Backend Engineer Intern
 
-**Track name:** `Backend Engineer Intern`  
-**Track type:** Role-based  
+**Track name:** `Backend Engineer Intern`
+**Track type:** Role-based
 **Objective:** General backend engineering preparation without a specific company.
 
 The interview covers relevant areas such as:
@@ -1165,10 +1165,10 @@ The role track can reuse Aarav's internship details from the Candidate Context V
 
 ## 15.5 Track D — Company-specific preparation
 
-**Track name:** `Northstar Technologies — Backend Engineer Intern — JD v1`  
-**Track type:** Company/JD-based  
-**Company:** Northstar Technologies (fictional)  
-**Role:** Backend Engineer Intern  
+**Track name:** `Northstar Technologies — Backend Engineer Intern — JD v1`
+**Track type:** Company/JD-based
+**Company:** Northstar Technologies (fictional)
+**Role:** Backend Engineer Intern
 **Input:** A supplied job description.
 
 The preparation process:
@@ -1676,25 +1676,25 @@ The detailed agent design, agent responsibilities, prompt specifications, tool p
 
 The following official product pages were reviewed for the selected market-context snapshot on **30 October 2026**. They are references for product research, not endorsements.
 
-1. **Mentari — Terms of Service:** https://mentari.in/terms  
+1. **Mentari — Terms of Service:** https://mentari.in/terms
    Describes the product's resume, role/company, optional JD, public research, voice/text interviews, quote-linked scorecards, resume review, and learning-plan workflow.
 
-2. **Huru — Official Product Website:** https://huru.ai/  
+2. **Huru — Official Product Website:** https://huru.ai/
    Describes conversational mock interviews, JD/role-based practice, answer feedback, and progress features.
 
-3. **Huru — Press and Facts:** https://huru.ai/press/  
+3. **Huru — Press and Facts:** https://huru.ai/press/
    Official product facts and pricing/availability statements. Recheck before relying on pricing.
 
-4. **Aced — Mock Interview Practice:** https://www.aced.io/practice  
+4. **Aced — Mock Interview Practice:** https://www.aced.io/practice
    Describes peer and AI practice across technical and professional interview categories.
 
-5. **Aced — System Design Mock Interviews:** https://www.aced.io/practice/system-design-mock-interviews  
+5. **Aced — System Design Mock Interviews:** https://www.aced.io/practice/system-design-mock-interviews
    Describes peer practice, AI practice, and supported interview categories.
 
-6. **Yoodli — Roleplays:** https://yoodli.ai/platform/roleplays  
+6. **Yoodli — Roleplays:** https://yoodli.ai/platform/roleplays
    Describes AI roleplays, tutors, rubrics, and coaching workflows.
 
-7. **Yoodli — Overview:** https://support.yoodli.ai/en/articles/9550461-yoodli-overview  
+7. **Yoodli — Overview:** https://support.yoodli.ai/en/articles/9550461-yoodli-overview
    Describes the platform's roleplay, tutor, and coaching capabilities.
 
 ---

@@ -9,9 +9,7 @@ def configure_logging(log_level: str = "INFO", json_logs: bool = True) -> None:
     json_logs=False gives a pretty console renderer for local dev.
     """
     logging.basicConfig(level=log_level, format="%(message)s")
-    renderer = (
-        structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer()
-    )
+    renderer = structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer()
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

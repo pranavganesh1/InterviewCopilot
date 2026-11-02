@@ -1,14 +1,14 @@
 # InterviewCopilot — Member 1 Low-Level Design
 ## Platform, Data Foundation, LangGraph Standards & Onboarding Agent
 
-**Document type:** Low-Level Design (LLD)  
-**Module owner:** Member 1  
-**Architecture baseline:** InterviewCopilot HLD v0.2, dated 31 October 2026  
-**Agent orchestration:** LangGraph  
-**Backend:** FastAPI modular monolith  
-**Data stores:** PostgreSQL, MongoDB and S3-compatible object storage  
-**Messaging:** NATS JetStream  
-**LLM gateway:** InterviewCopilot-owned gateway backed by LiteLLM Proxy  
+**Document type:** Low-Level Design (LLD)
+**Module owner:** Member 1
+**Architecture baseline:** InterviewCopilot HLD v0.2, dated 31 October 2026
+**Agent orchestration:** LangGraph
+**Backend:** FastAPI modular monolith
+**Data stores:** PostgreSQL, MongoDB and S3-compatible object storage
+**Messaging:** NATS JetStream
+**LLM gateway:** InterviewCopilot-owned gateway backed by LiteLLM Proxy
 **Status:** Detailed design proposal for team review
 
 ---
