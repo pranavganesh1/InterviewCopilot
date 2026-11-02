@@ -21,8 +21,17 @@ def get_s3_client() -> BaseClient:
 
 
 def ensure_bucket(s3: BaseClient, bucket: str) -> None:
-    """Create the bucket if missing; safe to call on every request."""
+    """Create the bucket if missing; safe to call on every request.
+
+    Note: SeaweedFS's ListBuckets is unreliable in 4.50, so availability is
+    checked with head_bucket, and a raced create is treated as success.
+    """
     try:
         s3.head_bucket(Bucket=bucket)
     except ClientError:
-        s3.create_bucket(Bucket=bucket)
+        try:
+            s3.create_bucket(Bucket=bucket)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code not in ("BucketAlreadyExists", "BucketAlreadyOwnedByYou"):
+                raise
