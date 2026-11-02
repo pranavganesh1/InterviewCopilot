@@ -87,6 +87,12 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
     turns = await _turns(db, session.id)
     last_question = turns[-1].question if turns else None
     current_area = turns[-1].question_area if turns else None
+    asked_areas = {t.question_area for t in turns}
+    remaining_areas = [
+        qa["topic"]
+        for qa in brief_content.get("question_areas", [])
+        if qa["topic"] not in asked_areas
+    ]
     payload = {
         "brief": brief_content,
         "transcript": [
@@ -95,6 +101,7 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         "last_question": last_question,
         "last_answer": last_answer,
         "turns_in_current_area": sum(1 for t in turns if t.question_area == current_area),
+        "remaining_areas": remaining_areas,
         "questions_asked": len(turns),
     }
     result = await _graph().ainvoke({"payload": payload})

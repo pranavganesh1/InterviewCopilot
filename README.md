@@ -52,3 +52,9 @@ With the API running and signed in via the browser flow above (you have an `ic_a
 - Create a topic track: `curl -s -X POST http://localhost:8000/api/v1/tracks -H "Content-Type: application/json" --cookie "ic_access=<token>" -d '{"track_type":"topic","subject":"Data Structures & Algorithms"}'` — the Track Creator Agent authors Brief v1.
 - Role track with company+JD: `{"track_type":"company_jd","subject":"SDE Intern","company":"Acme","jd_text":"..."}`
 - List tracks / open one: `GET /api/v1/tracks`, `GET /api/v1/tracks/{id}`, `GET /api/v1/tracks/{id}/brief`.
+
+### Interviews (M5)
+
+- Start a Strict interview on a track: `curl -s -X POST http://localhost:8000/api/v1/tracks/{track_id}/sessions --cookie "ic_access=<token>" -H "Content-Type: application/json" -d '{"mode":"strict"}'` → returns the first question.
+- Answer: `curl -s -X POST http://localhost:8000/api/v1/sessions/{session_id}/turns --cookie "ic_access=<token>" -H "Content-Type: application/json" -d '{"answer":"..."}'` → returns the evaluation and the next question, or `completed: true`.
+- Transcript / resume after restart: `GET /api/v1/sessions/{session_id}` (state lives in Postgres rows).
