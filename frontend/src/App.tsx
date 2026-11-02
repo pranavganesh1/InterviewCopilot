@@ -1,4 +1,4 @@
-import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { Link, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 import DashboardPage from "./pages/DashboardPage";
 import OnboardingPage from "./pages/OnboardingPage";
@@ -78,6 +78,17 @@ export default function App() {
           <Route
             path="/tracks/:trackId/report/:sessionId"
             element={<ReportPage />}
+          />
+          <Route
+            path="*"
+            element={
+              <div className="py-20 text-center">
+                <p className="text-lg font-medium">Page not found</p>
+                <Link to="/" className="text-sm text-indigo-600 hover:underline">
+                  ← Back to your tracks
+                </Link>
+              </div>
+            }
           />
         </Routes>
       </main>

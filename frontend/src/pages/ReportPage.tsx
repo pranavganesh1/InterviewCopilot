@@ -1,29 +1,27 @@
+import { useRef } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api, type Report } from "../lib/api";
-
-const LEVEL_STYLE: Record<string, string> = {
-  strong: "bg-emerald-100 text-emerald-700",
-  solid: "bg-emerald-100 text-emerald-700",
-  developing: "bg-amber-100 text-amber-700",
-  weak: "bg-red-100 text-red-700",
-};
-
-const COVERAGE_STYLE: Record<string, string> = {
-  excellent: "bg-emerald-100 text-emerald-700",
-  good: "bg-emerald-100 text-emerald-700",
-  partial: "bg-amber-100 text-amber-700",
-  none: "bg-red-100 text-red-700",
-};
+import { ApiError, api, type Report } from "../lib/api";
+import { COVERAGE_STYLE, LEVEL_STYLE } from "../lib/ui";
 
 export default function ReportPage() {
   const { trackId, sessionId } = useParams();
+  const pollsRef = useRef(0);
 
   const report = useQuery({
     queryKey: ["report", sessionId],
     queryFn: () => api<Report>(`/sessions/${sessionId}/report`),
-    refetchInterval: (q) => (q.state.error ? 5000 : false),
-    retry: 2,
+    // Poll only while the report is legitimately pending (404) — audit #11 —
+    // capped at 24 polls (2 min) so a server error never spins forever.
+    refetchInterval: (q) => {
+      const err = q.state.error;
+      if (err instanceof ApiError && err.status === 404 && pollsRef.current < 24) {
+        pollsRef.current += 1;
+        return 5000;
+      }
+      return false;
+    },
+    retry: false,
   });
 
   if (report.isLoading) return <p className="text-stone-500">Loading report…</p>;

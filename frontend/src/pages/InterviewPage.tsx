@@ -2,13 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, type SessionInfo, type Turn, type TurnResult } from "../lib/api";
-
-const COVERAGE_STYLE: Record<string, string> = {
-  excellent: "bg-emerald-100 text-emerald-700",
-  good: "bg-emerald-100 text-emerald-700",
-  partial: "bg-amber-100 text-amber-700",
-  none: "bg-red-100 text-red-700",
-};
+import { COVERAGE_STYLE } from "../lib/ui";
 
 export default function InterviewPage() {
   const { trackId, sessionId } = useParams();
