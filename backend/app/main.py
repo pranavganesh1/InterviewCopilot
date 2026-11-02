@@ -56,7 +56,7 @@ def register_routes(app: FastAPI) -> None:
 
 def register_middleware(app: FastAPI) -> None:
     app.add_middleware(RequestIdMiddleware)
-    app.add_middleware(SessionMiddleware, secret_key=get_settings().jwt_secret)
+    app.add_middleware(SessionMiddleware, secret_key=get_settings().session_secret)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[get_settings().frontend_url],
