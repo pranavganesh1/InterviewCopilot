@@ -46,3 +46,9 @@ With the API running and signed in via the browser flow above (you have an `ic_a
 - Chat with the Onboarding Agent: `curl -s -X POST http://localhost:8000/api/v1/onboarding/chat -H "Content-Type: application/json" --cookie "ic_access=<token>" -d '{"message":"I built a line-following robot"}'`
 - See the vault: `curl -s http://localhost:8000/api/v1/vault/items --cookie "ic_access=<token>"`
 - Upload a resume: `curl -s -X POST http://localhost:8000/api/v1/vault/resume --cookie "ic_access=<token>" -F "file=@resume.pdf"`
+
+### Tracks & Interview Brief (M4)
+
+- Create a topic track: `curl -s -X POST http://localhost:8000/api/v1/tracks -H "Content-Type: application/json" --cookie "ic_access=<token>" -d '{"track_type":"topic","subject":"Data Structures & Algorithms"}'` — the Track Creator Agent authors Brief v1.
+- Role track with company+JD: `{"track_type":"company_jd","subject":"SDE Intern","company":"Acme","jd_text":"..."}`
+- List tracks / open one: `GET /api/v1/tracks`, `GET /api/v1/tracks/{id}`, `GET /api/v1/tracks/{id}/brief`.
