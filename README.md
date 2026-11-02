@@ -6,7 +6,7 @@ and `docs/superpowers/specs/` for the current build spec.
 
 ## Quickstart (local, free stack)
 
-Prerequisites: Python 3.13+, uv, Node 20+ (later milestones), Docker Desktop running.
+Prerequisites: Python 3.13+, uv, Node 20+, Docker Desktop running.
 
 1. `cp .env.example .env` (repo root) and fill in your keys
 2. `cd infra && docker compose --env-file ../.env up -d` — starts Postgres, MongoDB (host port **27018**), SeaweedFS (S3), NATS, LiteLLM.
@@ -14,6 +14,19 @@ Prerequisites: Python 3.13+, uv, Node 20+ (later milestones), Docker Desktop run
 3. `cd backend && uv sync`
 4. `uv run pytest` — backend tests
 5. `uv run uvicorn app.main:app --reload` — API at http://localhost:8000 (docs at /docs)
+6. Feedback worker (second terminal): `uv run python -m app.workers.feedback_worker`
+
+### Web app (M7)
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173 (proxies /api to :8000)
+npm run build      # production build
+npm run e2e        # Playwright smoke tests (mocked API)
+```
+
+Open http://localhost:5173 → sign in with Google → onboard → create a track → interview → report.
 
 ## Layout
 
