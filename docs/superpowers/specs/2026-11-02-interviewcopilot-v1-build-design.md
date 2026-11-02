@@ -57,7 +57,7 @@ InterviewCopilot/
 |---|---|---|
 | postgres | `postgres:16` | Authoritative application state |
 | mongo | `mongo:7` | Conversations, track memory, question history, LLM call logs |
-| minio | `minio/minio` | S3-compatible storage: resume uploads (future audio) |
+| seaweedfs | `chrislusf/seaweedfs` | S3-compatible storage: resume uploads (future audio). *(Deviation from the original MinIO choice: MinIO removed its images from Docker Hub in 2025 and quay.io blocked anonymous pulls in this environment; SeaweedFS exposes the same S3 API contract on host port 9000.)* |
 | nats | `nats:2` + JetStream | Async feedback jobs and events |
 | litellm | `ghcr.io/berriai/litellm` | LLM gateway proxy (Groq primary, Gemini fallback) |
 

@@ -1,0 +1,77 @@
+name: interviewcopilot
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-interview}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-interview}
+      POSTGRES_DB: ${POSTGRES_DB:-interviewcopilot}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-interview}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep -q 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-master.volumeSizeLimitMB=1024", "-volume.max=0", "-ip=seaweedfs"]
+    ports:
+      - "9000:8333"
+      - "9333:9333"
+    volumes:
+      - seaweedfs_data:/data
+    healthcheck:
+      # weed binds to the container IP (advertised as -ip=seaweedfs), not 127.0.0.1,
+      # so probe via the service hostname that compose DNS provides in-container.
+      test: ["CMD-SHELL", "wget -q -O- http://seaweedfs:9333/cluster/status || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2
+    command: ["-js", "-m", "8222"]
+    # nats:2 is a scratch-based image with no shell — no in-container healthcheck
+    # possible. Health is verified via the monitor endpoint on host port 8222.
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-master}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 10 bash -c ':> /dev/tcp/127.0.0.1/4000' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_data:
+  mongo_data:
+  seaweedfs_data:

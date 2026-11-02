@@ -1,14 +1,14 @@
 # InterviewCopilot — Member 2 Low-Level Design
 ## Track Management & Track Creator Agent
 
-**Document type:** Low-Level Design (LLD)  
-**Module owner:** Member 2  
-**Architecture baseline:** InterviewCopilot HLD v0.2, dated 31 October 2026  
-**Orchestration framework:** LangGraph  
-**Backend:** FastAPI modular monolith  
-**Data stores:** PostgreSQL, MongoDB and S3-compatible object storage  
-**Asynchronous processing:** NATS JetStream  
-**LLM access:** InterviewCopilot LLM Gateway backed by LiteLLM Proxy  
+**Document type:** Low-Level Design (LLD)
+**Module owner:** Member 2
+**Architecture baseline:** InterviewCopilot HLD v0.2, dated 31 October 2026
+**Orchestration framework:** LangGraph
+**Backend:** FastAPI modular monolith
+**Data stores:** PostgreSQL, MongoDB and S3-compatible object storage
+**Asynchronous processing:** NATS JetStream
+**LLM access:** InterviewCopilot LLM Gateway backed by LiteLLM Proxy
 **Status:** Detailed design proposal for team review
 
 ---

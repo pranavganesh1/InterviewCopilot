@@ -1,10 +1,10 @@
 # Assessment, Feedback & Progression — Member 4 LLD
 
-**Module owner:** Member 4  
-**Architecture baseline:** InterviewCopilot HLD v0.2 (2026-10-31)  
-**Orchestration:** LangGraph  
-**Backend:** FastAPI modular monolith  
-**Primary workflow:** Asynchronous feedback processing after text interview  
+**Module owner:** Member 4
+**Architecture baseline:** InterviewCopilot HLD v0.2 (2026-10-31)
+**Orchestration:** LangGraph
+**Backend:** FastAPI modular monolith
+**Primary workflow:** Asynchronous feedback processing after text interview
 
 ---
 

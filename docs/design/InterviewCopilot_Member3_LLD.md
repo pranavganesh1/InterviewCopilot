@@ -1,12 +1,12 @@
 # InterviewCopilot — Member 3 Low-Level Design
 ## Interview Engine & Interviewer Agent
 
-**Document type:** Low-Level Design (LLD)  
-**Module owner:** Member 3  
-**Architecture baseline:** InterviewCopilot HLD v0.2, dated 31 October 2026  
-**Orchestration framework:** LangGraph  
-**Backend:** FastAPI modular monolith  
-**Delivery phase:** Phase 1 — text interviews; Phase 2 — voice extension  
+**Document type:** Low-Level Design (LLD)
+**Module owner:** Member 3
+**Architecture baseline:** InterviewCopilot HLD v0.2, dated 31 October 2026
+**Orchestration framework:** LangGraph
+**Backend:** FastAPI modular monolith
+**Delivery phase:** Phase 1 — text interviews; Phase 2 — voice extension
 **Status:** Detailed design proposal for team review
 
 ---

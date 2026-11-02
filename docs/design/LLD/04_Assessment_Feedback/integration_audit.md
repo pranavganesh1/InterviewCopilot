@@ -42,7 +42,7 @@ Your LLD is **comprehensive and well-structured** — it covers all owned module
 
 ---
 
-## 3. Items in Your LLD Marked "Proposed / Suggested / Illustrative / Coordinate" 
+## 3. Items in Your LLD Marked "Proposed / Suggested / Illustrative / Coordinate"
 
 These must be replaced with **agreed contracts** before implementation:
 
@@ -263,7 +263,7 @@ Formalize as executable test specs.
 
 ## Summary
 
-Your LLD is **design-complete for internal module logic** but **integration-incomplete** for cross-module contracts. 
+Your LLD is **design-complete for internal module logic** but **integration-incomplete** for cross-module contracts.
 
 **Immediate productive work:** Split the document, write JSON schemas, define the confidence rubric, write unit tests for pure logic, create diagram files. These are all **blocker-free** and will accelerate implementation once contracts land.
 
