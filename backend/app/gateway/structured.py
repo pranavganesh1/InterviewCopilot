@@ -23,8 +23,15 @@ async def structured_completion(
     planning, evidence scoring). Raises LLMGatewayError if the model cannot
     produce schema-valid JSON within two attempts.
     """
+    schema_json = json.dumps(schema.model_json_schema(), indent=2)
     messages: list[dict] = [
-        {"role": "system", "content": system},
+        {
+            "role": "system",
+            "content": (
+                f"{system}\n\nRespond with ONLY valid JSON matching this JSON schema:\n"
+                f"{schema_json}"
+            ),
+        },
         {"role": "user", "content": json.dumps(user_payload)},
     ]
     last_error: Exception | None = None
