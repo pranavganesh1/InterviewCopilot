@@ -8,6 +8,12 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "pydantic-settings>=2.7",
     "structlog>=24.4",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "motor>=3.6",
+    "pyjwt>=2.10",
+    "authlib>=1.4",
 ]
 
 [dependency-groups]
@@ -17,6 +23,8 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.9",
     "pre-commit>=4.0",
+    "mongomock-motor>=0.0.35",
+    "aiosqlite>=0.20",
 ]
 
 [tool.pytest.ini_options]
