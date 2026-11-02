@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     litellm_url: str = "http://localhost:4000"
     litellm_master_key: str = "sk-local-master"
     llm_client_timeout: int = 90
+    interview_max_turns: int = 12
 
     # S3-compatible object storage (SeaweedFS)
     s3_endpoint_url: str = "http://localhost:9000"
