@@ -118,6 +118,10 @@ async def test_full_strict_interview_flow(monkeypatch, clean_users_table):
         assert body["session"]["status"] == "completed"
         assert len(body["turns"]) == 3
         assert body["turns"][0]["answer"] == "A hashmap maps keys to buckets..."
+        # evaluations persist with their turns and survive refreshes
+        assert body["turns"][0]["evaluation"]["coverage"] == "partial"
+        assert body["turns"][1]["evaluation"]["coverage"] == "good"
+        assert body["turns"][2]["evaluation"]["coverage"] == "good"
 
 
 @pytest.mark.asyncio

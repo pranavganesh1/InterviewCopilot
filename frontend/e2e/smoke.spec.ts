@@ -41,13 +41,15 @@ test("dashboard lists tracks from the API", async ({ page }) => {
 });
 
 test("interview page renders question and submits answer", async ({ page }) => {
-  // Stateful mock mirroring the backend: turns live server-side.
+  // Stateful mock mirroring the backend: turns live server-side, evaluations
+  // are persisted onto the answered turn.
   const turns = [
     {
       turn_index: 1,
       question_area: "Hashmaps",
       question: "Explain hash collisions.",
       answer: null as string | null,
+      evaluation: null as Record<string, unknown> | null,
     },
   ];
   await page.route("**/api/v1/sessions/s1", (route) =>
@@ -60,11 +62,17 @@ test("interview page renders question and submits answer", async ({ page }) => {
   );
   await page.route("**/api/v1/sessions/s1/turns", async (route) => {
     turns[0].answer = "Buckets store multiple entries...";
+    turns[0].evaluation = {
+      coverage: "partial",
+      strengths: ["Clear structure"],
+      gaps: ["No examples"],
+    };
     turns.push({
       turn_index: 2,
       question_area: "Hashmaps",
       question: "How would you resolve one?",
       answer: null,
+      evaluation: null,
     });
     await route.fulfill({
       json: {

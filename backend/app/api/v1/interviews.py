@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,11 +55,18 @@ async def get_session(
 async def submit_turn(
     session_id: uuid.UUID,
     body: SubmitAnswer,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await interview_service.submit_answer(db, user, session_id, body.answer)
+        return await interview_service.submit_answer(
+            db,
+            user,
+            session_id,
+            body.answer,
+            nc=getattr(request.app.state, "nats", None),
+        )
     except LookupError as exc:
         if str(exc) == "no_open_question":
             raise HTTPException(

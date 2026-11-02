@@ -2,20 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, type SessionInfo, type Turn, type TurnResult } from "../lib/api";
-
-const COVERAGE_STYLE: Record<string, string> = {
-  excellent: "bg-emerald-100 text-emerald-700",
-  good: "bg-emerald-100 text-emerald-700",
-  partial: "bg-amber-100 text-amber-700",
-  none: "bg-red-100 text-red-700",
-};
+import { COVERAGE_STYLE } from "../lib/ui";
 
 export default function InterviewPage() {
   const { trackId, sessionId } = useParams();
   const [answer, setAnswer] = useState("");
-  const [evaluations, setEvaluations] = useState<
-    { coverage: string; strengths: string[]; gaps: string[] }[]
-  >([]);
   const [completed, setCompleted] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -32,7 +23,6 @@ export default function InterviewPage() {
         body: JSON.stringify({ answer }),
       }),
     onSuccess: (d) => {
-      setEvaluations((prev) => [...prev, d.evaluation]);
       if (d.completed) setCompleted(true);
       session.refetch();
     },
@@ -74,8 +64,8 @@ export default function InterviewPage() {
       </div>
 
       <div className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5">
-        {turns.map((t, i) => {
-          const evaluation = evaluations[i - 1];
+        {turns.map((t) => {
+          const evaluation = t.evaluation ?? undefined;
           return (
             <div key={t.turn_index} className="space-y-2">
               <div className="max-w-[90%] rounded-2xl bg-stone-100 px-4 py-2.5 text-sm">

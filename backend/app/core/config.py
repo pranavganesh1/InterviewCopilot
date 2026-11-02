@@ -1,10 +1,18 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/core/config.py -> parents[3] is the repo root (shared .env with docker-compose)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+_INSECURE_DEFAULTS = {
+    "",
+    "dev-secret-change-me",
+    "dev-session-secret-change-me",
+    "change-me-to-a-long-random-string",
+}
 
 
 class Settings(BaseSettings):
@@ -26,6 +34,7 @@ class Settings(BaseSettings):
 
     # Auth (backend-issued JWT cookie pair)
     jwt_secret: str = "dev-secret-change-me"
+    session_secret: str = "dev-session-secret-change-me"
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 30
@@ -44,6 +53,19 @@ class Settings(BaseSettings):
     s3_endpoint_url: str = "http://localhost:9000"
     s3_access_key: str = "local"
     s3_secret_key: str = "local"
+
+    @model_validator(mode="after")
+    def _validate_secrets(self):
+        """Refuse weak/default secrets outside local development (audit #1)."""
+        if self.app_env != "local":
+            for name in ("jwt_secret", "session_secret"):
+                value = getattr(self, name)
+                if value in _INSECURE_DEFAULTS or len(value) < 32:
+                    raise ValueError(
+                        f"{name} must be a strong unique value (>=32 chars) "
+                        f"when app_env={self.app_env!r}"
+                    )
+        return self
 
 
 @lru_cache

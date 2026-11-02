@@ -1,8 +1,10 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.onboarding import ExtractedItem
+from app.agents.onboarding import ITEM_CATEGORIES_SET, ExtractedItem
 from app.api.deps import get_current_user
 from app.db.s3 import ensure_bucket, get_s3_client
 from app.db.sqlalchemy import get_db
@@ -38,7 +40,7 @@ async def get_items(user: User = Depends(get_current_user), db: AsyncSession = D
 async def add_item(
     body: ManualItem, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
-    if body.category not in ExtractedItem.model_fields["category"].annotation.__args__:
+    if body.category not in ITEM_CATEGORIES_SET:
         raise HTTPException(status_code=422, detail=f"Unknown category: {body.category}")
     created = await create_items(db, user.id, [ExtractedItem(**body.model_dump())], "manual")
     i = created[0]
@@ -55,5 +57,5 @@ async def upload_resume(
     if len(data) > MAX_RESUME_BYTES:
         raise HTTPException(status_code=413, detail="Resume exceeds 10 MB")
     s3 = get_s3_client()
-    ensure_bucket(s3, "resumes")
+    await asyncio.to_thread(ensure_bucket, s3, "resumes")
     return await process_resume(db, s3, user, file.filename or "resume.pdf", data)

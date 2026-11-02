@@ -32,6 +32,9 @@ export async function api<T>(
     }
     throw new ApiError(res.status, detail);
   }
+  if (res.status === 204 || res.headers.get("content-length") === "0") {
+    return null as T;
+  }
   return res.json() as Promise<T>;
 }
 
@@ -99,6 +102,11 @@ export interface Turn {
   question_area: string;
   question: string;
   answer: string | null;
+  evaluation?: {
+    coverage: "none" | "partial" | "good" | "excellent";
+    strengths: string[];
+    gaps: string[];
+  } | null;
 }
 
 export interface TurnResult {

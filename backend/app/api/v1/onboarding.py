@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(max_length=20000)
 
 
 @router.post("/chat")

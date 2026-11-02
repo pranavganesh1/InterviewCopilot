@@ -32,7 +32,8 @@ services:
       retries: 10
 
   seaweedfs:
-    image: chrislusf/seaweedfs:latest
+    # Pinned by digest (ListBuckets quirk in 4.50 is what our code adapts to).
+    image: chrislusf/seaweedfs@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860
     command: ["server", "-dir=/data", "-s3", "-s3.port=8333", "-master.volumeSizeLimitMB=1024", "-volume.max=0", "-ip=seaweedfs"]
     ports:
       - "9000:8333"
@@ -49,12 +50,16 @@ services:
 
   nats:
     image: nats:2
-    command: ["-js", "-m", "8222"]
+    # -sd /data: JetStream storage directory (persisted by the volume below so
+    # unconsumed feedback jobs survive container restarts).
+    command: ["-js", "-sd", "/data", "-m", "8222"]
     # nats:2 is a scratch-based image with no shell — no in-container healthcheck
     # possible. Health is verified via the monitor endpoint on host port 8222.
     ports:
       - "4222:4222"
       - "8222:8222"
+    volumes:
+      - nats_data:/data
 
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
@@ -77,3 +82,4 @@ volumes:
   postgres_data:
   mongo_data:
   seaweedfs_data:
+  nats_data:

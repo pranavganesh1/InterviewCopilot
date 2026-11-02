@@ -2,7 +2,7 @@ import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.interviewer import TurnDecision, build_interviewer_graph
@@ -40,7 +40,7 @@ async def start_session(db: AsyncSession, user: User, track_id, mode: str = "str
     return {"session": _session_dict(session), "turn": _turn_dict(turn)}
 
 
-async def submit_answer(db: AsyncSession, user: User, session_id, answer: str) -> dict:
+async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, nc=None) -> dict:
     session = await _owned_session(db, user, session_id)
     last_turn = await _latest_turn(db, session.id)
     if last_turn is None or last_turn.answer is not None:
@@ -52,10 +52,17 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str) -
     track_brief = await get_track_with_brief(db, user, session.track_id)
     decision = await _decide(db, session, track_brief["brief"]["content"], last_answer=answer)
 
+    # Persist the evaluation on the answered turn so feedback survives refreshes.
+    last_turn.evaluation_coverage = decision.evaluation.coverage
+    last_turn.evaluation_strengths = decision.evaluation.strengths
+    last_turn.evaluation_gaps = decision.evaluation.gaps
+    last_turn.interviewer_notes = decision.notes_for_report
+    await db.commit()
+
     turns_so_far = await _count_turns(db, session.id)
     if decision.decision == "complete" or turns_so_far >= get_settings().interview_max_turns:
         await _complete(db, session)
-        _dispatch_feedback(session)
+        _dispatch_feedback(session, nc=nc)
         return {"completed": True, "evaluation": decision.evaluation.model_dump()}
 
     turn = await _append_turn(db, session, decision)
@@ -143,12 +150,20 @@ async def _turns(db: AsyncSession, session_id) -> list[SessionTurn]:
 
 
 async def _count_turns(db: AsyncSession, session_id) -> int:
-    return len(await _turns(db, session_id))
+    result = await db.execute(
+        select(func.count()).select_from(SessionTurn).where(SessionTurn.session_id == session_id)
+    )
+    return int(result.scalar_one())
 
 
 async def _latest_turn(db: AsyncSession, session_id) -> SessionTurn | None:
-    turns = await _turns(db, session_id)
-    return turns[-1] if turns else None
+    result = await db.execute(
+        select(SessionTurn)
+        .where(SessionTurn.session_id == session_id)
+        .order_by(SessionTurn.turn_index.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _complete(db: AsyncSession, session: InterviewSession) -> None:
@@ -157,11 +172,11 @@ async def _complete(db: AsyncSession, session: InterviewSession) -> None:
     await db.commit()
 
 
-def _dispatch_feedback(session: InterviewSession) -> None:
+def _dispatch_feedback(session: InterviewSession, nc=None) -> None:
     """Fire the feedback job without blocking the HTTP response."""
     with suppress(RuntimeError):
         asyncio.get_running_loop().create_task(
-            publish_feedback_job(session.id, session.track_id, session.user_id)
+            publish_feedback_job(session.id, session.track_id, session.user_id, nc=nc)
         )  # no running loop (rare sync contexts); catch-up scan heals
 
 
@@ -185,4 +200,10 @@ def _turn_dict(t: SessionTurn) -> dict:
 def _turn_dict_full(t: SessionTurn) -> dict:
     d = _turn_dict(t)
     d["answer"] = t.answer
+    if t.evaluation_coverage is not None:
+        d["evaluation"] = {
+            "coverage": t.evaluation_coverage,
+            "strengths": t.evaluation_strengths or [],
+            "gaps": t.evaluation_gaps or [],
+        }
     return d
