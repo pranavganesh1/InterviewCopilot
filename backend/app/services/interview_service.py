@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -7,6 +9,7 @@ from app.agents.interviewer import TurnDecision, build_interviewer_graph
 from app.core.config import get_settings
 from app.models.interview import InterviewSession, SessionTurn
 from app.models.user import User
+from app.services.events import publish_feedback_job
 from app.services.track_service import get_track_with_brief
 
 
@@ -52,6 +55,7 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str) -
     turns_so_far = await _count_turns(db, session.id)
     if decision.decision == "complete" or turns_so_far >= get_settings().interview_max_turns:
         await _complete(db, session)
+        _dispatch_feedback(session)
         return {"completed": True, "evaluation": decision.evaluation.model_dump()}
 
     turn = await _append_turn(db, session, decision)
@@ -151,6 +155,14 @@ async def _complete(db: AsyncSession, session: InterviewSession) -> None:
     session.status = "completed"
     session.completed_at = datetime.now(UTC)
     await db.commit()
+
+
+def _dispatch_feedback(session: InterviewSession) -> None:
+    """Fire the feedback job without blocking the HTTP response."""
+    with suppress(RuntimeError):
+        asyncio.get_running_loop().create_task(
+            publish_feedback_job(session.id, session.track_id, session.user_id)
+        )  # no running loop (rare sync contexts); catch-up scan heals
 
 
 def _session_dict(s: InterviewSession) -> dict:
