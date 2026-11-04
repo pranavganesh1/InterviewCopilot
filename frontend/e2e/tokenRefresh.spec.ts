@@ -60,6 +60,22 @@ test("expired access token refreshes once and retries original request", async (
     refreshCalls += 1;
     await route.fulfill({ status: 204 });
   });
+  await page.route("**/api/v1/me/assessments", (route) =>
+    route.fulfill({
+      json: {
+        dashboard: {
+          completed_interviews: 0,
+          average_score: null,
+          total_questions_attempted: 0,
+          strongest_skills: [],
+          skills_needing_improvement: [],
+          recommended_topics: [],
+        },
+        assessments: [],
+      },
+    }),
+  );
+
   await page.route("**/api/v1/auth/me", async (route) => {
     meCalls += 1;
     // First auth/me after load succeeds so we reach the dashboard.
@@ -103,6 +119,21 @@ test("failed refresh clears session without infinite loop", async ({ page }) => 
 
   await page.route("**/api/v1/auth/me", (route) =>
     route.fulfill({ json: USER }),
+  );
+  await page.route("**/api/v1/me/assessments", (route) =>
+    route.fulfill({
+      json: {
+        dashboard: {
+          completed_interviews: 0,
+          average_score: null,
+          total_questions_attempted: 0,
+          strongest_skills: [],
+          skills_needing_improvement: [],
+          recommended_topics: [],
+        },
+        assessments: [],
+      },
+    }),
   );
   await page.route("**/api/v1/auth/refresh", async (route) => {
     refreshCalls += 1;
