@@ -14,6 +14,21 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/auth/me", (route) =>
     route.fulfill({ json: USER }),
   );
+  await page.route("**/api/v1/me/assessments", (route) =>
+    route.fulfill({
+      json: {
+        dashboard: {
+          completed_interviews: 0,
+          average_score: null,
+          total_questions_attempted: 0,
+          strongest_skills: [],
+          skills_needing_improvement: [],
+          recommended_topics: [],
+        },
+        assessments: [],
+      },
+    }),
+  );
   await page.route("**/api/v1/auth/logout", (route) =>
     route.fulfill({ json: { status: "ok" } }),
   );
@@ -36,8 +51,10 @@ test("dashboard lists tracks from the API", async ({ page }) => {
     }),
   );
   await page.goto("/");
-  await expect(page.getByText("Backend Engineer Intern")).toBeVisible();
-  await expect(page.getByText("Brief v1")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Backend Engineer Intern" }),
+  ).toBeVisible();
+  await expect(page.getByText(/Interview prep focused on the/i)).toBeVisible();
 });
 
 test("interview page renders question and submits answer", async ({ page }) => {

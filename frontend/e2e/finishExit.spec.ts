@@ -143,8 +143,13 @@ test("profile nav opens dashboard empty state", async ({ page }) => {
       },
     }),
   );
+  await page.route("**/api/v1/auth/refresh", (route) =>
+    route.fulfill({ status: 204 }),
+  );
+  await page.route("**/api/v1/tracks", (route) => route.fulfill({ json: [] }));
   await page.goto("/");
   await page.getByTestId("nav-profile").click();
+  await page.getByRole("menuitem", { name: "My Profile" }).click();
   await expect(page).toHaveURL(/\/profile/);
   await expect(page.getByText("No completed assessments yet")).toBeVisible();
 });

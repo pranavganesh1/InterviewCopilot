@@ -76,9 +76,7 @@ async def test_process_persists_report_when_agent_fails(monkeypatch, clean_users
                 version=1,
                 content={
                     "summary": "Net",
-                    "competencies": [
-                        {"name": "TCP", "description": "tcp", "importance": "core"}
-                    ],
+                    "competencies": [{"name": "TCP", "description": "tcp", "importance": "core"}],
                     "question_areas": [{"topic": "TCP", "guidance": "handshake"}],
                 },
             )
@@ -107,9 +105,7 @@ async def test_process_persists_report_when_agent_fails(monkeypatch, clean_users
     async def boom(**kwargs):
         raise RuntimeError("llm down")
 
-    monkeypatch.setattr(
-        "app.services.feedback_service.run_feedback_agent", boom
-    )
+    monkeypatch.setattr("app.services.feedback_service.run_feedback_agent", boom)
 
     async with SessionFactory() as db:
         result = await process_session_feedback(db, sid)

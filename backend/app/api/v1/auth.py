@@ -128,9 +128,7 @@ async def update_me(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await profile_service.update_profile(
-            db, user, body.model_dump(exclude_unset=True)
-        )
+        return await profile_service.update_profile(db, user, body.model_dump(exclude_unset=True))
     except ValueError as exc:
         if str(exc) == "skills_must_be_list":
             raise HTTPException(status_code=422, detail="skills must be a list") from None

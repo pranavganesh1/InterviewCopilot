@@ -17,9 +17,7 @@ CONCEPTUAL_LABELS: dict[int, Literal["nudge", "clue", "explanation"]] = {
     3: "explanation",
 }
 
-CODING_LABELS: dict[
-    int, Literal["hint", "approach", "pseudocode", "starter", "complete"]
-] = {
+CODING_LABELS: dict[int, Literal["hint", "approach", "pseudocode", "starter", "complete"]] = {
     1: "hint",
     2: "approach",
     3: "pseudocode",
@@ -67,11 +65,7 @@ def is_coding_question(question: str, question_area: str) -> bool:
 
 
 def max_level_for_question(question: str, question_area: str) -> int:
-    return (
-        MAX_CODING_LEVEL
-        if is_coding_question(question, question_area)
-        else MAX_CONCEPTUAL_LEVEL
-    )
+    return MAX_CODING_LEVEL if is_coding_question(question, question_area) else MAX_CONCEPTUAL_LEVEL
 
 
 def label_for_level(level: int, *, coding: bool) -> str:

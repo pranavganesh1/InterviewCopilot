@@ -93,11 +93,15 @@ async def run_worker() -> None:
         await js.add_stream(
             StreamConfig(name=events.FEEDBACK_STREAM, subjects=[events.FEEDBACK_SUBJECT])
         )
+    # nats-py 2.x: the field is `durable_name` (NOT `durable`) — passing
+    # `durable=` raises TypeError, which used to be silently suppressed and
+    # then pull_subscribe auto-created the consumer with DEFAULT limits
+    # (max_deliver=-1 → infinite redelivery on poison messages).
     with suppress(Exception):
         await js.add_consumer(
             events.FEEDBACK_STREAM,
             config=ConsumerConfig(
-                durable="feedback-worker",
+                durable_name="feedback-worker",
                 deliver_policy=DeliverPolicy.ALL,
                 max_deliver=5,
                 ack_wait=300,
