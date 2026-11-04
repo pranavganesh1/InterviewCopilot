@@ -64,16 +64,16 @@ class TrackCreatorState(TypedDict, total=False):
 
 
 BANK_SYSTEM_PROMPT = """You are InterviewCopilot's question bank author. Given an
-interview brief (areas, competencies, candidate angle), write 15-18 concrete interview
-questions for this track.
+interview brief (areas, competencies, candidate angle), write 3-5 ANCHOR questions for
+this track. These are the opening questions of timed interview sessions — the interviewer
+generates all follow-up questions itself from the candidate's answers.
 
 Rules:
+- 3-5 questions ONLY, each testing a DIFFERENT learning objective, spread across the
+  brief's question_areas.
+- Difficulty arc: start foundational, end advanced.
 - Every question must be self-contained and answerable in plain text.
-- Distribute across ALL question_areas; spread difficulty: roughly 1/3 foundational,
-  1/3 intermediate, 1/3 advanced.
 - Mark type: coding (write/fix code), conceptual (explain/compare), or behavioral.
-- Never produce two questions testing the same learning objective — near-paraphrases
-  will be rejected by validation.
 - expected_answer_sketch: ONE sentence (max ~120 chars) on what a strong answer covers.
 - Ground questions in the candidate's context where the brief's candidate_angle_notes
   suggests it.
@@ -119,7 +119,7 @@ async def run_bank_builder_turn(
             "question_areas": brief.get("question_areas", []),
             "candidate_angle_notes": brief.get("candidate_angle_notes", ""),
         },
-        "target_count": 12,
+        "target_count": 4,
     }
     system = BANK_SYSTEM_PROMPT
     if regenerate_indices:

@@ -19,6 +19,7 @@ class SubmitAnswer(BaseModel):
 
 class CreateSession(BaseModel):
     mode: Literal["strict", "guided"] = "strict"
+    duration_minutes: int = Field(default=60, ge=15, le=240)
 
 
 @router.post("/tracks/{track_id}/sessions", status_code=201)
@@ -30,7 +31,11 @@ async def start_session(
 ):
     try:
         return await interview_service.start_session(
-            db, user, track_id, mode=(body.mode if body else "strict")
+            db,
+            user,
+            track_id,
+            mode=(body.mode if body else "strict"),
+            duration_minutes=(body.duration_minutes if body else 60),
         )
     except LookupError as exc:
         detail = {
