@@ -29,3 +29,6 @@ Thumbs.db
 
 # Live-test output artifacts
 backend/m9_track*.json
+
+# Live-test output artifacts
+backend/m9_track*.json
