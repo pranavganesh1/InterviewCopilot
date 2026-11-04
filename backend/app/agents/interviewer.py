@@ -130,7 +130,11 @@ def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
         return "follow_up not allowed when turns_in_current_area >= 2"
 
     remaining_slots = payload.get("questions_remaining")
-    if remaining_slots is not None and int(remaining_slots) <= 0 and decision.decision != "complete":
+    if (
+        remaining_slots is not None
+        and int(remaining_slots) <= 0
+        and decision.decision != "complete"
+    ):
         return "must complete when questions_remaining is 0"
 
     if decision.decision != "complete":
@@ -175,31 +179,85 @@ _FALLBACK_STEMS = (
     "Compare two approaches related to {topic} and when you would choose each.",
     "What mistakes do engineers commonly make with {topic}, and how do you avoid them?",
     "Given a realistic problem involving {topic}, outline your step-by-step solution approach.",
-    "Design a small coding exercise that centers on {topic} and describe the expected solution sketch.",
+    "Design a small coding exercise that centers on {topic} and describe "
+    "the expected solution sketch.",
     "How would you test and debug an implementation that relies on {topic}?",
 )
 
 # Distinct learning objectives for array/DSA tracks when the LLM keeps paraphrasing.
 _ARRAY_CONCEPT_BANK = (
-    ("random access", "Why is index-based random access O(1) in an array, and what memory property enables that?"),
-    ("insertion cost", "What is the time complexity of inserting at index 0 versus appending at the end of a dynamic array, and why?"),
-    ("amortized growth", "Explain amortized O(1) append for a dynamic array that doubles capacity on resize."),
-    ("two pointers", "When would you use the two-pointer technique on a sorted array, and outline the high-level steps?"),
-    ("sliding window", "Describe a sliding-window approach to find the longest subarray with sum ≤ k."),
-    ("prefix sums", "How do prefix sums let you answer subarray-sum queries quickly, and what is the preprocessing cost?"),
-    ("binary search", "State the invariants you maintain in binary search on a sorted array and why the loop terminates."),
-    ("kadane", "Walk through Kadane’s algorithm for maximum subarray sum and its time/space complexity."),
-    ("dutch flag", "How would you partition an array of 0/1/2 values in one pass (Dutch national flag)?"),
-    ("rotation", "How do you rotate an array right by k positions in-place, and what edge cases matter?"),
-    ("merge sorted", "Outline merging two sorted arrays into one sorted result with optimal time and space."),
-    ("duplicates", "Given a sorted array, how do you remove duplicates in-place and what complexity do you achieve?"),
-    ("2d indexing", "How is a 2D matrix stored in row-major order, and how do you compute the flat index of cell (r, c)?"),
-    ("in-place reverse", "How do you reverse an array in-place, and when is that useful as a building block?"),
-    ("stability sort", "Why might you prefer a stable sort when sorting an array of records by one key?"),
+    (
+        "random access",
+        "Why is index-based random access O(1) in an array, and what memory property enables that?",
+    ),
+    (
+        "insertion cost",
+        "What is the time complexity of inserting at index 0 versus appending at the "
+        "end of a dynamic array, and why?",
+    ),
+    (
+        "amortized growth",
+        "Explain amortized O(1) append for a dynamic array that doubles capacity on resize.",
+    ),
+    (
+        "two pointers",
+        "When would you use the two-pointer technique on a sorted array, and outline "
+        "the high-level steps?",
+    ),
+    (
+        "sliding window",
+        "Describe a sliding-window approach to find the longest subarray with sum ≤ k.",
+    ),
+    (
+        "prefix sums",
+        "How do prefix sums let you answer subarray-sum queries quickly, and what is "
+        "the preprocessing cost?",
+    ),
+    (
+        "binary search",
+        "State the invariants you maintain in binary search on a sorted array and why "
+        "the loop terminates.",
+    ),
+    (
+        "kadane",
+        "Walk through Kadane’s algorithm for maximum subarray sum and its time/space complexity.",
+    ),
+    (
+        "dutch flag",
+        "How would you partition an array of 0/1/2 values in one pass (Dutch national flag)?",
+    ),
+    (
+        "rotation",
+        "How do you rotate an array right by k positions in-place, and what edge cases matter?",
+    ),
+    (
+        "merge sorted",
+        "Outline merging two sorted arrays into one sorted result with optimal time and space.",
+    ),
+    (
+        "duplicates",
+        "Given a sorted array, how do you remove duplicates in-place and what "
+        "complexity do you achieve?",
+    ),
+    (
+        "2d indexing",
+        "How is a 2D matrix stored in row-major order, and how do you compute the "
+        "flat index of cell (r, c)?",
+    ),
+    (
+        "in-place reverse",
+        "How do you reverse an array in-place, and when is that useful as a building block?",
+    ),
+    (
+        "stability sort",
+        "Why might you prefer a stable sort when sorting an array of records by one key?",
+    ),
 )
 
 
-def _fallback_unique_question(payload: dict, preferred_area: str | None = None) -> tuple[str, str] | None:
+def _fallback_unique_question(
+    payload: dict, preferred_area: str | None = None
+) -> tuple[str, str] | None:
     """Build a non-duplicate question without another LLM call, or None if exhausted."""
     asked = [q for q in payload.get("asked_questions", []) if q]
     remaining = list(payload.get("remaining_areas") or [])

@@ -202,11 +202,7 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
     current_area = turns[-1].question_area if turns else None
     asked_areas = [t.question_area for t in turns]
     covered_areas = list(dict.fromkeys(asked_areas))  # stable unique
-    brief_areas = [
-        qa["topic"]
-        for qa in brief_content.get("question_areas", [])
-        if qa.get("topic")
-    ]
+    brief_areas = [qa["topic"] for qa in brief_content.get("question_areas", []) if qa.get("topic")]
     remaining_areas = [topic for topic in brief_areas if topic not in covered_areas]
     max_turns = get_settings().interview_max_turns
     questions_asked = len(turns)

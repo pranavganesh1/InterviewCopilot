@@ -81,7 +81,9 @@ test("coding question shows workspace; text question keeps textarea", async ({
   await expect(page.getByTestId("coding-workspace")).toBeVisible();
   await expect(page.getByRole("button", { name: "Python" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Java" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "C" })).toBeVisible();
+  await expect(
+    page.getByTestId("coding-workspace").getByRole("button", { name: "C" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Run" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Submit Answer" })).toBeVisible();
   await expect(page.getByText(/execution unavailable/i)).toBeVisible();
@@ -148,8 +150,13 @@ test("language tabs switch without leaving workspace", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Java" })).toHaveClass(
     /bg-indigo-600/,
   );
-  await page.getByRole("button", { name: "C" }).click();
-  await expect(page.getByRole("button", { name: "C" })).toHaveClass(
+  await page
+    .getByTestId("coding-workspace")
+    .getByRole("button", { name: "C" })
+    .click();
+  await expect(
+    page.getByTestId("coding-workspace").getByRole("button", { name: "C" }),
+  ).toHaveClass(
     /bg-indigo-600/,
   );
   await expect(

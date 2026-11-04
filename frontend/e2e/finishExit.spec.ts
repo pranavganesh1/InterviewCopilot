@@ -145,6 +145,7 @@ test("profile nav opens dashboard empty state", async ({ page }) => {
   );
   await page.goto("/");
   await page.getByTestId("nav-profile").click();
+  await page.getByRole("menuitem", { name: "My Profile" }).click();
   await expect(page).toHaveURL(/\/profile/);
   await expect(page.getByText("No completed assessments yet")).toBeVisible();
 });

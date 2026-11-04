@@ -91,7 +91,7 @@ test("expired access token refreshes once and retries original request", async (
   });
 
   await page.goto("/");
-  await expect(page.getByText("After Refresh")).toBeVisible();
+  await expect(page.getByRole("link", { name: "After Refresh" })).toBeVisible();
   expect(refreshCalls).toBe(1);
   expect(trackCalls).toBe(2);
   expect(meCalls).toBeGreaterThanOrEqual(1);

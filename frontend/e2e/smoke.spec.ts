@@ -36,8 +36,10 @@ test("dashboard lists tracks from the API", async ({ page }) => {
     }),
   );
   await page.goto("/");
-  await expect(page.getByText("Backend Engineer Intern")).toBeVisible();
-  await expect(page.getByText("Brief v1")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Backend Engineer Intern" }),
+  ).toBeVisible();
+  await expect(page.getByText(/Interview prep focused on the/i)).toBeVisible();
 });
 
 test("interview page renders question and submits answer", async ({ page }) => {

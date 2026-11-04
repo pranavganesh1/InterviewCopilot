@@ -18,12 +18,8 @@ from app.agents.question_dedupe import (
 
 def test_exact_and_near_duplicates_detected():
     asked = ["Explain how hash collisions are resolved in a hashmap."]
-    assert is_duplicate_question(
-        "Explain how hash collisions are resolved in a hashmap.", asked
-    )
-    assert is_duplicate_question(
-        "How are hash collisions resolved in a hashmap?", asked
-    )
+    assert is_duplicate_question("Explain how hash collisions are resolved in a hashmap.", asked)
+    assert is_duplicate_question("How are hash collisions resolved in a hashmap?", asked)
     assert not is_duplicate_question(
         "What is the time complexity of binary search on a sorted array?", asked
     )
@@ -122,7 +118,8 @@ def test_force_unique_produces_non_duplicate():
     payload = {
         "asked_questions": [
             "Explain the core idea behind Arrays with a concrete example.",
-            "How would you implement Arrays efficiently, and what are the time and space trade-offs?",
+            "How would you implement Arrays efficiently, "
+            "and what are the time and space trade-offs?",
         ],
         "remaining_areas": ["Sliding Window", "Prefix Sums"],
         "covered_areas": ["Arrays"],
@@ -172,9 +169,7 @@ def test_fifteen_forced_questions_are_unique():
         }
         forced = force_unique_decision(d, payload)
         assert forced.decision != "complete", f"exhausted early at turn {i + 1}"
-        assert not is_duplicate_question(
-            forced.next_question, asked
-        ), forced.next_question
+        assert not is_duplicate_question(forced.next_question, asked), forced.next_question
         asked.append(forced.next_question)
 
     assert len(asked) == 15
@@ -255,9 +250,7 @@ async def test_run_interviewer_turn_falls_back_instead_of_raising(monkeypatch):
     )
     assert decision.decision != "complete"
     assert decision.next_question != "Same question about arrays"
-    assert not is_duplicate_question(
-        decision.next_question, ["Same question about arrays"]
-    )
+    assert not is_duplicate_question(decision.next_question, ["Same question about arrays"])
 
 
 @pytest.mark.asyncio

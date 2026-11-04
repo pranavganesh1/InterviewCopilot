@@ -30,12 +30,8 @@ def test_next_assistance_level_is_backend_owned():
 
 
 def test_coding_question_detection():
-    assert is_coding_question(
-        "Write a function that returns two sum indices.", "Arrays"
-    )
-    assert not is_coding_question(
-        "Tell me about a conflict on your team.", "Behavioral"
-    )
+    assert is_coding_question("Write a function that returns two sum indices.", "Arrays")
+    assert not is_coding_question("Tell me about a conflict on your team.", "Behavioral")
 
 
 async def _seed(monkeypatch, *, mode: str = "guided", guided_state: str = "UNLOCKED"):
@@ -64,9 +60,7 @@ async def _seed(monkeypatch, *, mode: str = "guided", guided_state: str = "UNLOC
             )
         )
         session.add(
-            ProgressionState(
-                track_id=track.id, strict_completed=3, guided_state=guided_state
-            )
+            ProgressionState(track_id=track.id, strict_completed=3, guided_state=guided_state)
         )
         await session.commit()
 
@@ -111,9 +105,7 @@ async def _start(client, token, track_id, mode):
 
 
 @pytest.mark.asyncio
-async def test_guided_assistance_progresses_nudge_clue_explanation(
-    monkeypatch, clean_users_table
-):
+async def test_guided_assistance_progresses_nudge_clue_explanation(monkeypatch, clean_users_table):
     _user, token, track_id, mode, levels = await _seed(monkeypatch)
     app = create_app()
     async with httpx.AsyncClient(
@@ -121,31 +113,23 @@ async def test_guided_assistance_progresses_nudge_clue_explanation(
     ) as client:
         sid = await _start(client, token, track_id, mode)
 
-        r1 = await client.post(
-            f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token}
-        )
+        r1 = await client.post(f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token})
         assert r1.status_code == 200
         assert r1.json()["assistance"]["level"] == 1
         assert r1.json()["assistance"]["assistance_type"] == "nudge"
         assert r1.json()["assistance"]["content"] == "help-level-1"
 
-        r2 = await client.post(
-            f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token}
-        )
+        r2 = await client.post(f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token})
         assert r2.status_code == 200
         assert r2.json()["assistance"]["level"] == 2
         assert r2.json()["assistance"]["assistance_type"] == "clue"
 
-        r3 = await client.post(
-            f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token}
-        )
+        r3 = await client.post(f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token})
         assert r3.status_code == 200
         assert r3.json()["assistance"]["level"] == 3
         assert r3.json()["assistance"]["assistance_type"] == "explanation"
 
-        r4 = await client.post(
-            f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token}
-        )
+        r4 = await client.post(f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token})
         assert r4.status_code == 409
 
         # Answer after assistance must be marked assisted and events persisted.
@@ -181,17 +165,13 @@ async def test_strict_assistance_rejected(monkeypatch, clean_users_table):
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         sid = await _start(client, token, track_id, "strict")
-        r = await client.post(
-            f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token}
-        )
+        r = await client.post(f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token})
     assert r.status_code == 403
 
 
 @pytest.mark.asyncio
 async def test_locked_users_cannot_access_guided_sessions(monkeypatch, clean_users_table):
-    _user, token, track_id, _mode, _levels = await _seed(
-        monkeypatch, guided_state="LOCKED"
-    )
+    _user, token, track_id, _mode, _levels = await _seed(monkeypatch, guided_state="LOCKED")
     app = create_app()
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -241,17 +221,13 @@ async def test_feedback_transcript_marks_assisted_turns(monkeypatch, clean_users
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         sid = await _start(client, token, track_id, mode)
-        await client.post(
-            f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token}
-        )
+        await client.post(f"/api/v1/sessions/{sid}/assistance", cookies={"ic_access": token})
         await client.post(
             f"/api/v1/sessions/{sid}/turns",
             json={"answer": "after nudge"},
             cookies={"ic_access": token},
         )
-        await client.post(
-            f"/api/v1/sessions/{sid}/complete", cookies={"ic_access": token}
-        )
+        await client.post(f"/api/v1/sessions/{sid}/complete", cookies={"ic_access": token})
 
     async with SessionFactory() as db:
         await feedback_service.process_session_feedback(db, sid)

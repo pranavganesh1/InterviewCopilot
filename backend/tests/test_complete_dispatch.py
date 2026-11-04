@@ -31,9 +31,7 @@ async def _seed_session(monkeypatch, *, complete_on_first_answer: bool = False):
                 version=1,
                 content={
                     "summary": "Networking basics",
-                    "competencies": [
-                        {"name": "TCP", "description": "tcp", "importance": "core"}
-                    ],
+                    "competencies": [{"name": "TCP", "description": "tcp", "importance": "core"}],
                     "question_areas": [{"topic": "TCP", "guidance": "handshake"}],
                 },
             )
@@ -94,9 +92,7 @@ async def test_manual_complete_dispatches_feedback(monkeypatch, clean_users_tabl
         r = await client.post(f"/api/v1/tracks/{track_id}/sessions", cookies={"ic_access": token})
         sid = r.json()["session"]["id"]
 
-        r = await client.post(
-            f"/api/v1/sessions/{sid}/complete", cookies={"ic_access": token}
-        )
+        r = await client.post(f"/api/v1/sessions/{sid}/complete", cookies={"ic_access": token})
         assert r.status_code == 200
         assert r.json()["session"]["status"] == "completed"
         assert r.json()["session"]["id"] == sid
