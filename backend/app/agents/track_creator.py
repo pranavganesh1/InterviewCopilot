@@ -12,7 +12,7 @@ from app.gateway.structured import structured_completion
 log = get_logger(__name__)
 
 # Free-tier TPM windows: pipeline LLM calls are spaced out. Tests patch to 0.
-BANK_CALL_SPACING_S = 20
+BANK_CALL_SPACING_S = 45
 
 SYSTEM_PROMPT = """You are InterviewCopilot's interview architect. Design an interview
 brief for a preparation track.
@@ -91,8 +91,17 @@ Give a short actionable reason for every rejection.
 """
 
 
+class BankJudgeItem(BaseModel):
+    index: int
+    accept: bool
+    reason: str = ""
+
+
 class BankJudgeVerdict(BaseModel):
-    verdicts: list[dict] = Field(default_factory=list)  # {index, accept, reason}
+    # Typed so a shape mismatch (e.g. model answers "verdict" instead of
+    # "accept") triggers structured_completion's repair loop instead of
+    # silently rejecting every question.
+    verdicts: list[BankJudgeItem] = Field(default_factory=list)
 
 
 async def run_track_creator_turn(
@@ -226,14 +235,14 @@ def build_track_creator_graph(
                         questions=[{**q, "index": i} for i, q in enumerate(candidates)],
                     )
                     for v in verdict.verdicts:
-                        idx = v.get("index")
-                        if not isinstance(idx, int) or not (0 <= idx < len(candidates)):
+                        idx = v.index
+                        if not (0 <= idx < len(candidates)):
                             continue
                         judged_idx.add(idx)
-                        if v.get("accept"):
+                        if v.accept:
                             all_accepted.append(candidates[idx])
                         else:
-                            rejects.append((candidates[idx], str(v.get("reason", "rejected"))))
+                            rejects.append((candidates[idx], v.reason or "rejected"))
                 except Exception as exc:
                     log.warning("bank_judge_failed", error=str(exc))
 
@@ -243,6 +252,8 @@ def build_track_creator_graph(
                         all_accepted.append(q)
 
                 if not rejects or round_no == 1:
+                    log.info("bank_built", accepted=len(all_accepted), rejected=len(rejects))
+                    break
                     break
 
                 # One regeneration round: replace ONLY the rejected questions.
