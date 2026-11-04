@@ -63,6 +63,13 @@ export default function InterviewPage() {
     queryFn: () => api<SessionPayload>(`/sessions/${sessionId}`),
   });
 
+  // Ticking clock for the timed-interview display (M9.2).
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
+
   const submit = useMutation({
     mutationFn: (payload: { answer: string; turnIndex: number }) =>
       api<TurnResult>(`/sessions/${sessionId}/turns`, {
@@ -184,10 +191,39 @@ export default function InterviewPage() {
           <p className="mt-0.5 text-sm text-stone-500">
             {showCodingWorkspace
               ? "Write your own solution, then submit for evaluation."
-              : "Answer one question at a time. Feedback appears after you submit."}
+              : isGuided
+                ? "Answer one question at a time — live feedback is on."
+                : "Answer one question at a time. Your full evaluation arrives in the final report."}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
+          {(() => {
+            const s = session.data?.session;
+            if (!s) return null;
+            const end = new Date(s.created_at).getTime() + s.duration_minutes * 60000;
+            const mins = Math.max(0, Math.ceil((end - Date.now()) / 60000));
+            return (
+              <div
+                data-testid="time-remaining"
+                className={`min-w-[9.5rem] rounded-xl border px-3 py-2 text-right ${
+                  mins <= 5
+                    ? "border-rose-200 bg-rose-50"
+                    : "border-stone-200 bg-white"
+                }`}
+              >
+                <p className="text-[10px] font-medium uppercase tracking-wide text-stone-400">
+                  Time remaining
+                </p>
+                <p
+                  className={`text-lg font-semibold tabular-nums ${
+                    mins <= 5 ? "text-rose-700" : "text-stone-800"
+                  }`}
+                >
+                  {mins > 0 ? `${mins} min` : "Time's up"}
+                </p>
+              </div>
+            );
+          })()}
           <div
             className="min-w-[9.5rem] rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-right"
             aria-label={`Question progress ${currentIndex} of ${maxTurns}`}

@@ -175,6 +175,8 @@ export interface SessionInfo {
   mode: string;
   status: string;
   max_turns?: number;
+  duration_minutes: number;
+  created_at: string;
 }
 
 export interface TurnEvaluation {
