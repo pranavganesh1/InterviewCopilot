@@ -12,7 +12,7 @@ from app.gateway.structured import structured_completion
 log = get_logger(__name__)
 
 # Free-tier TPM windows: pipeline LLM calls are spaced out. Tests patch to 0.
-BANK_CALL_SPACING_S = 20
+BANK_CALL_SPACING_S = 5
 
 SYSTEM_PROMPT = """You are InterviewCopilot's interview architect. Design an interview
 brief for a preparation track.
@@ -64,16 +64,16 @@ class TrackCreatorState(TypedDict, total=False):
 
 
 BANK_SYSTEM_PROMPT = """You are InterviewCopilot's question bank author. Given an
-interview brief (areas, competencies, candidate angle), write 15-18 concrete interview
-questions for this track.
+interview brief (areas, competencies, candidate angle), write 3-5 ANCHOR questions for
+this track. These are the opening questions of timed interview sessions — the interviewer
+generates all follow-up questions itself from the candidate's answers.
 
 Rules:
+- 3-5 questions ONLY, each testing a DIFFERENT learning objective, spread across the
+  brief's question_areas.
+- Difficulty arc: start foundational, end advanced.
 - Every question must be self-contained and answerable in plain text.
-- Distribute across ALL question_areas; spread difficulty: roughly 1/3 foundational,
-  1/3 intermediate, 1/3 advanced.
 - Mark type: coding (write/fix code), conceptual (explain/compare), or behavioral.
-- Never produce two questions testing the same learning objective — near-paraphrases
-  will be rejected by validation.
 - expected_answer_sketch: ONE sentence (max ~120 chars) on what a strong answer covers.
 - Ground questions in the candidate's context where the brief's candidate_angle_notes
   suggests it.
@@ -91,8 +91,17 @@ Give a short actionable reason for every rejection.
 """
 
 
+class BankJudgeItem(BaseModel):
+    index: int
+    accept: bool
+    reason: str = ""
+
+
 class BankJudgeVerdict(BaseModel):
-    verdicts: list[dict] = Field(default_factory=list)  # {index, accept, reason}
+    # Typed so a shape mismatch (e.g. model answers "verdict" instead of
+    # "accept") triggers structured_completion's repair loop instead of
+    # silently rejecting every question.
+    verdicts: list[BankJudgeItem] = Field(default_factory=list)
 
 
 async def run_track_creator_turn(
@@ -119,7 +128,7 @@ async def run_bank_builder_turn(
             "question_areas": brief.get("question_areas", []),
             "candidate_angle_notes": brief.get("candidate_angle_notes", ""),
         },
-        "target_count": 12,
+        "target_count": 4,
     }
     system = BANK_SYSTEM_PROMPT
     if regenerate_indices:
@@ -226,14 +235,14 @@ def build_track_creator_graph(
                         questions=[{**q, "index": i} for i, q in enumerate(candidates)],
                     )
                     for v in verdict.verdicts:
-                        idx = v.get("index")
-                        if not isinstance(idx, int) or not (0 <= idx < len(candidates)):
+                        idx = v.index
+                        if not (0 <= idx < len(candidates)):
                             continue
                         judged_idx.add(idx)
-                        if v.get("accept"):
+                        if v.accept:
                             all_accepted.append(candidates[idx])
                         else:
-                            rejects.append((candidates[idx], str(v.get("reason", "rejected"))))
+                            rejects.append((candidates[idx], v.reason or "rejected"))
                 except Exception as exc:
                     log.warning("bank_judge_failed", error=str(exc))
 
@@ -243,6 +252,8 @@ def build_track_creator_graph(
                         all_accepted.append(q)
 
                 if not rejects or round_no == 1:
+                    log.info("bank_built", accepted=len(all_accepted), rejected=len(rejects))
+                    break
                     break
 
                 # One regeneration round: replace ONLY the rejected questions.

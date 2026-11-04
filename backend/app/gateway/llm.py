@@ -53,7 +53,7 @@ async def chat_completion(
             )
             if resp.status_code == 429 and attempt < 2:
                 retry_after = resp.headers.get("retry-after")
-                delay = float(retry_after) if retry_after else (30 if attempt == 0 else 60)
+                delay = float(retry_after) if retry_after else (45 if attempt == 0 else 90)
                 log.warning(
                     "llm_gateway_rate_limited",
                     model=model,
