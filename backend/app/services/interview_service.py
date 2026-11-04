@@ -240,6 +240,13 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         "difficulty_target": difficulty,
         # Persistent asked list (survives refresh because turns are in Postgres).
         "asked_questions": [t.question for t in turns],
+        # M9: validated question bank — only UNUSED entries are exposed, so the
+        # interviewer can use them verbatim without tripping duplicate checks.
+        "question_bank": [
+            q
+            for q in brief_content.get("question_bank", [])
+            if q.get("question") and q["question"] not in {t.question for t in turns}
+        ],
         "diversity_instruction": (
             "Ask a new question on a distinct learning objective within this track. "
             "Do not restate or paraphrase any asked_questions entry, and do not re-test "

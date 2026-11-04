@@ -18,6 +18,11 @@ STRICT_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer conducting a ST
 Rules:
 - Ask ONE question at a time. Questions must be concrete and answerable in text.
 - Follow the question_areas / track topics from the brief.
+- QUESTION BANK: question_bank holds pre-validated questions for this track.
+  STRONGLY PREFER the next unused bank question matching the current or next area,
+  used VERBATIM — they are already quality-checked. Improvise only for adaptive
+  follow-ups, when no suitable unused bank question remains, or when the bank
+  question would be a poor fit for the answer just given.
 - NEVER repeat an asked question, and NEVER ask a near-paraphrase of one in
   asked_questions (different wording of the same ask still counts as a repeat).
 - Compare learning objectives: if a candidate question tests the same concepts
@@ -50,6 +55,11 @@ GUIDED_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer conducting a GU
 Rules:
 - Ask ONE question at a time. Questions must be concrete and answerable in text.
 - Follow the question_areas / track topics from the brief.
+- QUESTION BANK: question_bank holds pre-validated questions for this track.
+  STRONGLY PREFER the next unused bank question matching the current or next area,
+  used VERBATIM — they are already quality-checked. Improvise only for adaptive
+  follow-ups, when no suitable unused bank question remains, or when the bank
+  question would be a poor fit for the answer just given.
 - NEVER repeat an asked question, and NEVER ask a near-paraphrase of one in
   asked_questions (different wording of the same ask still counts as a repeat).
 - Compare learning objectives: if a candidate question tests the same concepts
@@ -270,6 +280,12 @@ def _fallback_unique_question(
     )
     n = len(asked) + 1
     candidates: list[str] = []
+
+    # M9: unused validated bank questions come FIRST.
+    for entry in payload.get("question_bank") or []:
+        q = (entry.get("question") or "").strip()
+        if q and not any(is_duplicate_question(q, [a]) for a in asked):
+            candidates.append(q)
 
     # Prefer a bank of genuinely different concepts (esp. Arrays tracks).
     area_l = area.lower()

@@ -154,3 +154,96 @@ async def test_sessions_require_auth():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get(f"/api/v1/sessions/{uuid.uuid4()}")
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_interviewer_draws_from_question_bank(monkeypatch, clean_users_table):
+    """M9: the interviewer prefers unused validated bank questions verbatim."""
+    import httpx
+
+    from app.core.config import get_settings
+    from app.db.mongo import get_mongo_client
+
+    captured = {}
+
+    async def fake_turn(*args, **kwargs):
+        payload = kwargs.get("payload") or (args[0] if args else {})
+        captured.update(payload)
+        # The mocked agent returns the first unused bank question VERBATIM —
+        # validation must accept it even though it is word-for-word from the bank.
+        bank = payload.get("question_bank") or []
+        if bank:
+            return TurnDecision(
+                evaluation={"coverage": "none", "strengths": [], "gaps": []},
+                decision="next_area",
+                next_question=bank[0]["question"],
+                question_area=bank[0]["area"],
+            )
+        return TurnDecision(
+            evaluation={"coverage": "none", "strengths": [], "gaps": []},
+            decision="next_area",
+            next_question="Generic improvised question?",
+            question_area="General",
+        )
+
+    from app.agents.interviewer import TurnDecision  # noqa: F401
+
+    monkeypatch.setattr("app.services.interview_service.run_interviewer_turn", fake_turn)
+
+    email = f"bk-{uuid.uuid4()}@example.com"
+    async with SessionFactory() as session:
+        user = User(google_sub=f"sub-{uuid.uuid4()}", email=email)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        track = Track(user_id=user.id, track_type="topic", subject="DSA")
+        session.add(track)
+        await session.commit()
+        await session.refresh(track)
+        session.add(
+            InterviewBrief(
+                track_id=track.id,
+                version=1,
+                content={
+                    "summary": "DSA",
+                    "question_areas": [{"topic": "Hashmaps", "guidance": "collisions"}],
+                    "question_bank": [
+                        {
+                            "area": "Hashmaps",
+                            "question": "Walk through how a Python dict resolves collisions.",
+                            "difficulty": "intermediate",
+                            "type": "conceptual",
+                            "expected_answer_sketch": "open addressing",
+                        },
+                        {
+                            "area": "Hashmaps",
+                            "question": "When would you pick a hashmap over an array?",
+                            "difficulty": "foundational",
+                            "type": "conceptual",
+                            "expected_answer_sketch": "key-based lookup",
+                        },
+                    ],
+                },
+            )
+        )
+        await session.commit()
+    token = create_access_token(str(user.id))
+
+    app = create_app()
+    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        r = await client.post(f"/api/v1/tracks/{track.id}/sessions", cookies={"ic_access": token})
+        assert r.status_code == 201
+        # The first question IS the first bank question, verbatim.
+        assert r.json()["turn"]["question"] == "Walk through how a Python dict resolves collisions."
+        sid = r.json()["session"]["id"]
+        assert captured["question_bank"][0]["question"].startswith("Walk through")
+
+        # Answer it: the NEXT bank question arrives (verbatim, still accepted).
+        await client.post(
+            f"/api/v1/sessions/{sid}/turns",
+            json={"answer": "open addressing and chaining"},
+            cookies={"ic_access": token},
+        )
+        assert captured["question_bank"][0]["question"].startswith("When would you")
