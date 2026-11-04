@@ -57,6 +57,78 @@ test("dashboard lists tracks from the API", async ({ page }) => {
   await expect(page.getByText(/Interview prep focused on the/i)).toBeVisible();
 });
 
+test("track detail shows the question bank (M9)", async ({ page }) => {
+  await page.route("**/api/v1/auth/me", (route) => {
+    // handled by shared mock below in beforeEach — this spec-level route is
+    // unnecessary; kept intentionally empty to avoid double registration.
+    void route;
+  });
+  await page.route("**/api/v1/me/assessments", (route) =>
+    route.fulfill({
+      json: {
+        dashboard: {
+          completed_interviews: 0,
+          average_score: null,
+          total_questions_attempted: 0,
+          strongest_skills: [],
+          skills_needing_improvement: [],
+          recommended_topics: [],
+        },
+        assessments: [],
+      },
+    }),
+  );
+  await page.route("**/api/v1/tracks/t1", (route) =>
+    route.fulfill({
+      json: {
+        track: {
+          id: "t1",
+          track_type: "topic",
+          subject: "Data Structures & Algorithms",
+          company: null,
+          status: "active",
+          created_at: "2026-11-03T00:00:00Z",
+        },
+        brief: {
+          version: 1,
+          content: {
+            summary: "DSA basics",
+            question_bank: [
+              {
+                area: "Hashmaps",
+                question: "Walk through how a Python dict resolves collisions.",
+                difficulty: "intermediate",
+                type: "conceptual",
+                expected_answer_sketch: "open addressing",
+              },
+              {
+                area: "Big-O",
+                question: "When is O(n log n) better than O(n)?",
+                difficulty: "advanced",
+                type: "conceptual",
+                expected_answer_sketch: "constants and cache behavior",
+              },
+            ],
+          },
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/tracks/t1/progression", (route) =>
+    route.fulfill({
+      json: { track_id: "t1", strict_completed: 0, guided_state: "LOCKED" },
+    }),
+  );
+
+  await page.goto("/tracks/t1");
+  const bank = page.getByText(/Question bank \(2 pre-validated questions\)/);
+  await bank.click();
+  await expect(
+    page.getByText("Walk through how a Python dict resolves collisions."),
+  ).toBeVisible();
+  await expect(page.getByText("advanced")).toBeVisible();
+});
+
 test("interview page renders question and submits answer", async ({ page }) => {
   // Stateful mock mirroring the backend: turns live server-side, evaluations
   // are persisted onto the answered turn.

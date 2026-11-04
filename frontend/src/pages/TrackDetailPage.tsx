@@ -120,6 +120,40 @@ export default function TrackDetailPage() {
             </section>
           </div>
 
+          {content.question_bank?.length > 0 && (
+            <details className="rounded-2xl border border-stone-200 bg-white p-5">
+              <summary className="cursor-pointer text-sm font-semibold text-stone-700">
+                Question bank ({content.question_bank.length} pre-validated questions)
+              </summary>
+              <div className="mt-3 space-y-3">
+                {content.question_bank.map((q, i) => (
+                  <div key={i} className="rounded-xl border border-stone-100 p-3">
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-medium text-stone-600">
+                        {q.area}
+                      </span>
+                      <span
+                        className={`rounded-md px-1.5 py-0.5 font-medium ${
+                          q.difficulty === "advanced"
+                            ? "bg-rose-100 text-rose-700"
+                            : q.difficulty === "foundational"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {q.difficulty}
+                      </span>
+                      <span className="rounded-md bg-violet-100 px-1.5 py-0.5 font-medium text-violet-700">
+                        {q.type}
+                      </span>
+                    </div>
+                    <p className="mt-1.5 text-sm">{q.question}</p>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
           <section className="rounded-2xl border border-stone-200 bg-white p-5">
             <h2 className="text-sm font-semibold text-stone-500">Preparation plan</h2>
             <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm">
