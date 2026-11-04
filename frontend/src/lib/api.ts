@@ -146,8 +146,17 @@ export interface Track {
   brief_version?: number;
 }
 
+export interface BankQuestion {
+  area: string;
+  question: string;
+  difficulty: "foundational" | "intermediate" | "advanced";
+  type: "coding" | "conceptual" | "behavioral";
+  expected_answer_sketch: string;
+}
+
 export interface BriefContent {
   summary: string;
+  question_bank: BankQuestion[];
   preparation_plan: string[];
   competencies: { name: string; description: string; importance: string }[];
   question_areas: { topic: string; guidance: string }[];

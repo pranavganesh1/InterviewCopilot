@@ -40,9 +40,22 @@ async def test_create_track_generates_brief_v1(monkeypatch, clean_users_table):
     async def fake_turn(*args, **kwargs):
         return content
 
+    import app.agents.track_creator as tc
     import app.services.track_service as svc
 
+    monkeypatch.setattr(tc, "BANK_CALL_SPACING_S", 0)
     monkeypatch.setattr(svc, "run_track_creator_turn", fake_turn)
+    # Bank generation is covered by test_question_bank.py; keep these tests
+    # fast and quota-free by shipping an empty bank.
+    monkeypatch.setattr(
+        svc, "run_bank_builder_turn", fake_turn
+    )  # returns InterviewBriefContent -> no .questions attr
+
+    async def fake_bank_empty(*args, **kwargs):
+        raise RuntimeError("no bank in this test")
+
+    monkeypatch.setattr(svc, "run_bank_builder_turn", fake_bank_empty)
+    monkeypatch.setattr(svc, "run_bank_judge_turn", fake_turn)
 
     app = create_app()
     transport = httpx.ASGITransport(app=app)

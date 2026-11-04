@@ -317,7 +317,9 @@ export default function InterviewPage() {
                     {t.answer}
                   </div>
                 )}
-                {evaluation && (
+                {/* Strict mode: zero live feedback — everything lands in the
+                    report (product rule, M9). Guided shows chips live. */}
+                {isGuided && evaluation && (
                   <div className="ml-auto max-w-[92%]">
                     <EvaluationFeedback
                       evaluation={evaluation}
@@ -331,8 +333,9 @@ export default function InterviewPage() {
           })}
           {submit.isPending && (
             <div className="rounded-2xl border border-dashed border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
-              Evaluating your answer… please wait. Submit is disabled until
-              this finishes.
+              {isGuided
+                ? "Evaluating your answer… please wait. Submit is disabled until this finishes."
+                : "Recording your answer…"}
             </div>
           )}
           {submit.isError && (
@@ -406,7 +409,7 @@ export default function InterviewPage() {
             You finished the question set ({answeredCount}/{maxTurns}). Feedback
             is pending — the report is generated asynchronously.
           </p>
-          {lastEvaluation && (
+          {isGuided && lastEvaluation && (
             <div className="mt-4">
               <EvaluationFeedback
                 evaluation={lastEvaluation.evaluation}
