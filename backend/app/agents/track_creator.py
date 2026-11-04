@@ -1,3 +1,4 @@
+import asyncio
 from typing import Literal, TypedDict
 
 import httpx
@@ -9,6 +10,9 @@ from app.core.logging import get_logger
 from app.gateway.structured import structured_completion
 
 log = get_logger(__name__)
+
+# Free-tier TPM windows: pipeline LLM calls are spaced out. Tests patch to 0.
+BANK_CALL_SPACING_S = 20
 
 SYSTEM_PROMPT = """You are InterviewCopilot's interview architect. Design an interview
 brief for a preparation track.
@@ -70,7 +74,7 @@ Rules:
 - Mark type: coding (write/fix code), conceptual (explain/compare), or behavioral.
 - Never produce two questions testing the same learning objective — near-paraphrases
   will be rejected by validation.
-- expected_answer_sketch: 1-2 sentences on what a strong answer covers.
+- expected_answer_sketch: ONE sentence (max ~120 chars) on what a strong answer covers.
 - Ground questions in the candidate's context where the brief's candidate_angle_notes
   suggests it.
 """
@@ -109,8 +113,13 @@ async def run_bank_builder_turn(
 ) -> list[BankQuestion]:
     payload = {
         "track_objective": objective,
-        "brief": brief,
-        "target_count": 18,
+        # Trim: only what authoring needs (full brief blows free-tier TPM limits).
+        "brief": {
+            "summary": brief.get("summary", ""),
+            "question_areas": brief.get("question_areas", []),
+            "candidate_angle_notes": brief.get("candidate_angle_notes", ""),
+        },
+        "target_count": 12,
     }
     system = BANK_SYSTEM_PROMPT
     if regenerate_indices:
@@ -175,6 +184,9 @@ def build_track_creator_graph(
         regen = regen_runner or bank_runner
         bank: list[dict] = []
         try:
+            # Free-tier TPM windows: space the pipeline's calls out instead of
+            # bursting (author just fired moments ago).
+            await asyncio.sleep(BANK_CALL_SPACING_S)
             questions = await bank_runner(objective=objective, brief=brief)
             bank = [q.model_dump() for q in questions]
         except Exception as exc:
@@ -208,6 +220,7 @@ def build_track_creator_graph(
 
                 judged_idx: set[int] = set()
                 try:
+                    await asyncio.sleep(BANK_CALL_SPACING_S)
                     verdict = await judge_runner(
                         objective=objective,
                         questions=[{**q, "index": i} for i, q in enumerate(candidates)],

@@ -55,8 +55,10 @@ async def test_bank_attached_to_brief(monkeypatch):
             ]
         )
 
+    import app.agents.track_creator as tc
     import app.services.track_service as svc
 
+    monkeypatch.setattr(tc, "BANK_CALL_SPACING_S", 0)
     monkeypatch.setattr(svc, "run_track_creator_turn", fake_turn)
     monkeypatch.setattr(svc, "run_bank_builder_turn", fake_bank)
     monkeypatch.setattr(svc, "run_bank_judge_turn", fake_judge)
@@ -99,8 +101,10 @@ async def test_rejected_questions_regenerated_once(monkeypatch):
         regen_calls["n"] += 1
         return _bank(["Precise collision-resolution question?"])
 
+    import app.agents.track_creator as tc
     import app.services.track_service as svc
 
+    monkeypatch.setattr(tc, "BANK_CALL_SPACING_S", 0)
     monkeypatch.setattr(svc, "run_track_creator_turn", fake_turn)
     monkeypatch.setattr(svc, "run_bank_builder_turn", fake_bank)
     monkeypatch.setattr(svc, "run_bank_judge_turn", fake_judge)
@@ -126,8 +130,10 @@ async def test_generation_crash_ships_empty_bank(monkeypatch):
     async def fake_bank(*args, **kwargs):
         raise RuntimeError("llm down")
 
+    import app.agents.track_creator as tc
     import app.services.track_service as svc
 
+    monkeypatch.setattr(tc, "BANK_CALL_SPACING_S", 0)
     monkeypatch.setattr(svc, "run_track_creator_turn", fake_turn)
     monkeypatch.setattr(svc, "run_bank_builder_turn", fake_bank)
 
