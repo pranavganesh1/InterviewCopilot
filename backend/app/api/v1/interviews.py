@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -17,7 +18,7 @@ class SubmitAnswer(BaseModel):
 
 
 class CreateSession(BaseModel):
-    mode: str = "strict"
+    mode: Literal["strict", "guided"] = "strict"
 
 
 @router.post("/tracks/{track_id}/sessions", status_code=201)
@@ -37,6 +38,19 @@ async def start_session(
             "brief_not_found": ("Track has no Interview Brief yet", 409),
         }.get(str(exc), ("Not found", 404))
         raise HTTPException(status_code=detail[1], detail=detail[0]) from None
+    except ValueError as exc:
+        if str(exc) == "invalid_mode":
+            raise HTTPException(
+                status_code=422, detail="mode must be 'strict' or 'guided'"
+            ) from None
+        raise
+    except PermissionError as exc:
+        if str(exc) == "guided_locked":
+            raise HTTPException(
+                status_code=403,
+                detail="Guided mode is locked until progression policy unlocks it",
+            ) from None
+        raise
 
 
 @router.get("/sessions/{session_id}")
@@ -72,16 +86,46 @@ async def submit_turn(
             raise HTTPException(
                 status_code=409, detail="No open question — session not active"
             ) from None
+        if str(exc) == "session_not_active":
+            raise HTTPException(status_code=409, detail="Session is not active") from None
         raise HTTPException(status_code=404, detail="Session not found") from None
+
+
+@router.post("/sessions/{session_id}/assistance")
+async def request_assistance(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await interview_service.request_assistance(db, user, session_id)
+    except LookupError as exc:
+        detail = {
+            "session_not_found": ("Session not found", 404),
+            "session_not_active": ("Session is not active", 409),
+            "no_open_question": ("No open question — assistance unavailable", 409),
+            "assistance_exhausted": ("Maximum assistance level already granted", 409),
+        }.get(str(exc), ("Not found", 404))
+        raise HTTPException(status_code=detail[1], detail=detail[0]) from None
+    except PermissionError as exc:
+        if str(exc) == "assistance_not_allowed":
+            raise HTTPException(
+                status_code=403,
+                detail="Assistance is only available in Guided mode",
+            ) from None
+        raise
 
 
 @router.post("/sessions/{session_id}/complete")
 async def complete_session(
     session_id: uuid.UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await interview_service.complete_session(db, user, session_id)
+    result = await interview_service.complete_session(
+        db, user, session_id, nc=getattr(request.app.state, "nats", None)
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return result

@@ -36,3 +36,12 @@ async def get_progression(
     if result is None:
         raise HTTPException(status_code=404, detail="Track not found")
     return result
+
+
+@router.get("/me/assessments")
+async def list_my_assessments(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Profile dashboard: completed interview reports owned by the current user."""
+    return await feedback_service.list_assessments_for_user(db, user.id)

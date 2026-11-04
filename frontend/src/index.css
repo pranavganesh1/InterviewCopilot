@@ -1,5 +1,5 @@
 @import "tailwindcss";
 
 body {
-  @apply bg-stone-50 text-stone-900 antialiased;
+  @apply bg-[#f6f4fb] text-slate-900 antialiased;
 }

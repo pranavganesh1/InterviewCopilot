@@ -16,6 +16,8 @@ Rules:
 - evidence_excerpt: a SHORT verbatim quote from the answer supporting the observation
   (empty string if the answer gave nothing quotable).
 - Ground everything in the actual transcript. Never invent answers or claims.
+- The transcript contains ONLY submitted answers. Never invent answers for skipped
+  questions, and never treat unanswered questions as incorrect.
 """
 
 ASSESS_PROMPT = """You are InterviewCopilot's assessment writer. Using the extracted
@@ -29,7 +31,13 @@ Rules:
 - strengths and improvement_areas: concrete, grounded in the transcript.
 - recommendations: 3-5 specific practice actions for the student.
 - summary_overview: 2-3 sentences a student would find fair and useful.
+- Early exits are normal: evaluate only the submitted answers provided. Do not
+  penalize unanswered remaining questions as wrong — list never-probed topics under
+  unassessed_topics instead.
 - STRICT interview: treat every answer as unassisted evidence.
+- GUIDED interview: when a transcript turn has assisted=true, do NOT treat that
+  answer as independent mastery — note it as coached evidence in observations
+  and do not inflate competency levels from assisted turns alone.
 """
 
 
@@ -38,6 +46,16 @@ class QuestionEvidence(BaseModel):
     coverage: Literal["none", "partial", "good", "excellent"]
     observation: str
     evidence_excerpt: str = ""
+    # Optional enrichment from persisted turns (filled by report builder / service).
+    question: str = ""
+    answer: str = ""
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    expected_answer_explanation: str = ""
+    corrected_code: str = ""
+    time_complexity: str = ""
+    space_complexity: str = ""
+    score: int | None = None
 
 
 class AssessedCompetency(BaseModel):

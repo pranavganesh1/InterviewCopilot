@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
@@ -6,6 +7,7 @@ import {
   type OnboardingState,
   type VaultItem,
 } from "../lib/api";
+import { useAuth } from "../context/AuthContext";
 
 const CATEGORY_STYLES: Record<string, string> = {
   project: "bg-indigo-100 text-indigo-700",
@@ -16,9 +18,18 @@ const CATEGORY_STYLES: Record<string, string> = {
   other: "bg-stone-100 text-stone-600",
 };
 
+const REQUIRED_LABELS: Record<string, string> = {
+  project: "a project",
+  skill: "skills",
+  education: "education",
+};
+
 export default function OnboardingPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const { refresh } = useAuth();
   const [input, setInput] = useState("");
+  const [coachMarkedComplete, setCoachMarkedComplete] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const state = useQuery({
@@ -32,7 +43,10 @@ export default function OnboardingPage() {
         method: "POST",
         body: JSON.stringify({ message }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding-state"] }),
+    onSuccess: (data) => {
+      if (data.onboarding_complete) setCoachMarkedComplete(true);
+      qc.invalidateQueries({ queryKey: ["onboarding-state"] });
+    },
   });
 
   const upload = useMutation({
@@ -47,6 +61,16 @@ export default function OnboardingPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding-state"] }),
   });
 
+  const finish = useMutation({
+    mutationFn: () =>
+      api<OnboardingState>("/onboarding/complete", { method: "POST" }),
+    onSuccess: async (data) => {
+      qc.setQueryData(["onboarding-state"], data);
+      await refresh();
+      navigate("/", { replace: true });
+    },
+  });
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [state.data?.messages.length, chat.isPending]);
@@ -58,125 +82,249 @@ export default function OnboardingPage() {
     chat.mutate(message);
   };
 
+  const vaultItems = state.data?.vault_items ?? [];
+  const missing =
+    state.data?.missing_categories ??
+    (() => {
+      const cats = new Set(vaultItems.map((v) => v.category));
+      return (["project", "skill", "education"] as const).filter(
+        (c) => !cats.has(c),
+      );
+    })();
+  const finished = state.data?.onboarding_finished === true;
+  const vaultComplete =
+    state.data?.onboarding_complete === true || missing.length === 0;
+  const canFinish =
+    !finished && (coachMarkedComplete || vaultComplete) && !finish.isPending;
+
   const messages = [
     ...(state.data?.messages ?? []),
     ...(chat.isPending
       ? [
           {
             role: "pending",
-            content: "Your onboarding coach is thinking…",
+            content: finished
+              ? "Updating your profile…"
+              : "Your onboarding coach is thinking…",
           },
         ]
       : []),
   ];
 
   return (
-    <div className="grid gap-6 md:grid-cols-[1fr_300px]">
-      <section className="flex h-[calc(100vh-9rem)] flex-col rounded-2xl border border-stone-200 bg-white">
-        <div className="border-b border-stone-100 px-5 py-3">
-          <h1 className="font-semibold">Onboarding</h1>
-          <p className="text-xs text-stone-500">
-            Tell your story — projects, internships, skills, achievements.
-          </p>
-        </div>
-        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          {messages.length === 0 && (
-            <p className="text-sm text-stone-400">
-              Start by describing a project you've built.
-            </p>
-          )}
-          {messages.map((m, i) => (
-            <div
-              key={i}
-              className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
-                m.role === "user"
-                  ? "ml-auto bg-indigo-600 text-white"
-                  : m.role === "pending"
-                    ? "bg-stone-100 italic text-stone-400"
-                    : "bg-stone-100"
-              }`}
-            >
-              {m.content}
-            </div>
-          ))}
-          {chat.error instanceof Error && (
-            <p className="text-sm text-red-600">{chat.error.message}</p>
-          )}
-          <div ref={bottomRef} />
-        </div>
-        <div className="border-t border-stone-100 p-3">
-          <div className="flex gap-2">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
-              placeholder="Describe a project, an internship, a skill…"
-              className="flex-1 rounded-xl border border-stone-200 px-4 py-2.5 text-sm outline-none focus:border-indigo-400"
-              disabled={chat.isPending}
-            />
-            <button
-              onClick={send}
-              disabled={chat.isPending || !input.trim()}
-              className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
-            >
-              Send
-            </button>
-          </div>
-        </div>
-      </section>
+    <div className="space-y-4">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-indigo-600">
+          Profile setup
+        </p>
+        <h1 className="text-xl font-semibold tracking-tight">Onboarding</h1>
+        <p className="mt-0.5 text-sm text-stone-500">
+          {finished
+            ? "Your profile is saved. Edit anything below — Tracks stays your home."
+            : "Share projects, internships, skills, and education so interviews stay grounded in your story."}
+        </p>
+      </div>
 
-      <aside className="space-y-4">
-        <div className="rounded-2xl border border-stone-200 bg-white p-4">
-          <h2 className="text-sm font-semibold">Your vault</h2>
-          <p className="mt-1 text-xs text-stone-500">
-            What your copilot knows about you.
-          </p>
-          <div className="mt-3 space-y-2">
-            {state.data?.vault_items.length === 0 && (
-              <p className="text-xs text-stone-400">Empty so far.</p>
+      {finished && (
+        <div
+          data-testid="onboarding-finished-banner"
+          className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
+        >
+          Onboarding completed
+          {state.data?.onboarding_completed_at
+            ? ` · ${new Date(state.data.onboarding_completed_at).toLocaleDateString()}`
+            : ""}
+          . You can keep refining your vault anytime.
+        </div>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <section className="flex min-h-[28rem] flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm md:min-h-[calc(100vh-11rem)]">
+          <div className="flex items-center justify-between gap-3 border-b border-stone-100 bg-gradient-to-r from-indigo-50/80 to-white px-4 py-3 sm:px-5">
+            <div>
+              <h2 className="text-sm font-semibold text-stone-800">
+                Conversation
+              </h2>
+              <p className="text-xs text-stone-500">
+                {finished
+                  ? "Add or correct details — we won’t restart intake questions"
+                  : "Chat with your coach · vault updates as you share"}
+              </p>
+            </div>
+            <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-stone-500 ring-1 ring-stone-200">
+              {messages.filter((m) => m.role !== "pending").length} messages
+            </span>
+          </div>
+
+          <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5">
+            {messages.length === 0 && (
+              <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center">
+                <p className="text-sm font-medium text-stone-700">
+                  {finished
+                    ? "Tell us what you’d like to update"
+                    : "Start with a project you’ve built"}
+                </p>
+                <p className="mt-1 text-xs text-stone-500">
+                  {finished
+                    ? "New skills, projects, or education details go straight into your vault."
+                    : "Include stack, your role, and one concrete outcome."}
+                </p>
+              </div>
             )}
-            {state.data?.vault_items.map((item: VaultItem) => (
-              <div key={item.id} className="rounded-xl border border-stone-100 p-2.5">
-                <span
-                  className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
-                    CATEGORY_STYLES[item.category] ?? CATEGORY_STYLES.other
-                  }`}
-                >
-                  {item.category}
-                </span>
-                <p className="mt-1 text-sm">{item.title}</p>
+            {messages.map((m, i) => (
+              <div
+                key={i}
+                className={`max-w-[min(100%,36rem)] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+                  m.role === "user"
+                    ? "ml-auto bg-indigo-600 text-white"
+                    : m.role === "pending"
+                      ? "bg-stone-100 italic text-stone-400"
+                      : "bg-stone-100 text-stone-800"
+                }`}
+              >
+                {m.content}
               </div>
             ))}
+            {chat.error instanceof Error && (
+              <p className="text-sm text-red-600">{chat.error.message}</p>
+            )}
+            <div ref={bottomRef} />
           </div>
-        </div>
-        <div className="rounded-2xl border border-stone-200 bg-white p-4">
-          <h2 className="text-sm font-semibold">Resume</h2>
-          <p className="mt-1 text-xs text-stone-500">PDF up to 10 MB.</p>
-          <label className="mt-3 block cursor-pointer rounded-xl border border-dashed border-stone-300 px-4 py-4 text-center text-sm text-stone-500 hover:border-indigo-400 hover:text-indigo-600">
-            {upload.isPending
-              ? "Extracting your experience…"
-              : "Upload resume PDF"}
-            <input
-              type="file"
-              accept="application/pdf"
-              className="hidden"
-              disabled={upload.isPending}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) upload.mutate(f);
-              }}
-            />
-          </label>
-          {upload.data && (
-            <p className="mt-2 text-xs text-emerald-600">
-              Added {upload.data.items_created.length} vault items from your resume.
+
+          <div className="border-t border-stone-100 bg-stone-50/60 p-3 sm:p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
+                placeholder={
+                  finished
+                    ? "Add or correct a project, skill, or education detail…"
+                    : "Describe a project, internship, or skill…"
+                }
+                className="min-w-0 flex-1 rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                disabled={chat.isPending}
+              />
+              <button
+                onClick={send}
+                disabled={chat.isPending || !input.trim()}
+                className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40 sm:self-auto"
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <aside className="flex flex-col gap-4">
+          <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-stone-800">Your vault</h2>
+              <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                {vaultItems.length} items
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-stone-500">
+              What your copilot already knows about you.
+            </p>
+            <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-0.5">
+              {vaultItems.length === 0 && (
+                <p className="rounded-xl bg-stone-50 px-3 py-4 text-center text-xs text-stone-400">
+                  Empty so far — chat or upload a resume.
+                </p>
+              )}
+              {vaultItems.map((item: VaultItem) => (
+                <div
+                  key={item.id}
+                  className="rounded-xl border border-stone-100 bg-stone-50/80 px-3 py-2.5"
+                >
+                  <span
+                    className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
+                      CATEGORY_STYLES[item.category] ?? CATEGORY_STYLES.other
+                    }`}
+                  >
+                    {item.category}
+                  </span>
+                  <p className="mt-1.5 text-sm font-medium leading-snug text-stone-800">
+                    {item.title}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+            <h2 className="text-sm font-semibold text-stone-800">Resume</h2>
+            <p className="mt-1 text-xs text-stone-500">
+              Optional — PDF up to 10 MB.
+            </p>
+            <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-indigo-200 bg-indigo-50/40 px-4 py-5 text-center transition hover:border-indigo-400 hover:bg-indigo-50">
+              <span className="text-sm font-medium text-indigo-700">
+                {upload.isPending
+                  ? "Extracting your experience…"
+                  : "Upload resume PDF"}
+              </span>
+              <span className="mt-1 text-[11px] text-stone-500">
+                Speeds up vault setup when you have one
+              </span>
+              <input
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                disabled={upload.isPending}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) upload.mutate(f);
+                }}
+              />
+            </label>
+            {upload.data && (
+              <p className="mt-2 text-xs text-emerald-600">
+                Added {upload.data.items_created.length} vault items from your
+                resume.
+              </p>
+            )}
+            {upload.error instanceof Error && (
+              <p className="mt-2 text-xs text-red-600">{upload.error.message}</p>
+            )}
+          </div>
+
+          {finished ? (
+            <button
+              type="button"
+              data-testid="go-to-tracks"
+              onClick={() => navigate("/", { replace: true })}
+              className="rounded-2xl bg-indigo-600 px-4 py-3.5 text-center text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+            >
+              Go to Tracks
+            </button>
+          ) : canFinish ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                data-testid="finish-onboarding"
+                onClick={() => finish.mutate()}
+                disabled={finish.isPending}
+                className="w-full rounded-2xl bg-indigo-600 px-4 py-3.5 text-center text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {finish.isPending ? "Saving…" : "Finish Onboarding"}
+              </button>
+              {finish.error instanceof Error && (
+                <p className="text-center text-xs text-red-600">
+                  {finish.error.message}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-xs text-amber-900">
+              Still needed:{" "}
+              {missing.map((c) => REQUIRED_LABELS[c] ?? c).join(", ") ||
+                "keep chatting with your coach"}
+              .
             </p>
           )}
-          {upload.error instanceof Error && (
-            <p className="mt-2 text-xs text-red-600">{upload.error.message}</p>
-          )}
-        </div>
-      </aside>
+        </aside>
+      </div>
     </div>
   );
 }
