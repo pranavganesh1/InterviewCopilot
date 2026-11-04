@@ -26,13 +26,16 @@ export default function TrackDetailPage() {
   });
 
   const start = useMutation({
-    mutationFn: (id: string) =>
+    mutationFn: ({ id, mode }: { id: string; mode: "strict" | "guided" }) =>
       api<{ session: { id: string } }>(`/tracks/${id}/sessions`, {
         method: "POST",
-        body: JSON.stringify({ mode: "strict" }),
+        body: JSON.stringify({ mode }),
       }),
-    onSuccess: (d, id) => navigate(`/tracks/${id}/interview/${d.session.id}`),
+    onSuccess: (d, vars) =>
+      navigate(`/tracks/${vars.id}/interview/${d.session.id}`),
   });
+
+  const guidedUnlocked = progression.data?.guided_state === "UNLOCKED";
 
   if (data.isLoading) return <p className="text-stone-500">Loading…</p>;
   if (data.error instanceof Error)
@@ -133,15 +136,29 @@ export default function TrackDetailPage() {
       {start.error instanceof Error && (
         <p className="text-sm text-red-600">{start.error.message}</p>
       )}
-      <button
-        onClick={() => start.mutate(trackId!)}
-        disabled={start.isPending}
-        className="w-full rounded-2xl bg-indigo-600 py-3 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-      >
-        {start.isPending
-          ? "Interviewer is preparing your first question…"
-          : "Start strict interview"}
-      </button>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          onClick={() => start.mutate({ id: trackId!, mode: "strict" })}
+          disabled={start.isPending}
+          className="rounded-2xl bg-indigo-600 py-3 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {start.isPending
+            ? "Preparing…"
+            : "Start strict interview"}
+        </button>
+        <button
+          onClick={() => start.mutate({ id: trackId!, mode: "guided" })}
+          disabled={start.isPending || !guidedUnlocked}
+          title={
+            guidedUnlocked
+              ? "Start a guided interview with optional assistance"
+              : "Guided mode unlocks after progression policy criteria are met"
+          }
+          className="rounded-2xl border border-stone-300 bg-white py-3 font-medium text-stone-800 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {guidedUnlocked ? "Start guided interview" : "Guided locked"}
+        </button>
+      </div>
     </div>
   );
 }

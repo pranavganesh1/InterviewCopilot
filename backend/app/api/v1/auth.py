@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,8 +15,18 @@ from app.core.security import (
 )
 from app.db.sqlalchemy import get_db
 from app.models.user import User
+from app.services import profile_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+    professional_title: str | None = Field(default=None, max_length=255)
+    introduction: str | None = Field(default=None, max_length=4000)
+    education: str | None = Field(default=None, max_length=4000)
+    picture_url: str | None = Field(default=None, max_length=1024)
+    skills: list[str] | None = None
 
 
 def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
@@ -53,9 +64,8 @@ async def _upsert_user(db: AsyncSession, userinfo: dict) -> User:
         )
         db.add(user)
     else:
+        # Keep editable profile fields; only refresh email from Google.
         user.email = userinfo.get("email", user.email)
-        user.name = userinfo.get("name", user.name)
-        user.picture_url = userinfo.get("picture", user.picture_url)
     await db.commit()
     await db.refresh(user)
     return user
@@ -108,9 +118,20 @@ async def logout(response: Response):
 
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)):
-    return {
-        "id": str(user.id),
-        "email": user.email,
-        "name": user.name,
-        "picture_url": user.picture_url,
-    }
+    return profile_service.user_dict(user)
+
+
+@router.patch("/me")
+async def update_me(
+    body: ProfileUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await profile_service.update_profile(
+            db, user, body.model_dump(exclude_unset=True)
+        )
+    except ValueError as exc:
+        if str(exc) == "skills_must_be_list":
+            raise HTTPException(status_code=422, detail="skills must be a list") from None
+        raise

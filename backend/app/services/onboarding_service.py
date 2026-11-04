@@ -20,13 +20,21 @@ async def chat(
     user: User,
     message: str,
     request_id: str | None = None,
+    already_finished: bool = False,
 ) -> dict:
     await conversation_store.append_message(mongo_db, str(user.id), "user", message)
     history = await conversation_store.get_messages(mongo_db, str(user.id), limit=20)
     summary = await vault_summary(db, user.id)
 
     graph = build_onboarding_graph(turn_runner=run_onboarding_turn)
-    result = await graph.ainvoke({"message": message, "history": history, "vault_summary": summary})
+    result = await graph.ainvoke(
+        {
+            "message": message,
+            "history": history,
+            "vault_summary": summary,
+            "already_finished": already_finished,
+        }
+    )
     turn = result["turn"]
 
     created = await create_items(
@@ -38,5 +46,5 @@ async def chat(
         "items_created": [
             {"id": str(i.id), "category": i.category, "title": i.title} for i in created
         ],
-        "onboarding_complete": turn["onboarding_complete"],
+        "onboarding_complete": turn["onboarding_complete"] or already_finished,
     }

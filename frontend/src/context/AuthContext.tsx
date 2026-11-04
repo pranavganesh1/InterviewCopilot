@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, type User } from "../lib/api";
+import { setAuthFailureHandler } from "../lib/authRefresh";
 
 interface AuthState {
   user: User | null;
@@ -42,6 +43,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setUser(null);
     }
+  }, []);
+
+  useEffect(() => {
+    setAuthFailureHandler(() => setUser(null));
+    return () => setAuthFailureHandler(null);
   }, []);
 
   useEffect(() => {

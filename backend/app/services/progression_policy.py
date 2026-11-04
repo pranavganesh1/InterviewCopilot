@@ -5,6 +5,14 @@ from app.models.feedback import ProgressionState
 
 STRUGGLING_LEVELS = {"weak", "developing"}
 GUIDED_UNLOCK_AFTER = 3
+VALID_MODES = frozenset({"strict", "guided"})
+
+
+async def guided_unlocked(db: AsyncSession, track_id) -> bool:
+    prog = (
+        await db.execute(select(ProgressionState).where(ProgressionState.track_id == track_id))
+    ).scalar_one_or_none()
+    return prog is not None and prog.guided_state == "UNLOCKED"
 
 
 async def apply_progression(
