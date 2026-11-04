@@ -51,6 +51,9 @@ Rules:
 - When last_answer is null (opening question), leave evaluation lists empty and
   expected_answer_explanation / corrected_code / complexities empty.
 - If questions_remaining is 0, decision MUST be complete.
+- question_type: set "coding" ONLY when answering requires writing actual code.
+  Conceptual explanations, design discussions and behavioral stories are
+  "conceptual"/"behavioral" even inside DSA areas.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent.
 """
 
@@ -91,6 +94,9 @@ Rules:
   Keep solutions ONLY in evaluation fields — never in next_question.
 - When last_answer is null, leave evaluation extras empty.
 - If questions_remaining is 0, decision MUST be complete.
+- question_type: set "coding" ONLY when answering requires writing actual code.
+  Conceptual explanations, design discussions and behavioral stories are
+  "conceptual"/"behavioral" even inside DSA areas.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent. Note if the
   candidate appeared to need coaching.
 """
@@ -120,6 +126,7 @@ class TurnDecision(BaseModel):
     decision: Literal["follow_up", "next_area", "complete"]
     next_question: str
     question_area: str
+    question_type: Literal["coding", "conceptual", "behavioral"] = "conceptual"
     notes_for_report: str = ""
 
     @model_validator(mode="after")

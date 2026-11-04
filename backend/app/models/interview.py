@@ -38,6 +38,7 @@ class SessionTurn(Base):
     question_area: Mapped[str] = mapped_column(String(255))
     question: Mapped[str] = mapped_column(Text)
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    question_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     evaluation_coverage: Mapped[str | None] = mapped_column(String(16), nullable=True)
     evaluation_strengths: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     evaluation_gaps: Mapped[list | None] = mapped_column(JSONB, nullable=True)

@@ -30,6 +30,23 @@ export function classifyQuestion(area: string, question: string): QuestionKind {
   return "text";
 }
 
+/**
+ * Authoritative resolution (M9): the backend persists question_type from the
+ * interviewer/bank. The keyword heuristic is only a fallback for legacy
+ * turns created before question_type existed.
+ */
+export function resolveKind(turn: {
+  question_type?: string | null;
+  question_area?: string | null;
+  question: string;
+}): QuestionKind {
+  if (turn.question_type === "coding") return "coding";
+  if (turn.question_type === "conceptual" || turn.question_type === "behavioral") {
+    return "text";
+  }
+  return classifyQuestion(turn.question_area ?? "", turn.question);
+}
+
 export function parseProblemSections(question: string): {
   statement: string;
   constraints: string | null;

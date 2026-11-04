@@ -286,6 +286,7 @@ async def _append_turn(db: AsyncSession, session, decision: TurnDecision) -> Ses
         turn_index=index,
         question_area=decision.question_area,
         question=decision.next_question,
+        question_type=decision.question_type,
     )
     db.add(turn)
     await db.commit()
@@ -371,6 +372,7 @@ def _turn_dict(t: SessionTurn) -> dict:
         "turn_index": t.turn_index,
         "question_area": t.question_area,
         "question": t.question,
+        "question_type": t.question_type,
     }
 
 

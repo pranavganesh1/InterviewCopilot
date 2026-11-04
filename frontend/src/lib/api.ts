@@ -191,6 +191,7 @@ export interface Turn {
   turn_index: number;
   question_area: string;
   question: string;
+  question_type?: "coding" | "conceptual" | "behavioral" | null;
   answer: string | null;
   assisted?: boolean;
   assistance_level?: number;
