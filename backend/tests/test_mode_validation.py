@@ -40,9 +40,7 @@ async def _seed(monkeypatch, *, guided_state: str = "LOCKED"):
             )
         )
         session.add(
-            ProgressionState(
-                track_id=track.id, strict_completed=3, guided_state=guided_state
-            )
+            ProgressionState(track_id=track.id, strict_completed=3, guided_state=guided_state)
         )
         await session.commit()
 

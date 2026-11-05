@@ -1,3 +1,4 @@
+import re
 from typing import Literal, TypedDict
 
 import httpx
@@ -12,6 +13,20 @@ from app.gateway.structured import structured_completion
 log = get_logger(__name__)
 
 _MAX_REPAIR_ATTEMPTS = 2  # initial call + up to 2 repairs = 3 LLM calls max
+
+PERSONA_BLOCK = """
+Persona (human interviewer):
+- Warm, curious, professional; light humour at most once every few questions — never mocking.
+- After a prior answer, start next_question with ONE short human reaction
+  (e.g. "Nice, that's a clean way to put it." / "Good start — let's go a bit deeper."),
+  then ask exactly ONE concise question (max ~2 sentences). No lists of sub-questions.
+- Use natural topic transitions ("Let's switch gears to …"). Occasionally follow up on
+  something the candidate actually said.
+- Use covered_so_far / memory_instruction when present.
+- STRICT: reactions are neutral and encouraging only — never say whether the answer was
+  right or wrong, never hint or teach. GUIDED: gentle coaching tone is ok; full answers
+  still belong in the assistance API, not in next_question.
+"""
 
 EVALUATE_SYSTEM_PROMPT = """You are InterviewCopilot's answer evaluator.
 
@@ -31,10 +46,15 @@ Use the track/brief context only for grounding — score the answer against the 
 """
 
 STRICT_QUESTION_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer in STRICT mode.
-
+""" + PERSONA_BLOCK + """
 Rules:
 - Ask ONE question at a time. Questions must be concrete and answerable in text.
 - Follow the question_areas / track topics from the brief.
+- QUESTION BANK: question_bank holds pre-validated questions for this track.
+  STRONGLY PREFER the next unused bank question matching the current or next area,
+  used VERBATIM — they are already quality-checked. Improvise only for adaptive
+  follow-ups, when no suitable unused bank question remains, or when the bank
+  question would be a poor fit for the answer just given.
 - NEVER repeat an asked question, and NEVER ask a near-paraphrase of one in
   asked_questions (different wording of the same ask still counts as a repeat).
 - Compare learning objectives: if a candidate question tests the same concepts
@@ -50,17 +70,29 @@ Rules:
   probe a gap with ONE follow-up, move on, or decide the interview is complete.
 - HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
   MUST choose next_area (from remaining_areas) or complete — never another follow-up.
+- PACING (the interview is TIMED): minutes_remaining is the time budget. If
+  minutes_remaining <= 5 you MUST return decision="complete" with next_question=""
+  after evaluating the answer. With 25-50% of time left, start covering the most
+  important remaining areas rather than deep follow-ups.
 - Prefer depth on the candidate's own claimed projects (see candidate_angle_notes).
 - STRICT mode: never put hints, teaching, or the correct answer in next_question.
 - If questions_remaining is 0, decision MUST be complete.
+- question_type: set "coding" ONLY when answering requires writing actual code.
+  Conceptual explanations, design discussions and behavioral stories are
+  "conceptual"/"behavioral" even inside DSA areas.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent.
 """
 
 GUIDED_QUESTION_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer in GUIDED mode.
-
+""" + PERSONA_BLOCK + """
 Rules:
 - Ask ONE question at a time. Questions must be concrete and answerable in text.
 - Follow the question_areas / track topics from the brief.
+- QUESTION BANK: question_bank holds pre-validated questions for this track.
+  STRONGLY PREFER the next unused bank question matching the current or next area,
+  used VERBATIM — they are already quality-checked. Improvise only for adaptive
+  follow-ups, when no suitable unused bank question remains, or when the bank
+  question would be a poor fit for the answer just given.
 - NEVER repeat an asked question, and NEVER ask a near-paraphrase of one in
   asked_questions (different wording of the same ask still counts as a repeat).
 - Compare learning objectives: if a candidate question tests the same concepts
@@ -74,11 +106,18 @@ Rules:
   probe a gap with ONE follow-up, move on, or decide the interview is complete.
 - HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
   MUST choose next_area (from remaining_areas) or complete — never another follow-up.
+- PACING (the interview is TIMED): minutes_remaining is the time budget. If
+  minutes_remaining <= 5 you MUST return decision="complete" with next_question=""
+  after evaluating the answer. With 25-50% of time left, start covering the most
+  important remaining areas rather than deep follow-ups.
 - Prefer depth on the candidate's own claimed projects (see candidate_angle_notes).
 - GUIDED mode: keep next_question conversational. Do NOT dump full answers or
   unsolicited multi-level teaching in next_question — progressive assistance is
   delivered only through the separate assistance API when the candidate asks.
 - If questions_remaining is 0, decision MUST be complete.
+- question_type: set "coding" ONLY when answering requires writing actual code.
+  Conceptual explanations, design discussions and behavioral stories are
+  "conceptual"/"behavioral" even inside DSA areas.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent. Note if the
   candidate appeared to need coaching.
 """
@@ -111,6 +150,7 @@ class QuestionMove(BaseModel):
     decision: Literal["follow_up", "next_area", "complete"]
     next_question: str
     question_area: str
+    question_type: Literal["coding", "conceptual", "behavioral"] = "conceptual"
     notes_for_report: str = ""
 
     @model_validator(mode="after")
@@ -127,6 +167,7 @@ class TurnDecision(BaseModel):
     decision: Literal["follow_up", "next_area", "complete"]
     next_question: str
     question_area: str
+    question_type: Literal["coding", "conceptual", "behavioral"] = "conceptual"
     notes_for_report: str = ""
 
     @model_validator(mode="after")
@@ -158,8 +199,36 @@ def _as_turn(move: QuestionMove, evaluation: AnswerEvaluation) -> TurnDecision:
         decision=move.decision,
         next_question=move.next_question,
         question_area=move.question_area,
+        question_type=move.question_type,
         notes_for_report=move.notes_for_report,
     )
+
+
+# Strict mode: strip leading reaction sentences that reveal correctness.
+_STRICT_SPOILER_RE = re.compile(
+    r"\b("
+    r"correct|incorrect|wrong|right answer|that's right|thats right|"
+    r"not quite right|you (got|missed|nailed)|the answer is|actually the answer"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def strip_strict_spoilers(text: str) -> str:
+    """Drop leading sentences that reveal correctness; keep the real question."""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    parts = re.split(r"(?<=[.!?])\s+", raw)
+    kept: list[str] = []
+    dropping = True
+    for part in parts:
+        if dropping and _STRICT_SPOILER_RE.search(part):
+            continue
+        dropping = False
+        kept.append(part)
+    cleaned = " ".join(kept).strip()
+    return cleaned or raw
 
 
 def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
@@ -169,7 +238,11 @@ def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
         return "follow_up not allowed when turns_in_current_area >= 2"
 
     remaining_slots = payload.get("questions_remaining")
-    if remaining_slots is not None and int(remaining_slots) <= 0 and decision.decision != "complete":
+    if (
+        remaining_slots is not None
+        and int(remaining_slots) <= 0
+        and decision.decision != "complete"
+    ):
         return "must complete when questions_remaining is 0"
 
     if decision.decision != "complete":
@@ -188,22 +261,29 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
     turns_in_area = int(payload.get("turns_in_current_area") or 0)
     remaining = list(payload.get("remaining_areas") or [])
     remaining_slots = payload.get("questions_remaining")
+    mode = (payload.get("mode") or "strict").lower()
 
     if remaining_slots is not None and int(remaining_slots) <= 0:
         return decision.model_copy(update={"decision": "complete", "next_question": ""})
 
     if decision.decision == "follow_up" and turns_in_area >= 2:
         if remaining:
-            return decision.model_copy(
+            decision = decision.model_copy(
                 update={
                     "decision": "next_area",
                     "question_area": remaining[0],
                 }
             )
-        return decision.model_copy(update={"decision": "complete", "next_question": ""})
+        else:
+            return decision.model_copy(update={"decision": "complete", "next_question": ""})
 
     if decision.decision == "complete":
         return decision.model_copy(update={"next_question": decision.next_question or ""})
+
+    if mode == "strict" and decision.next_question:
+        cleaned = strip_strict_spoilers(decision.next_question)
+        if cleaned != decision.next_question:
+            decision = decision.model_copy(update={"next_question": cleaned})
     return decision
 
 
@@ -214,31 +294,85 @@ _FALLBACK_STEMS = (
     "Compare two approaches related to {topic} and when you would choose each.",
     "What mistakes do engineers commonly make with {topic}, and how do you avoid them?",
     "Given a realistic problem involving {topic}, outline your step-by-step solution approach.",
-    "Design a small coding exercise that centers on {topic} and describe the expected solution sketch.",
+    "Design a small coding exercise that centers on {topic} and describe "
+    "the expected solution sketch.",
     "How would you test and debug an implementation that relies on {topic}?",
 )
 
 # Distinct learning objectives for array/DSA tracks when the LLM keeps paraphrasing.
 _ARRAY_CONCEPT_BANK = (
-    ("random access", "Why is index-based random access O(1) in an array, and what memory property enables that?"),
-    ("insertion cost", "What is the time complexity of inserting at index 0 versus appending at the end of a dynamic array, and why?"),
-    ("amortized growth", "Explain amortized O(1) append for a dynamic array that doubles capacity on resize."),
-    ("two pointers", "When would you use the two-pointer technique on a sorted array, and outline the high-level steps?"),
-    ("sliding window", "Describe a sliding-window approach to find the longest subarray with sum ≤ k."),
-    ("prefix sums", "How do prefix sums let you answer subarray-sum queries quickly, and what is the preprocessing cost?"),
-    ("binary search", "State the invariants you maintain in binary search on a sorted array and why the loop terminates."),
-    ("kadane", "Walk through Kadane’s algorithm for maximum subarray sum and its time/space complexity."),
-    ("dutch flag", "How would you partition an array of 0/1/2 values in one pass (Dutch national flag)?"),
-    ("rotation", "How do you rotate an array right by k positions in-place, and what edge cases matter?"),
-    ("merge sorted", "Outline merging two sorted arrays into one sorted result with optimal time and space."),
-    ("duplicates", "Given a sorted array, how do you remove duplicates in-place and what complexity do you achieve?"),
-    ("2d indexing", "How is a 2D matrix stored in row-major order, and how do you compute the flat index of cell (r, c)?"),
-    ("in-place reverse", "How do you reverse an array in-place, and when is that useful as a building block?"),
-    ("stability sort", "Why might you prefer a stable sort when sorting an array of records by one key?"),
+    (
+        "random access",
+        "Why is index-based random access O(1) in an array, and what memory property enables that?",
+    ),
+    (
+        "insertion cost",
+        "What is the time complexity of inserting at index 0 versus appending at the "
+        "end of a dynamic array, and why?",
+    ),
+    (
+        "amortized growth",
+        "Explain amortized O(1) append for a dynamic array that doubles capacity on resize.",
+    ),
+    (
+        "two pointers",
+        "When would you use the two-pointer technique on a sorted array, and outline "
+        "the high-level steps?",
+    ),
+    (
+        "sliding window",
+        "Describe a sliding-window approach to find the longest subarray with sum ≤ k.",
+    ),
+    (
+        "prefix sums",
+        "How do prefix sums let you answer subarray-sum queries quickly, and what is "
+        "the preprocessing cost?",
+    ),
+    (
+        "binary search",
+        "State the invariants you maintain in binary search on a sorted array and why "
+        "the loop terminates.",
+    ),
+    (
+        "kadane",
+        "Walk through Kadane’s algorithm for maximum subarray sum and its time/space complexity.",
+    ),
+    (
+        "dutch flag",
+        "How would you partition an array of 0/1/2 values in one pass (Dutch national flag)?",
+    ),
+    (
+        "rotation",
+        "How do you rotate an array right by k positions in-place, and what edge cases matter?",
+    ),
+    (
+        "merge sorted",
+        "Outline merging two sorted arrays into one sorted result with optimal time and space.",
+    ),
+    (
+        "duplicates",
+        "Given a sorted array, how do you remove duplicates in-place and what "
+        "complexity do you achieve?",
+    ),
+    (
+        "2d indexing",
+        "How is a 2D matrix stored in row-major order, and how do you compute the "
+        "flat index of cell (r, c)?",
+    ),
+    (
+        "in-place reverse",
+        "How do you reverse an array in-place, and when is that useful as a building block?",
+    ),
+    (
+        "stability sort",
+        "Why might you prefer a stable sort when sorting an array of records by one key?",
+    ),
 )
 
 
-def _fallback_unique_question(payload: dict, preferred_area: str | None = None) -> tuple[str, str] | None:
+def _fallback_unique_question(
+    payload: dict, preferred_area: str | None = None
+) -> tuple[str, str] | None:
     """Build a non-duplicate question without another LLM call, or None if exhausted."""
     asked = [q for q in payload.get("asked_questions", []) if q]
     remaining = list(payload.get("remaining_areas") or [])
@@ -251,6 +385,12 @@ def _fallback_unique_question(payload: dict, preferred_area: str | None = None) 
     )
     n = len(asked) + 1
     candidates: list[str] = []
+
+    # M9: unused validated bank questions come FIRST.
+    for entry in payload.get("question_bank") or []:
+        q = (entry.get("question") or "").strip()
+        if q and not any(is_duplicate_question(q, [a]) for a in asked):
+            candidates.append(q)
 
     # Prefer a bank of genuinely different concepts (esp. Arrays tracks).
     area_l = area.lower()

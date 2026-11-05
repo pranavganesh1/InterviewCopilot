@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.sqlalchemy import get_db
+from app.gateway.llm import LLMGatewayError
 from app.models.user import User
 from app.services import track_service
 
@@ -28,14 +29,21 @@ async def create_track(
 ):
     if body.track_type == "company_jd" and not body.jd_text:
         raise HTTPException(status_code=422, detail="company_jd tracks require jd_text")
-    return await track_service.create_track_with_brief(
-        db,
-        user,
-        track_type=body.track_type,
-        subject=body.subject,
-        company=body.company,
-        jd_text=body.jd_text,
-    )
+    try:
+        return await track_service.create_track_with_brief(
+            db,
+            user,
+            track_type=body.track_type,
+            subject=body.subject,
+            company=body.company,
+            jd_text=body.jd_text,
+        )
+    except LLMGatewayError as exc:
+        # Free-tier rate limits surface as 503 with a retry hint, not a raw 500.
+        raise HTTPException(
+            status_code=503,
+            detail="The LLM provider is rate-limited right now — please retry in a minute.",
+        ) from exc
 
 
 @router.get("")

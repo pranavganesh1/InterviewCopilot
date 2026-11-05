@@ -85,9 +85,7 @@ def enrich_assessments_with_turns(content: dict, answered_turns: list[SessionTur
                 "answer": t.answer or "",
                 "strengths": list(t.evaluation_strengths or []),
                 "gaps": list(t.evaluation_gaps or []),
-                "expected_answer_explanation": str(
-                    detail.get("expected_answer_explanation") or ""
-                ),
+                "expected_answer_explanation": str(detail.get("expected_answer_explanation") or ""),
                 "corrected_code": str(detail.get("corrected_code") or ""),
                 "time_complexity": str(detail.get("time_complexity") or ""),
                 "space_complexity": str(detail.get("space_complexity") or ""),
@@ -108,7 +106,9 @@ def build_report_from_saved_evaluations(
 ) -> FeedbackReportContent:
     brief = brief_content or {}
     competencies = brief.get("competencies") or []
-    question_areas = [qa.get("topic") for qa in (brief.get("question_areas") or []) if qa.get("topic")]
+    question_areas = [
+        qa.get("topic") for qa in (brief.get("question_areas") or []) if qa.get("topic")
+    ]
 
     assessments: list[QuestionEvidence] = []
     strengths: list[str] = []
@@ -235,13 +235,11 @@ def build_report_from_saved_evaluations(
             )
         )
 
-    recommendations = [
-        f"Review gaps: {g}" for g in gaps_u[:3]
-    ] or ["Continue practicing with another Strict interview on this track."]
+    recommendations = [f"Review gaps: {g}" for g in gaps_u[:3]] or [
+        "Continue practicing with another Strict interview on this track."
+    ]
     if unassessed:
-        recommendations.append(
-            f"Next session: cover {', '.join(unassessed[:3])}."
-        )
+        recommendations.append(f"Next session: cover {', '.join(unassessed[:3])}.")
 
     return FeedbackReportContent(
         session_mode=session.mode if session.mode in ("strict", "guided") else "strict",

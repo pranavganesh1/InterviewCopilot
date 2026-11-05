@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, type BriefContent, type Progression, type Track } from "../lib/api";
@@ -25,11 +26,13 @@ export default function TrackDetailPage() {
     queryFn: () => api<Progression>(`/tracks/${trackId}/progression`),
   });
 
+  const [duration, setDuration] = useState(60);
+
   const start = useMutation({
     mutationFn: ({ id, mode }: { id: string; mode: "strict" | "guided" }) =>
       api<{ session: { id: string } }>(`/tracks/${id}/sessions`, {
         method: "POST",
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, duration_minutes: duration }),
       }),
     onSuccess: (d, vars) =>
       navigate(`/tracks/${vars.id}/interview/${d.session.id}`),
@@ -120,6 +123,40 @@ export default function TrackDetailPage() {
             </section>
           </div>
 
+          {content.question_bank?.length > 0 && (
+            <details className="rounded-2xl border border-stone-200 bg-white p-5">
+              <summary className="cursor-pointer text-sm font-semibold text-stone-700">
+                Question bank ({content.question_bank.length} pre-validated questions)
+              </summary>
+              <div className="mt-3 space-y-3">
+                {content.question_bank.map((q, i) => (
+                  <div key={i} className="rounded-xl border border-stone-100 p-3">
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-medium text-stone-600">
+                        {q.area}
+                      </span>
+                      <span
+                        className={`rounded-md px-1.5 py-0.5 font-medium ${
+                          q.difficulty === "advanced"
+                            ? "bg-rose-100 text-rose-700"
+                            : q.difficulty === "foundational"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {q.difficulty}
+                      </span>
+                      <span className="rounded-md bg-violet-100 px-1.5 py-0.5 font-medium text-violet-700">
+                        {q.type}
+                      </span>
+                    </div>
+                    <p className="mt-1.5 text-sm">{q.question}</p>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
           <section className="rounded-2xl border border-stone-200 bg-white p-5">
             <h2 className="text-sm font-semibold text-stone-500">Preparation plan</h2>
             <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm">
@@ -136,6 +173,28 @@ export default function TrackDetailPage() {
       {start.error instanceof Error && (
         <p className="text-sm text-red-600">{start.error.message}</p>
       )}
+      <div className="rounded-2xl border border-stone-200 bg-white p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+          Interview duration
+        </p>
+        <div className="mt-2 flex gap-2">
+          {[30, 60, 90, 120].map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setDuration(m)}
+              className={`flex-1 rounded-xl border px-3 py-2 text-sm font-medium ${
+                duration === m
+                  ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                  : "border-stone-200 text-stone-600 hover:bg-stone-50"
+              }`}
+            >
+              {m >= 60 ? `${m / 60} hr${m > 60 ? "s" : ""}` : `${m} min`}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2">
         <button
           onClick={() => start.mutate({ id: trackId!, mode: "strict" })}

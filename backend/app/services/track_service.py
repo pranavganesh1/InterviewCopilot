@@ -15,6 +15,36 @@ async def run_track_creator_turn(**kwargs):
     return await _run(**kwargs)
 
 
+async def run_bank_builder_turn(**kwargs):
+    from app.agents.track_creator import run_bank_builder_turn as _run
+
+    return await _run(**kwargs)
+
+
+async def run_bank_judge_turn(**kwargs):
+    from app.agents.track_creator import run_bank_judge_turn as _run
+
+    return await _run(**kwargs)
+
+
+async def run_bank_regeneration_turn(**kwargs):
+    from app.agents.track_creator import run_bank_builder_turn as _run
+
+    return await _run(**kwargs)
+
+
+async def build_track_creator_brief(*, objective: dict, vault_summary: list[dict]) -> dict:
+    """Author the brief + validated question bank (no DB). Testable in isolation."""
+    graph = build_track_creator_graph(
+        turn_runner=run_track_creator_turn,
+        bank_runner=run_bank_builder_turn,
+        judge_runner=run_bank_judge_turn,
+        regen_runner=run_bank_regeneration_turn,
+    )
+    result = await graph.ainvoke({"objective": objective, "vault_summary": vault_summary})
+    return result["brief"]
+
+
 async def create_track_with_brief(
     db: AsyncSession,
     user: User,
@@ -36,19 +66,19 @@ async def create_track_with_brief(
     await db.commit()
     await db.refresh(track)
 
-    graph = build_track_creator_graph(turn_runner=run_track_creator_turn)
-    result = await graph.ainvoke(
-        {
-            "objective": {
-                "track_type": track_type,
-                "subject": subject,
-                "company": company,
-                "jd_text": jd_text,
-            },
-            "vault_summary": await vault_summary(db, user.id),
-        }
+    content = await build_track_creator_brief(
+        objective={
+            "track_type": track_type,
+            "subject": subject,
+            "company": company,
+            "jd_text": jd_text,
+        },
+        vault_summary=await vault_summary(db, user.id),
     )
-    content = result["brief"]
+    # Optional off-by-default web enrichment (never during a live interview).
+    from app.services.web_research import maybe_enrich_brief_from_web
+
+    content = await maybe_enrich_brief_from_web(content, subject=subject)
 
     brief = InterviewBrief(track_id=track.id, version=1, content=content)
     db.add(brief)
