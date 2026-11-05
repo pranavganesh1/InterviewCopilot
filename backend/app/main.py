@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.api.v1.admin import router as admin_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.dev import router as dev_router
 from app.api.v1.feedback import router as feedback_router
@@ -61,6 +62,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(tracks_router, prefix="/api/v1")
     app.include_router(interviews_router, prefix="/api/v1")
     app.include_router(feedback_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1")
 
 
 def register_middleware(app: FastAPI) -> None:

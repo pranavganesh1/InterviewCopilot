@@ -27,6 +27,7 @@ async def chat_completion(
     temperature: float | None = None,
     response_format: dict | None = None,
     meta: dict | None = None,
+    max_attempts: int = 3,
 ) -> str:
     """Call the LiteLLM proxy (OpenAI-compatible) and return the assistant content.
 
@@ -46,14 +47,14 @@ async def chat_completion(
     # the window out itself: 2 backoff attempts on 429 (20s, 45s).
     last_error: Exception | None = None
     data: dict | None = None
-    for attempt in range(3):
+    for attempt in range(max_attempts):
         try:
             resp = await client.post(
                 f"{settings.litellm_url}/v1/chat/completions",
                 json=payload,
                 headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
             )
-            if resp.status_code == 429 and attempt < 2:
+            if resp.status_code == 429 and attempt < max_attempts - 1:
                 retry_after = resp.headers.get("retry-after")
                 delay = float(retry_after) if retry_after else (45 if attempt == 0 else 90)
                 log.warning(

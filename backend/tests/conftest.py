@@ -9,7 +9,23 @@ os.environ["DATABASE_URL"] = (
 import pytest  # noqa: E402
 from sqlalchemy import delete  # noqa: E402
 
+from app.agents import question_plan  # noqa: E402
 from app.db.sqlalchemy import SessionFactory  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _stub_question_plan_llm(monkeypatch):
+    """M11: build_question_plan's LLM call made start_session take 137s under
+    quota pressure (gateway backoff). Tests get the deterministic plan — the
+    LLM path is covered by dedicated mocked tests in test_question_plan.py.
+    """
+    monkeypatch.setattr(
+        question_plan,
+        "build_question_plan",
+        lambda brief_content, n: question_plan.deterministic_question_plan(brief_content, n),
+    )
+
+
 from app.models.feedback import FeedbackReport, ProgressionState  # noqa: E402
 from app.models.interview import InterviewSession, SessionTurn  # noqa: E402
 from app.models.track import InterviewBrief, Track  # noqa: E402

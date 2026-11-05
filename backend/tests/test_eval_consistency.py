@@ -108,8 +108,7 @@ async def test_consistent_llm_output_passes(monkeypatch):
     ev, checks = await evaluate_answer_with_meta(
         {
             "last_answer": (
-                "Use a hashmap; for each value look up target-value. "
-                "O(n) time O(n) space."
+                "Use a hashmap; for each value look up target-value. O(n) time O(n) space."
             ),
             "last_question": "Explain two-sum with complexities.",
             "mode": "strict",

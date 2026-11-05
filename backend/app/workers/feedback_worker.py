@@ -153,9 +153,7 @@ async def catch_up_once(min_age_seconds: int = 0, limit: int = 20) -> int:
                         .where(InterviewSession.status == "completed")
                         .where(InterviewSession.completed_at.is_not(None))
                         .where(InterviewSession.completed_at <= cutoff)
-                        .outerjoin(
-                            FeedbackReport, FeedbackReport.session_id == InterviewSession.id
-                        )
+                        .outerjoin(FeedbackReport, FeedbackReport.session_id == InterviewSession.id)
                         .where(FeedbackReport.id.is_(None))
                         .order_by(InterviewSession.completed_at.asc())
                     )

@@ -314,9 +314,10 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
     payload = {
         "mode": session.mode,
         "meta": {
-            "user_id": str(session.user_id),
-            "track_id": str(session.track_id),
-            "session_id": str(session.id),
+            # getattr: test doubles may use lightweight namespaces (M11).
+            "user_id": str(getattr(session, "user_id", "") or ""),
+            "track_id": str(getattr(session, "track_id", "") or ""),
+            "session_id": str(getattr(session, "id", "") or ""),
         },
         "duration_minutes": duration,
         "minutes_elapsed": minutes_elapsed,

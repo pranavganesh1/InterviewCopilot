@@ -208,9 +208,7 @@ async def test_catch_up_once_age_report_and_limit(monkeypatch, clean_users_table
         seen.append(str(sid))
         return {"ok": True}
 
-    monkeypatch.setattr(
-        "app.workers.feedback_worker.process_session_feedback", fake_process
-    )
+    monkeypatch.setattr("app.workers.feedback_worker.process_session_feedback", fake_process)
 
     n = await catch_up_once(min_age_seconds=60, limit=1)
     assert n == 1
@@ -229,9 +227,7 @@ async def test_catch_up_once_age_report_and_limit(monkeypatch, clean_users_table
 @pytest.mark.asyncio
 async def test_catch_up_gives_up_after_three_failures(monkeypatch, clean_users_table):
     reset_catch_up_failures()
-    sid = await _seed_completed_session(
-        completed_at=datetime.now(UTC) - timedelta(minutes=10)
-    )
+    sid = await _seed_completed_session(completed_at=datetime.now(UTC) - timedelta(minutes=10))
     calls = 0
 
     async def always_fail(_db, _sid):
@@ -239,9 +235,7 @@ async def test_catch_up_gives_up_after_three_failures(monkeypatch, clean_users_t
         calls += 1
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(
-        "app.workers.feedback_worker.process_session_feedback", always_fail
-    )
+    monkeypatch.setattr("app.workers.feedback_worker.process_session_feedback", always_fail)
 
     for _ in range(3):
         await catch_up_once(min_age_seconds=0, limit=5)

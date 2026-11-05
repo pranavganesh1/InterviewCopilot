@@ -39,9 +39,7 @@ async def test_build_falls_back_when_llm_fails(monkeypatch):
     async def boom(*_a, **_k):
         raise RuntimeError("llm down")
 
-    monkeypatch.setattr(
-        "app.agents.question_plan.structured_completion", boom
-    )
+    monkeypatch.setattr("app.agents.question_plan.structured_completion", boom)
     slots = await build_question_plan(BRIEF, 8)
     assert len(slots) == 8
     assert all("objective" in s and "topic" in s for s in slots)
@@ -147,7 +145,5 @@ async def test_autouse_fixture_noops_publish(monkeypatch):
     import app.services.interview_service as interview_service
 
     # Calling the (mocked) publishers must not raise and must not hit NATS.
-    await interview_service.publish_feedback_job(
-        uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    )
+    await interview_service.publish_feedback_job(uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
     await events.publish_feedback_job(uuid.uuid4(), uuid.uuid4(), uuid.uuid4())

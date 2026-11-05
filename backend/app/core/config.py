@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # NATS
     nats_url: str = "nats://localhost:4222"
 
+    # Admin portal: comma-separated Google emails granted /admin access.
+    admin_emails: str = ""
+
     # Auth (backend-issued JWT cookie pair)
     jwt_secret: str = "dev-secret-change-me"
     session_secret: str = "dev-session-secret-change-me"

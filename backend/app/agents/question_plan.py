@@ -117,9 +117,12 @@ async def build_question_plan(brief_content: dict, n: int) -> list[dict]:
 
     try:
         async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
+            # max_attempts=1: fail FAST into the deterministic fallback. Waiting
+            # 135s of 429 backoff inside start_session is terrible UX (M11).
             result = await structured_completion(
                 client,
                 system=_PLAN_SYSTEM,
+                max_attempts=1,
                 user_payload={
                     "n": n,
                     "brief": {
