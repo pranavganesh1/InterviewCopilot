@@ -133,19 +133,18 @@ async def users_rollup(db: AsyncSession, mongo_db: AsyncIOMotorDatabase) -> list
     track_counts = dict(
         (await db.execute(select(Track.user_id, func.count()).group_by(Track.user_id))).all()
     )
-    session_stats = dict(
-        (
-            await db.execute(
-                select(
-                    InterviewSession.user_id,
-                    func.count(),
-                    func.coalesce(func.sum(InterviewSession.duration_minutes), 0),
-                )
-                .where(InterviewSession.status == "completed")
-                .group_by(InterviewSession.user_id)
+    sess_rows = (
+        await db.execute(
+            select(
+                InterviewSession.user_id,
+                func.count(),
+                func.coalesce(func.sum(InterviewSession.duration_minutes), 0),
             )
-        ).all()
-    )
+            .where(InterviewSession.status == "completed")
+            .group_by(InterviewSession.user_id)
+        )
+    ).all()
+    session_stats = {r[0]: (r[1], r[2]) for r in sess_rows}
 
     # Mongo: cost per user (attributed via meta.user_id on each call).
     cost_rows = await mongo_db.llm_call_logs.aggregate(
