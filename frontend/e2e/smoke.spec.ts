@@ -93,10 +93,13 @@ test("interview page renders question and submits answer", async ({ page }) => {
   await page.fill("textarea", "Buckets store multiple entries...");
   await page.getByRole("button", { name: "Submit Answer" }).click();
 
-  await expect(page.getByText("How would you resolve one?")).toBeVisible();
+  await expect(page.getByTestId("evaluation-feedback")).toBeVisible();
   await expect(page.getByText("partial")).toBeVisible();
   await expect(page.getByText("No examples")).toBeVisible();
-  await expect(page.getByTestId("evaluation-feedback")).toBeVisible();
+  await expect(page.getByText("How would you resolve one?")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Next question" }).click();
+  await expect(page.getByText("How would you resolve one?")).toBeVisible();
 });
 
 test("report page shows competencies and recommendations", async ({ page }) => {

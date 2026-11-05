@@ -82,13 +82,23 @@ async def google_auth_url(request: Request):
 
 @router.get("/google/callback")
 async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
-    token = await request.app.state.oauth.google.authorize_access_token(request)
+    settings = get_settings()
+    try:
+        token = await request.app.state.oauth.google.authorize_access_token(request)
+    except Exception:
+        # Common local failure: OAuth started via Vite proxy (different host than
+        # GOOGLE_REDIRECT_URI) so the session CSRF cookie is missing. Send the
+        # user back to sign-in instead of a raw 500.
+        return RedirectResponse(
+            url=f"{settings.frontend_url}?auth_error=state",
+            status_code=303,
+        )
     userinfo = token.get("userinfo")
     if not userinfo:
         raise HTTPException(status_code=401, detail="Google sign-in failed")
     user = await _upsert_user(db, userinfo)
     # Cookies ride on the redirect; the SPA then bootstraps via /auth/me.
-    response = RedirectResponse(url=get_settings().frontend_url, status_code=303)
+    response = RedirectResponse(url=settings.frontend_url, status_code=303)
     _set_auth_cookies(
         response, create_access_token(str(user.id)), create_refresh_token(str(user.id))
     )

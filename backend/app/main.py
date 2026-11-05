@@ -65,7 +65,14 @@ def register_routes(app: FastAPI) -> None:
 
 def register_middleware(app: FastAPI) -> None:
     app.add_middleware(RequestIdMiddleware)
-    app.add_middleware(SessionMiddleware, secret_key=get_settings().session_secret)
+    # same_site=lax so the OAuth state cookie is sent on Google's top-level
+    # redirect back to /auth/google/callback.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=get_settings().session_secret,
+        same_site="lax",
+        https_only=get_settings().app_env != "local",
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[get_settings().frontend_url],
