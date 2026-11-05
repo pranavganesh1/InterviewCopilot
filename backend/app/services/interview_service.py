@@ -34,7 +34,9 @@ def _graph():
     return build_interviewer_graph(turn_runner=run_interviewer_turn)
 
 
-async def start_session(db: AsyncSession, user: User, track_id, mode: str = "strict") -> dict:
+async def start_session(
+    db: AsyncSession, user: User, track_id, mode: str = "strict", duration_minutes: int = 60
+) -> dict:
     track_brief = await get_track_with_brief(db, user, track_id)
     if track_brief is None:
         raise LookupError("track_not_found")
@@ -42,12 +44,15 @@ async def start_session(db: AsyncSession, user: User, track_id, mode: str = "str
         raise LookupError("brief_not_found")
 
     mode = (mode or "strict").lower()
+    duration_minutes = max(15, min(int(duration_minutes), 240))
     if mode not in VALID_MODES:
         raise ValueError("invalid_mode")
     if mode == "guided" and not await guided_unlocked(db, track_id):
         raise PermissionError("guided_locked")
 
-    session = InterviewSession(track_id=track_id, user_id=user.id, mode=mode)
+    session = InterviewSession(
+        track_id=track_id, user_id=user.id, mode=mode, duration_minutes=duration_minutes
+    )
     db.add(session)
     await db.commit()
     await db.refresh(session)
@@ -72,6 +77,9 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
     track_brief = await get_track_with_brief(db, user, session.track_id)
     decision = await _decide(db, session, track_brief["brief"]["content"], last_answer=answer)
 
+    # M9.2: time is the primary governor — hard-complete at the deadline.
+    time_up = _minutes_remaining(session) <= 0
+
     # Persist the evaluation on the answered turn so feedback survives refreshes.
     last_turn.evaluation_coverage = decision.evaluation.coverage
     last_turn.evaluation_strengths = decision.evaluation.strengths
@@ -86,7 +94,11 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
     await db.commit()
 
     turns_so_far = await _count_turns(db, session.id)
-    if decision.decision == "complete" or turns_so_far >= get_settings().interview_max_turns:
+    if (
+        decision.decision == "complete"
+        or time_up
+        or turns_so_far >= get_settings().interview_max_turns
+    ):
         if await _complete_if_needed(db, session):
             await _dispatch_feedback(session, nc=nc)
         return {"completed": True, "evaluation": decision.evaluation.model_dump()}
@@ -202,11 +214,7 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
     current_area = turns[-1].question_area if turns else None
     asked_areas = [t.question_area for t in turns]
     covered_areas = list(dict.fromkeys(asked_areas))  # stable unique
-    brief_areas = [
-        qa["topic"]
-        for qa in brief_content.get("question_areas", [])
-        if qa.get("topic")
-    ]
+    brief_areas = [qa["topic"] for qa in brief_content.get("question_areas", []) if qa.get("topic")]
     remaining_areas = [topic for topic in brief_areas if topic not in covered_areas]
     max_turns = get_settings().interview_max_turns
     questions_asked = len(turns)
@@ -222,6 +230,9 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
     )
     payload = {
         "mode": session.mode,
+        "duration_minutes": session.duration_minutes,
+        "minutes_elapsed": round(session.duration_minutes - _minutes_remaining(session), 1),
+        "minutes_remaining": round(max(0.0, _minutes_remaining(session)), 1),
         "brief": brief_content,
         "transcript": [
             {
@@ -244,6 +255,13 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         "difficulty_target": difficulty,
         # Persistent asked list (survives refresh because turns are in Postgres).
         "asked_questions": [t.question for t in turns],
+        # M9: validated question bank — only UNUSED entries are exposed, so the
+        # interviewer can use them verbatim without tripping duplicate checks.
+        "question_bank": [
+            q
+            for q in brief_content.get("question_bank", [])
+            if q.get("question") and q["question"] not in {t.question for t in turns}
+        ],
         "diversity_instruction": (
             "Ask a new question on a distinct learning objective within this track. "
             "Do not restate or paraphrase any asked_questions entry, and do not re-test "
@@ -268,6 +286,7 @@ async def _append_turn(db: AsyncSession, session, decision: TurnDecision) -> Ses
         turn_index=index,
         question_area=decision.question_area,
         question=decision.next_question,
+        question_type=decision.question_type,
     )
     db.add(turn)
     await db.commit()
@@ -318,6 +337,11 @@ async def _complete_if_needed(db: AsyncSession, session: InterviewSession) -> bo
     return True
 
 
+def _minutes_remaining(session: InterviewSession) -> float:
+    elapsed = (datetime.now(UTC) - session.created_at).total_seconds() / 60
+    return session.duration_minutes - elapsed
+
+
 async def _dispatch_feedback(session: InterviewSession, nc=None) -> None:
     """Publish a feedback job for a session that is already committed completed.
 
@@ -338,6 +362,8 @@ def _session_dict(s: InterviewSession) -> dict:
         "mode": s.mode,
         "status": s.status,
         "max_turns": get_settings().interview_max_turns,
+        "duration_minutes": s.duration_minutes,
+        "created_at": s.created_at.isoformat(),
     }
 
 
@@ -346,6 +372,7 @@ def _turn_dict(t: SessionTurn) -> dict:
         "turn_index": t.turn_index,
         "question_area": t.question_area,
         "question": t.question,
+        "question_type": t.question_type,
     }
 
 

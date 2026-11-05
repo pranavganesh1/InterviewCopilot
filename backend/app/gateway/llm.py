@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import time
 from datetime import UTC, datetime
@@ -38,17 +39,38 @@ async def chat_completion(
         payload["response_format"] = response_format
 
     started = time.monotonic()
-    try:
-        resp = await client.post(
-            f"{settings.litellm_url}/v1/chat/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except (httpx.HTTPError, KeyError) as exc:
-        log.error("llm_gateway_failed", model=model, error=str(exc))
-        raise LLMGatewayError(f"LLM gateway call failed: {exc}") from exc
+    # Free-tier providers (Groq etc.) rate-limit per minute. LiteLLM's instant
+    # retries all land inside the same window and fail, so the gateway waits
+    # the window out itself: 2 backoff attempts on 429 (20s, 45s).
+    last_error: Exception | None = None
+    data: dict | None = None
+    for attempt in range(3):
+        try:
+            resp = await client.post(
+                f"{settings.litellm_url}/v1/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
+            )
+            if resp.status_code == 429 and attempt < 2:
+                retry_after = resp.headers.get("retry-after")
+                delay = float(retry_after) if retry_after else (45 if attempt == 0 else 90)
+                log.warning(
+                    "llm_gateway_rate_limited",
+                    model=model,
+                    attempt=attempt + 1,
+                    backoff_s=delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except (httpx.HTTPError, KeyError) as exc:
+            last_error = exc
+            break
+    if data is None:
+        log.error("llm_gateway_failed", model=model, error=str(last_error))
+        raise LLMGatewayError(f"LLM gateway call failed: {last_error}") from last_error
     latency_ms = int((time.monotonic() - started) * 1000)
 
     content = data["choices"][0]["message"]["content"]

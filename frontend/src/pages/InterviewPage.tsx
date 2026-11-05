@@ -11,7 +11,7 @@ import {
   type TurnEvaluation,
   type TurnResult,
 } from "../lib/api";
-import { classifyQuestion } from "../lib/questionKind";
+import { resolveKind } from "../lib/questionKind";
 
 const DEFAULT_MAX_TURNS = 15;
 
@@ -62,6 +62,13 @@ export default function InterviewPage() {
     queryKey: ["session", sessionId],
     queryFn: () => api<SessionPayload>(`/sessions/${sessionId}`),
   });
+
+  // Ticking clock for the timed-interview display (M9.2).
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
 
   const submit = useMutation({
     mutationFn: (payload: { answer: string; turnIndex: number }) =>
@@ -219,7 +226,9 @@ export default function InterviewPage() {
           <p className="mt-0.5 hidden text-sm text-stone-500 sm:block">
             {showCodingWorkspace
               ? "Write your own solution, then submit for evaluation."
-              : "Answer one question at a time. Feedback appears after you submit."}
+              : isGuided
+                ? "Answer one question at a time — live feedback is on."
+                : "Answer one question at a time. Your full evaluation arrives in the final report."}
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">

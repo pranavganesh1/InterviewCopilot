@@ -175,7 +175,7 @@ export default function CodingWorkspace({
               defaultLanguage={monacoLang}
               language={monacoLang}
               value={code}
-              onChange={(v) =>
+              onChange={(v: string | undefined) =>
                 setCodeByLang((prev) => ({
                   ...prev,
                   [language]: v ?? "",

@@ -90,10 +90,7 @@ async def complete(
     if not vault_ready and user.onboarding_completed_at is None:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "Onboarding is not ready yet. Still needed: "
-                + ", ".join(missing)
-            ),
+            detail=("Onboarding is not ready yet. Still needed: " + ", ".join(missing)),
         )
     if user.onboarding_completed_at is None:
         user.onboarding_completed_at = datetime.now(UTC)

@@ -9,6 +9,8 @@ from app.agents.interviewer import (
     decision_violation,
     system_prompt_for_mode,
 )
+
+
 def _decision(**overrides):
     base = {
         "evaluation": {"coverage": "partial", "strengths": [], "gaps": ["x"]},
@@ -41,15 +43,11 @@ def test_complete_allows_empty_question():
 
 def test_follow_up_hard_limit_coerced_by_local_policy():
     d = _decision(decision="follow_up")
-    fixed = apply_local_policy(
-        d, {"turns_in_current_area": 2, "remaining_areas": ["Big-O"]}
-    )
+    fixed = apply_local_policy(d, {"turns_in_current_area": 2, "remaining_areas": ["Big-O"]})
     assert fixed.decision == "next_area"
     assert fixed.question_area == "Big-O"
 
-    done = apply_local_policy(
-        d, {"turns_in_current_area": 2, "remaining_areas": []}
-    )
+    done = apply_local_policy(d, {"turns_in_current_area": 2, "remaining_areas": []})
     assert done.decision == "complete"
 
 

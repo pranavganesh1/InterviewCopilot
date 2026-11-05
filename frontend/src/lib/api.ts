@@ -146,8 +146,17 @@ export interface Track {
   brief_version?: number;
 }
 
+export interface BankQuestion {
+  area: string;
+  question: string;
+  difficulty: "foundational" | "intermediate" | "advanced";
+  type: "coding" | "conceptual" | "behavioral";
+  expected_answer_sketch: string;
+}
+
 export interface BriefContent {
   summary: string;
+  question_bank: BankQuestion[];
   preparation_plan: string[];
   competencies: { name: string; description: string; importance: string }[];
   question_areas: { topic: string; guidance: string }[];
@@ -166,6 +175,8 @@ export interface SessionInfo {
   mode: string;
   status: string;
   max_turns?: number;
+  duration_minutes: number;
+  created_at: string;
 }
 
 export interface TurnEvaluation {
@@ -182,6 +193,7 @@ export interface Turn {
   turn_index: number;
   question_area: string;
   question: string;
+  question_type?: "coding" | "conceptual" | "behavioral" | null;
   answer: string | null;
   assisted?: boolean;
   assistance_level?: number;

@@ -93,11 +93,22 @@ for _group in (
 # Learning-objective patterns (DSA / interview common). Order matters for
 # overlapping phrases — more specific first.
 _CONCEPT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"contigu\w*.{0,24}memory|stored\s+contigu\w*|memory\s+layout"), "contiguous_storage"),
+    (
+        re.compile(r"contigu\w*.{0,24}memory|stored\s+contigu\w*|memory\s+layout"),
+        "contiguous_storage",
+    ),
     (re.compile(r"fixed[\s-]*size|static\s+array"), "static_array"),
     (re.compile(r"dynamic\s+array|resiz\w+|grow\w*\s+capacit"), "dynamic_array"),
-    (re.compile(r"static.{0,40}dynamic|dynamic.{0,40}static|fixed.{0,40}resiz|resiz.{0,40}fixed"), "static_vs_dynamic"),
-    (re.compile(r"defin\w*\s+of\s+an?\s+array|what\s+an?\s+array\s+is|array\s+is\b"), "array_definition"),
+    (
+        re.compile(
+            r"static.{0,40}dynamic|dynamic.{0,40}static|fixed.{0,40}resiz|resiz.{0,40}fixed"
+        ),
+        "static_vs_dynamic",
+    ),
+    (
+        re.compile(r"defin\w*\s+of\s+an?\s+array|what\s+an?\s+array\s+is|array\s+is\b"),
+        "array_definition",
+    ),
     (re.compile(r"two[\s-]*pointer"), "two_pointers"),
     (re.compile(r"sliding[\s-]*window"), "sliding_window"),
     (re.compile(r"prefix[\s-]*sum"), "prefix_sum"),
@@ -245,7 +256,9 @@ def is_near_duplicate(a: str, b: str, *, threshold: float = 0.72) -> bool:
     if jaccard >= threshold and seq >= max(0.68, threshold - 0.08):
         return True
     # Concept tags + strong lexical coverage (synonym-aware).
-    if tags_a and tags_b and len(tags_a & tags_b) >= 2 and coverage >= 0.55:
+    # noqa below: a direct `return <expr>` could return an empty set instead
+    # of False; keep the explicit boolean contract.
+    if tags_a and tags_b and coverage >= 0.55 and len(tags_a & tags_b) >= 2:  # noqa: SIM103
         return True
     return False
 

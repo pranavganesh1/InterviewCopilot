@@ -190,9 +190,7 @@ async def test_complete_marks_finished_and_survives_state_reload(clean_users_tab
         assert me.json()["onboarding_completed"] is True
 
     async with SessionFactory() as session:
-        refreshed = (
-            await session.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        refreshed = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
         assert refreshed.onboarding_completed_at is not None
 
 
@@ -206,8 +204,8 @@ async def test_complete_rejects_incomplete_vault(clean_users_table):
         token = create_access_token(str(user.id))
 
     app = create_app()
-    from app.db.mongo import get_mongo_client
     from app.core.config import get_settings
+    from app.db.mongo import get_mongo_client
 
     app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
     transport = httpx.ASGITransport(app=app)
