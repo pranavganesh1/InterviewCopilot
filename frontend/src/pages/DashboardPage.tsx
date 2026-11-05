@@ -266,7 +266,7 @@ export default function DashboardPage() {
             className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
             {create.isPending
-              ? "Interview Architect is designing your brief… (~30 s)"
+              ? "Interview Architect is designing your brief and question bank… (1–2 minutes on the free tier)"
               : "Create track"}
           </button>
         </form>

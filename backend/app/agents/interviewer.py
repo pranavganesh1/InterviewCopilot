@@ -38,6 +38,10 @@ Rules:
   probing a gap, move to the next area, or decide the interview is complete.
 - HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
   MUST choose next_area (from remaining_areas) or complete — never another follow-up.
+- PACING (the interview is TIMED): minutes_remaining is the time budget. If
+  minutes_remaining <= 5 you MUST return decision="complete" with next_question=""
+  after evaluating the answer. With 25-50% of time left, start covering the most
+  important remaining areas rather than deep follow-ups.
 - Prefer depth on the candidate's own claimed projects (see candidate_angle_notes).
 - STRICT mode: never put hints, teaching, or the correct answer in next_question.
 - When last_answer is present, fill evaluation thoroughly:
@@ -47,6 +51,9 @@ Rules:
 - When last_answer is null (opening question), leave evaluation lists empty and
   expected_answer_explanation / corrected_code / complexities empty.
 - If questions_remaining is 0, decision MUST be complete.
+- question_type: set "coding" ONLY when answering requires writing actual code.
+  Conceptual explanations, design discussions and behavioral stories are
+  "conceptual"/"behavioral" even inside DSA areas.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent.
 """
 
@@ -73,6 +80,10 @@ Rules:
   probing a gap, move to the next area, or decide the interview is complete.
 - HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
   MUST choose next_area (from remaining_areas) or complete — never another follow-up.
+- PACING (the interview is TIMED): minutes_remaining is the time budget. If
+  minutes_remaining <= 5 you MUST return decision="complete" with next_question=""
+  after evaluating the answer. With 25-50% of time left, start covering the most
+  important remaining areas rather than deep follow-ups.
 - Prefer depth on the candidate's own claimed projects (see candidate_angle_notes).
 - GUIDED mode: keep next_question conversational. Do NOT dump full answers or
   unsolicited multi-level teaching in next_question — progressive assistance is
@@ -83,6 +94,9 @@ Rules:
   Keep solutions ONLY in evaluation fields — never in next_question.
 - When last_answer is null, leave evaluation extras empty.
 - If questions_remaining is 0, decision MUST be complete.
+- question_type: set "coding" ONLY when answering requires writing actual code.
+  Conceptual explanations, design discussions and behavioral stories are
+  "conceptual"/"behavioral" even inside DSA areas.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent. Note if the
   candidate appeared to need coaching.
 """
@@ -112,6 +126,7 @@ class TurnDecision(BaseModel):
     decision: Literal["follow_up", "next_area", "complete"]
     next_question: str
     question_area: str
+    question_type: Literal["coding", "conceptual", "behavioral"] = "conceptual"
     notes_for_report: str = ""
 
     @model_validator(mode="after")

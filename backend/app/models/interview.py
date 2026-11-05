@@ -19,6 +19,7 @@ class InterviewSession(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     mode: Mapped[str] = mapped_column(String(16), default="strict")
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
     status: Mapped[str] = mapped_column(String(16), default="in_progress")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -37,6 +38,7 @@ class SessionTurn(Base):
     question_area: Mapped[str] = mapped_column(String(255))
     question: Mapped[str] = mapped_column(Text)
     answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    question_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     evaluation_coverage: Mapped[str | None] = mapped_column(String(16), nullable=True)
     evaluation_strengths: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     evaluation_gaps: Mapped[list | None] = mapped_column(JSONB, nullable=True)
