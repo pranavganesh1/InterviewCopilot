@@ -11,7 +11,7 @@ import {
   type TurnEvaluation,
   type TurnResult,
 } from "../lib/api";
-import { classifyQuestion } from "../lib/questionKind";
+import { resolveKind } from "../lib/questionKind";
 
 const DEFAULT_MAX_TURNS = 15;
 
@@ -132,7 +132,7 @@ export default function InterviewPage() {
   const awaitingAnswer = !interviewDone && !!openQuestion;
   const openAssistanceLevel = openQuestion?.assistance_level ?? 0;
   const openKind = openQuestion
-    ? classifyQuestion(openQuestion.question_area, openQuestion.question)
+    ? resolveKind(openQuestion)
     : "text";
   const assistMaxLevel =
     reportedMaxLevel ?? (openKind === "coding" ? 5 : 3);
@@ -318,7 +318,7 @@ export default function InterviewPage() {
           {turns.map((t) => {
             const evaluation = t.evaluation ?? undefined;
             const isOpen = t.answer === null && !interviewDone;
-            const kind = classifyQuestion(t.question_area, t.question);
+            const kind = resolveKind(t);
             return (
               <div key={t.turn_index} className="space-y-2">
                 <div
