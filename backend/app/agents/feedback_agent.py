@@ -83,23 +83,26 @@ class FeedbackReportContent(BaseModel):
 
 class EvidenceState(TypedDict, total=False):
     payload: dict
+    meta: dict
     evidence: dict
     report: dict
 
 
-async def run_feedback_agent(*, payload: dict) -> FeedbackReportContent:
+async def run_feedback_agent(*, payload: dict, meta: dict | None = None) -> FeedbackReportContent:
     async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
         evidence = await structured_completion(
             client,
             system=EVIDENCE_PROMPT,
             user_payload=payload,
             schema=_EvidenceList,
+            meta=meta,
         )
         return await structured_completion(
             client,
             system=ASSESS_PROMPT,
             user_payload={**payload, "extracted_evidence": evidence.model_dump()["items"]},
             schema=FeedbackReportContent,
+            meta=meta,
         )
 
 
@@ -116,7 +119,7 @@ class _EvidenceList(BaseModel):
 
 def build_feedback_graph(turn_runner=run_feedback_agent):
     async def assess(state: EvidenceState) -> dict:
-        content = await turn_runner(payload=state["payload"])
+        content = await turn_runner(payload=state["payload"], meta=state.get("meta"))
         return {"report": content.model_dump()}
 
     graph = StateGraph(EvidenceState)

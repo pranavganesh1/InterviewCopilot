@@ -33,7 +33,9 @@ async def run_bank_regeneration_turn(**kwargs):
     return await _run(**kwargs)
 
 
-async def build_track_creator_brief(*, objective: dict, vault_summary: list[dict]) -> dict:
+async def build_track_creator_brief(
+    *, objective: dict, vault_summary: list[dict], meta: dict | None = None
+) -> dict:
     """Author the brief + validated question bank (no DB). Testable in isolation."""
     graph = build_track_creator_graph(
         turn_runner=run_track_creator_turn,
@@ -41,7 +43,9 @@ async def build_track_creator_brief(*, objective: dict, vault_summary: list[dict
         judge_runner=run_bank_judge_turn,
         regen_runner=run_bank_regeneration_turn,
     )
-    result = await graph.ainvoke({"objective": objective, "vault_summary": vault_summary})
+    result = await graph.ainvoke(
+        {"objective": objective, "vault_summary": vault_summary, "meta": meta or {}}
+    )
     return result["brief"]
 
 
@@ -74,6 +78,7 @@ async def create_track_with_brief(
             "jd_text": jd_text,
         },
         vault_summary=await vault_summary(db, user.id),
+        meta={"user_id": str(user.id)},
     )
 
     brief = InterviewBrief(track_id=track.id, version=1, content=content)

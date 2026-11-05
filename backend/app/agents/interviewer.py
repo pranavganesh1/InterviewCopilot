@@ -644,7 +644,7 @@ async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, li
         return ev, checks
 
 
-async def run_interviewer_turn(*, payload: dict) -> TurnDecision:
+async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> TurnDecision:
     """Evaluate candidate answer and generate next question in a single LLM call.
 
     Avoids sequential 2-call latency overhead while enforcing deterministic guards
@@ -701,6 +701,7 @@ async def run_interviewer_turn(*, payload: dict) -> TurnDecision:
             system=system,
             user_payload=routed,
             schema=TurnDecision,
+            meta=meta,
         )
         decision = _apply_eval_guards(decision)
         decision = apply_local_policy(decision, routed)

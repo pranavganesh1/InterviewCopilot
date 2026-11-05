@@ -64,6 +64,7 @@ class OnboardingState(TypedDict, total=False):
     history: list[dict]
     vault_summary: list[dict]
     already_finished: bool
+    meta: dict
     turn: dict
 
 
@@ -73,6 +74,7 @@ async def run_onboarding_turn(
     history: list[dict],
     vault_summary: list[dict],
     already_finished: bool = False,
+    meta: dict | None = None,
 ) -> OnboardingTurn:
     """One LLM decision for the onboarding intake (conversation + extraction)."""
     payload = {
@@ -88,6 +90,7 @@ async def run_onboarding_turn(
             system=system,
             user_payload=payload,
             schema=OnboardingTurn,
+            meta=meta,
         )
     if already_finished:
         turn.onboarding_complete = True
@@ -103,6 +106,7 @@ def build_onboarding_graph(turn_runner=run_onboarding_turn):
             history=state.get("history", []),
             vault_summary=state.get("vault_summary", []),
             already_finished=bool(state.get("already_finished")),
+            meta=state.get("meta"),
         )
         return {"turn": turn.model_dump()}
 

@@ -313,6 +313,11 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         minutes_elapsed = 0.0
     payload = {
         "mode": session.mode,
+        "meta": {
+            "user_id": str(session.user_id),
+            "track_id": str(session.track_id),
+            "session_id": str(session.id),
+        },
         "duration_minutes": duration,
         "minutes_elapsed": minutes_elapsed,
         "minutes_remaining": minutes_remaining,

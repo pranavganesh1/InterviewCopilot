@@ -131,7 +131,16 @@ async def process_session_feedback(db: AsyncSession, session_id) -> dict:
 
     try:
         graph = build_feedback_graph(turn_runner=run_feedback_agent)
-        result = await graph.ainvoke({"payload": payload})
+        result = await graph.ainvoke(
+            {
+                "payload": payload,
+                "meta": {
+                    "user_id": str(session.user_id),
+                    "track_id": str(session.track_id),
+                    "session_id": str(session.id),
+                },
+            }
+        )
         enriched = FeedbackReportContent.model_validate(result["report"]).model_dump()
         # Keep question assessments from saved evaluations when the agent
         # returns fewer (it must not invent unanswered questions).

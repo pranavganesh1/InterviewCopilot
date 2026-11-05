@@ -8,6 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.gateway.pricing import estimate_cost_usd
 
 log = get_logger(__name__)
 
@@ -25,6 +26,7 @@ async def chat_completion(
     request_id: str | None = None,
     temperature: float | None = None,
     response_format: dict | None = None,
+    meta: dict | None = None,
 ) -> str:
     """Call the LiteLLM proxy (OpenAI-compatible) and return the assistant content.
 
@@ -86,6 +88,12 @@ async def chat_completion(
                 "total_tokens": usage.get("total_tokens"),
                 "prompt_sha256": hashlib.sha256(repr(messages).encode()).hexdigest(),
                 "status": "ok",
+                "estimated_cost_usd": estimate_cost_usd(
+                    model,
+                    usage.get("prompt_tokens") or 0,
+                    usage.get("completion_tokens") or 0,
+                ),
+                **(meta or {}),
                 "created_at": datetime.now(UTC),
             }
         )

@@ -105,7 +105,7 @@ class BankJudgeVerdict(BaseModel):
 
 
 async def run_track_creator_turn(
-    *, objective: dict, vault_summary: list[dict]
+    *, objective: dict, vault_summary: list[dict], meta: dict | None = None
 ) -> InterviewBriefContent:
     payload = {"candidate_vault": vault_summary, "track_objective": objective}
     async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
@@ -114,11 +114,16 @@ async def run_track_creator_turn(
             system=SYSTEM_PROMPT,
             user_payload=payload,
             schema=InterviewBriefContent,
+            meta=meta,
         )
 
 
 async def run_bank_builder_turn(
-    *, objective: dict, brief: dict, regenerate_indices: list[int] | None = None
+    *,
+    objective: dict,
+    brief: dict,
+    regenerate_indices: list[int] | None = None,
+    meta: dict | None = None,
 ) -> list[BankQuestion]:
     payload = {
         "track_objective": objective,
@@ -144,16 +149,22 @@ async def run_bank_builder_turn(
 
     async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
         result = await structured_completion(
-            client, system=system, user_payload=payload, schema=schema
+            client, system=system, user_payload=payload, schema=schema, meta=meta
         )
     return result.questions
 
 
-async def run_bank_judge_turn(*, objective: dict, questions: list[dict]) -> BankJudgeVerdict:
+async def run_bank_judge_turn(
+    *, objective: dict, questions: list[dict], meta: dict | None = None
+) -> BankJudgeVerdict:
     payload = {"track_objective": objective, "questions": questions}
     async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
         return await structured_completion(
-            client, system=JUDGE_SYSTEM_PROMPT, user_payload=payload, schema=BankJudgeVerdict
+            client,
+            system=JUDGE_SYSTEM_PROMPT,
+            user_payload=payload,
+            schema=BankJudgeVerdict,
+            meta=meta,
         )
 
 
@@ -181,7 +192,9 @@ def build_track_creator_graph(
 ):
     async def author(state: TrackCreatorState) -> dict:
         content = await turn_runner(
-            objective=state["objective"], vault_summary=state.get("vault_summary", [])
+            objective=state["objective"],
+            vault_summary=state.get("vault_summary", []),
+            meta=state.get("meta") or None,
         )
         return {"brief": content.model_dump()}
 
@@ -196,7 +209,9 @@ def build_track_creator_graph(
             # Free-tier TPM windows: space the pipeline's calls out instead of
             # bursting (author just fired moments ago).
             await asyncio.sleep(BANK_CALL_SPACING_S)
-            questions = await bank_runner(objective=objective, brief=brief)
+            questions = await bank_runner(
+                objective=objective, brief=brief, meta=state.get("meta") or None
+            )
             bank = [q.model_dump() for q in questions]
         except Exception as exc:
             log.warning("bank_generation_failed", error=str(exc))
@@ -233,6 +248,7 @@ def build_track_creator_graph(
                     verdict = await judge_runner(
                         objective=objective,
                         questions=[{**q, "index": i} for i, q in enumerate(candidates)],
+                        meta=state.get("meta") or None,
                     )
                     for v in verdict.verdicts:
                         idx = v.index
@@ -261,6 +277,7 @@ def build_track_creator_graph(
                         objective=objective,
                         brief=brief,
                         regenerate_indices=list(range(len(rejects))),
+                        meta=state.get("meta") or None,
                     )
                     pending = [q.model_dump() for q in questions]
                 except Exception as exc:

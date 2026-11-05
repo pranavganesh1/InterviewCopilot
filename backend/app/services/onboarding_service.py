@@ -33,6 +33,7 @@ async def chat(
             "history": history,
             "vault_summary": summary,
             "already_finished": already_finished,
+            "meta": {"user_id": str(user.id)},
         }
     )
     turn = result["turn"]
