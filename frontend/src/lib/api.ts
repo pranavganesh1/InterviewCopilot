@@ -73,6 +73,7 @@ export interface User {
   education?: string;
   onboarding_completed?: boolean;
   onboarding_completed_at?: string | null;
+  is_admin?: boolean;
 }
 
 export interface ProfileUpdate {
@@ -275,4 +276,47 @@ export interface Report {
   questions_attempted?: number;
   max_turns?: number;
   created_at: string;
+}
+
+// ---------- admin (M11) ----------
+
+export interface AdminOverview {
+  users: number;
+  tracks: number;
+  interviews_total: number;
+  interviews_completed: number;
+  interview_minutes: number;
+  llm_calls: number;
+  tokens_in: number;
+  tokens_out: number;
+  estimated_cost_usd: number;
+  by_day: { day: string; calls: number; tokens: number; estimated_cost_usd: number }[];
+  by_model: { model: string; calls: number; tokens: number; estimated_cost_usd: number }[];
+}
+
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  name: string;
+  tracks: number;
+  interviews_completed: number;
+  interview_minutes: number;
+  tokens: number;
+  estimated_cost_usd: number;
+  avg_performance: number | null;
+}
+
+export interface AdminUserDetail {
+  user: { id: string; email: string; name: string };
+  llm: { calls: number; tokens: number; estimated_cost_usd: number };
+  tracks: { id: string; subject: string; track_type: string }[];
+  sessions: {
+    id: string;
+    mode: string;
+    status: string;
+    minutes: number;
+    started: string;
+    coverage_status: string | null;
+  }[];
+  reports: { session_id: string; coverage_status: string; summary_overview: string }[];
 }

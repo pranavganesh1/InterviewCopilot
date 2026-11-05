@@ -8,6 +8,9 @@ import InterviewPage from "./pages/InterviewPage";
 import ReportPage from "./pages/ReportPage";
 import ProfilePage from "./pages/ProfilePage";
 import SignInPage from "./pages/SignInPage";
+import AdminOverviewPage from "./pages/AdminOverviewPage";
+import AdminUsersPage from "./pages/AdminUsersPage";
+import AdminUserDetailPage from "./pages/AdminUserDetailPage";
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -40,6 +43,9 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/admin" element={<AdminOverviewPage />} />
+          <Route path="/admin/users" element={<AdminUsersPage />} />
+          <Route path="/admin/users/:userId" element={<AdminUserDetailPage />} />
           <Route path="/tracks/:trackId" element={<TrackDetailPage />} />
           <Route
             path="/tracks/:trackId/interview/:sessionId"

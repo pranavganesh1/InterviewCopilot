@@ -128,7 +128,10 @@ async def logout(response: Response):
 
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)):
-    return profile_service.user_dict(user)
+    data = profile_service.user_dict(user)
+    allowed = {e.strip().lower() for e in get_settings().admin_emails.split(",") if e.strip()}
+    data["is_admin"] = user.email.lower() in allowed
+    return data
 
 
 @router.patch("/me")

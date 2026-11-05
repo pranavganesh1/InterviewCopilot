@@ -27,6 +27,7 @@ export default function TrackDetailPage() {
   });
 
   const [duration, setDuration] = useState(60);
+  const [customDuration, setCustomDuration] = useState("");
 
   const start = useMutation({
     mutationFn: ({ id, mode }: { id: string; mode: "strict" | "guided" }) =>
@@ -177,13 +178,16 @@ export default function TrackDetailPage() {
         <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
           Interview duration
         </p>
-        <div className="mt-2 flex gap-2">
-          {[30, 60, 90, 120].map((m) => (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {[30, 45, 60, 90, 120, 180].map((m) => (
             <button
               key={m}
               type="button"
-              onClick={() => setDuration(m)}
-              className={`flex-1 rounded-xl border px-3 py-2 text-sm font-medium ${
+              onClick={() => {
+                setDuration(m);
+                setCustomDuration("");
+              }}
+              className={`rounded-xl border px-3 py-2 text-sm font-medium ${
                 duration === m
                   ? "border-indigo-500 bg-indigo-50 text-indigo-700"
                   : "border-stone-200 text-stone-600 hover:bg-stone-50"
@@ -192,6 +196,23 @@ export default function TrackDetailPage() {
               {m >= 60 ? `${m / 60} hr${m > 60 ? "s" : ""}` : `${m} min`}
             </button>
           ))}
+          <input
+            type="number"
+            min={15}
+            max={240}
+            placeholder="Custom"
+            value={customDuration}
+            onChange={(e) => {
+              setCustomDuration(e.target.value);
+              const v = parseInt(e.target.value, 10);
+              if (!Number.isNaN(v) && v >= 15 && v <= 240) setDuration(v);
+            }}
+            className={`w-24 rounded-xl border px-3 py-2 text-sm ${
+              duration === parseInt(customDuration, 10) && customDuration !== ""
+                ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                : "border-stone-200 text-stone-600"
+            }`}
+          />
         </div>
       </div>
 
