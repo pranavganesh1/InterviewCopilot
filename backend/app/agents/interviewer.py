@@ -60,8 +60,14 @@ _IDK_RE = re.compile(
 )
 _FIXED_NONE_GAP = "No substantive answer was provided for this question."
 
-STRICT_QUESTION_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer in STRICT mode.
-""" + PERSONA_BLOCK + """
+STRICT_QUESTION_SYSTEM_PROMPT = (
+    """You are InterviewCopilot's interviewer in STRICT mode.
+"""
+    + PERSONA_BLOCK
+    + """
+"""
+    + COVERAGE_RUBRIC
+    + """
 Rules:
 - Ask ONE question at a time. Questions must be concrete and answerable in text.
 - Follow the question_areas / track topics from the brief.
@@ -81,8 +87,8 @@ Rules:
 - Progress difficulty with questions_asked: early questions foundational, later
   ones deeper (edge cases, complexity, trade-offs, implementation).
 - Stay relevant to the selected track. Do not invent unrelated domains.
-- Use the provided answer evaluation (if any) to choose follow-up vs next_area:
-  probe a gap with ONE follow-up, move on, or decide the interview is complete.
+- After each answer: evaluate coverage honestly, then either ask ONE follow-up
+  probing a gap, move to the next area, or decide the interview is complete.
 - HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
   MUST choose next_area (from remaining_areas) or complete — never another follow-up.
 - PACING (the interview is TIMED): minutes_remaining is the time budget. If
@@ -91,15 +97,28 @@ Rules:
   important remaining areas rather than deep follow-ups.
 - Prefer depth on the candidate's own claimed projects (see candidate_angle_notes).
 - STRICT mode: never put hints, teaching, or the correct answer in next_question.
+- When last_answer is present, fill evaluation thoroughly:
+  coverage, strengths, gaps (mistakes / missing concepts), expected_answer_explanation.
+  For coding/DSA answers also fill corrected_code, time_complexity, space_complexity.
+  Keep solutions ONLY in evaluation fields — never in next_question.
+- When last_answer is null (opening question), leave evaluation lists empty and
+  expected_answer_explanation / corrected_code / complexities empty.
 - If questions_remaining is 0, decision MUST be complete.
 - question_type: set "coding" ONLY when answering requires writing actual code.
   Conceptual explanations, design discussions and behavioral stories are
   "conceptual"/"behavioral" even inside DSA areas.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent.
 """
+)
 
-GUIDED_QUESTION_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer in GUIDED mode.
-""" + PERSONA_BLOCK + """
+GUIDED_QUESTION_SYSTEM_PROMPT = (
+    """You are InterviewCopilot's interviewer in GUIDED mode.
+"""
+    + PERSONA_BLOCK
+    + """
+"""
+    + COVERAGE_RUBRIC
+    + """
 Rules:
 - Ask ONE question at a time. Questions must be concrete and answerable in text.
 - Follow the question_areas / track topics from the brief.
@@ -117,8 +136,8 @@ Rules:
   not been covered yet (see covered_areas).
 - Progress difficulty with questions_asked: early foundational, later deeper.
 - Stay relevant to the selected track. Do not invent unrelated domains.
-- Use the provided answer evaluation (if any) to choose follow-up vs next_area:
-  probe a gap with ONE follow-up, move on, or decide the interview is complete.
+- After each answer: evaluate coverage honestly, then either ask ONE follow-up
+  probing a gap, move to the next area, or decide the interview is complete.
 - HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
   MUST choose next_area (from remaining_areas) or complete — never another follow-up.
 - PACING (the interview is TIMED): minutes_remaining is the time budget. If
@@ -129,6 +148,12 @@ Rules:
 - GUIDED mode: keep next_question conversational. Do NOT dump full answers or
   unsolicited multi-level teaching in next_question — progressive assistance is
   delivered only through the separate assistance API when the candidate asks.
+- When last_answer is present, fill evaluation thoroughly:
+  coverage, strengths, gaps (mistakes / missing concepts), expected_answer_explanation.
+  For coding/DSA answers also fill corrected_code, time_complexity, space_complexity.
+  Keep solutions ONLY in evaluation fields — never in next_question.
+- When last_answer is null (opening question), leave evaluation lists empty and
+  expected_answer_explanation / corrected_code / complexities empty.
 - If questions_remaining is 0, decision MUST be complete.
 - question_type: set "coding" ONLY when answering requires writing actual code.
   Conceptual explanations, design discussions and behavioral stories are
@@ -136,6 +161,7 @@ Rules:
 - notes_for_report: 1-2 sentence evidence note for the feedback agent. Note if the
   candidate appeared to need coaching.
 """
+)
 
 # Backward-compatible aliases used by older imports/tests.
 STRICT_SYSTEM_PROMPT = STRICT_QUESTION_SYSTEM_PROMPT
@@ -618,9 +644,7 @@ async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, li
         return ev, checks
 
 
-async def generate_next_question(
-    payload: dict, evaluation: AnswerEvaluation
-) -> TurnDecision:
+async def generate_next_question(payload: dict, evaluation: AnswerEvaluation) -> TurnDecision:
     """Produce the next question (with dedupe / repair / fallback). Needs evaluation."""
     mode = payload.get("mode") or "strict"
     if mode not in ("strict", "guided"):
@@ -679,18 +703,101 @@ async def generate_next_question(
 
 
 async def run_interviewer_turn(*, payload: dict) -> TurnDecision:
-    """Evaluate the answer, then generate the next question.
+    """Evaluate candidate answer and generate next question in a single LLM call.
 
-    Sequential (not gather): generate_next_question uses the evaluation for
-    follow-up vs next_area and difficulty. That adds one LLM round-trip of
-    latency on answered turns versus the old single combined call; opening
-    turns still skip the evaluator.
+    Avoids sequential 2-call latency overhead while enforcing deterministic guards
+    for empty, idk, or too-short answers.
     """
-    evaluation, checks = await evaluate_answer_with_meta(payload)
-    decision = await generate_next_question(payload, evaluation)
-    return decision.model_copy(
-        update={"evaluator_checks": checks, "rubric_version": RUBRIC_VERSION}
-    )
+    mode = payload.get("mode") or "strict"
+    if mode not in ("strict", "guided"):
+        mode = "strict"
+    routed = {**payload, "mode": mode}
+    system = system_prompt_for_mode(mode)
+
+    raw_answer = payload.get("last_answer")
+    text_answer = "" if raw_answer is None else str(raw_answer).strip()
+    is_idk = bool(text_answer and _IDK_RE.match(text_answer))
+    min_chars = int(get_settings().eval_min_answer_chars)
+    is_too_short = bool(text_answer and len(text_answer) < min_chars)
+
+    is_code = bool(text_answer and _looks_like_code_answer(payload, text_answer))
+    if is_code:
+        system = f"{system}\n{CODING_STATIC_REVIEW_RULES}"
+
+    def _apply_eval_guards(d: TurnDecision) -> TurnDecision:
+        if not text_answer:
+            return d.model_copy(
+                update={
+                    "evaluation": _empty_evaluation(),
+                    "evaluator_checks": ["empty_answer"],
+                    "rubric_version": RUBRIC_VERSION,
+                }
+            )
+        if is_idk:
+            ev, checks = _guarded_none_evaluation(check="idk_answer")
+            return d.model_copy(
+                update={
+                    "evaluation": ev,
+                    "evaluator_checks": checks,
+                    "rubric_version": RUBRIC_VERSION,
+                }
+            )
+        if is_too_short:
+            ev, checks = _guarded_none_evaluation(check="too_short_answer")
+            return d.model_copy(
+                update={
+                    "evaluation": ev,
+                    "evaluator_checks": checks,
+                    "rubric_version": RUBRIC_VERSION,
+                }
+            )
+        return d.model_copy(update={"rubric_version": RUBRIC_VERSION})
+
+    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
+        decision = await structured_completion(
+            client,
+            system=system,
+            user_payload=routed,
+            schema=TurnDecision,
+        )
+        decision = _apply_eval_guards(decision)
+        decision = apply_local_policy(decision, routed)
+        violation = decision_violation(decision, routed)
+        if violation is None:
+            return decision
+
+        for attempt in range(1, _MAX_REPAIR_ATTEMPTS + 1):
+            repair_payload = {
+                **routed,
+                "repair_note": (
+                    f"Your previous decision was rejected (attempt {attempt}): {violation}. "
+                    "Choose a DIFFERENT next_question that is not identical, a paraphrase, "
+                    "or the same learning objective as any asked_questions entry. Cover a "
+                    "genuinely new concept (new algorithm, complexity angle, or technique). "
+                    "Prefer remaining_areas. Return valid JSON only."
+                ),
+            }
+            decision = await structured_completion(
+                client,
+                system=system,
+                user_payload=repair_payload,
+                schema=TurnDecision,
+            )
+            decision = _apply_eval_guards(decision)
+            decision = apply_local_policy(decision, routed)
+            violation = decision_violation(decision, routed)
+            if violation is None:
+                return decision
+
+        log.warning(
+            "interviewer_force_unique_after_repairs",
+            violation=violation,
+            asked=len(routed.get("asked_questions") or []),
+        )
+        forced = force_unique_decision(decision, routed)
+        if forced.decision != "complete" and decision_violation(forced, routed):
+            return forced.model_copy(update={"decision": "complete", "next_question": ""})
+        return forced
 
 
 def build_interviewer_graph(turn_runner=run_interviewer_turn):

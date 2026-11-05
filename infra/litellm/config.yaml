@@ -1,22 +1,28 @@
+router_settings:
+  # Free-tier resilience: when Groq 429s/exhausts its daily quota, LiteLLM
+  # falls back to Gemini automatically. Requires GEMINI_API_KEY in .env.
+  fallbacks:
+    - {"interview-chat": ["interview-chat-gemini"]}
+    - {"structured-json": ["structured-json-gemini"]}
+
 model_list:
   - model_name: interview-chat
     litellm_params:
       model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
-  # Re-enable these once GEMINI_API_KEY is set in .env (optional fallback):
-  # - model_name: interview-chat
-  #   litellm_params:
-  #     model: gemini/gemini-2.0-flash
-  #     api_key: os.environ/GEMINI_API_KEY
+  - model_name: interview-chat-gemini
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
   - model_name: structured-json
     litellm_params:
       model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
       response_format: {"type": "json_object"}
-  # - model_name: structured-json
-  #   litellm_params:
-  #     model: gemini/gemini-2.0-flash
-  #     api_key: os.environ/GEMINI_API_KEY
+  - model_name: structured-json-gemini
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
 
 litellm_settings:
   # Our gateway owns 429 backoff (45s/90s) — LiteLLM-internal instant retries

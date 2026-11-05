@@ -53,10 +53,6 @@ class Settings(BaseSettings):
     # Background catch-up for completed sessions missing a report (0 = disabled).
     feedback_catch_up_interval_seconds: int = 300
 
-    # Optional Brave Search enrichment at track creation (never during a live interview).
-    question_web_research_enabled: bool = False
-    search_api_key: str = ""
-
     # S3-compatible object storage (SeaweedFS)
     s3_endpoint_url: str = "http://localhost:9000"
     s3_access_key: str = "local"

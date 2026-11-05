@@ -5,7 +5,6 @@ from pydantic import ValidationError
 
 from app.agents.interviewer import (
     AnswerEvaluation,
-    QuestionMove,
     TurnDecision,
     apply_local_policy,
     decision_violation,
@@ -92,8 +91,9 @@ async def test_run_interviewer_turn_repairs_then_forces_unique(monkeypatch):
     async def fake_structured(client, *, system, user_payload, schema, **_k):
         calls.append(user_payload)
         # Always return a duplicate question so repairs keep failing.
-        return QuestionMove.model_validate(
+        return TurnDecision.model_validate(
             {
+                "evaluation": {"coverage": "none", "strengths": [], "gaps": []},
                 "decision": "next_area",
                 "next_question": "Same question",
                 "question_area": "Hashmaps",
@@ -165,10 +165,13 @@ async def test_empty_answer_skips_evaluator(monkeypatch):
             eval_calls += 1
             return AnswerEvaluation(coverage="none", strengths=[], gaps=[])
         q_calls += 1
-        return QuestionMove(
-            decision="next_area",
-            next_question="Explain hashmaps.",
-            question_area="Hashmaps",
+        return TurnDecision.model_validate(
+            {
+                "evaluation": {"coverage": "none", "strengths": [], "gaps": []},
+                "decision": "next_area",
+                "next_question": "Explain hashmaps.",
+                "question_area": "Hashmaps",
+            }
         )
 
     monkeypatch.setattr(mod, "structured_completion", fake_structured)

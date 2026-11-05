@@ -26,6 +26,7 @@ Thumbs.db
 # Local data dumps
 *.sqlite3
 *.dump
+*.sql
 
 # Live-test output artifacts
 backend/m9_track*.json
