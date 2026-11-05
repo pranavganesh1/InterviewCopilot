@@ -12,6 +12,7 @@ from app.agents.assistance import (
     next_assistance_level,
 )
 from app.agents.interviewer import TurnDecision, build_interviewer_graph
+from app.agents.question_plan import build_question_plan
 from app.core.config import get_settings
 from app.models.interview import InterviewSession, SessionTurn
 from app.models.user import User
@@ -47,12 +48,19 @@ async def start_session(db: AsyncSession, user: User, track_id, mode: str = "str
     if mode == "guided" and not await guided_unlocked(db, track_id):
         raise PermissionError("guided_locked")
 
-    session = InterviewSession(track_id=track_id, user_id=user.id, mode=mode)
+    brief_content = track_brief["brief"]["content"]
+    plan = await build_question_plan(brief_content, get_settings().interview_max_turns)
+    session = InterviewSession(
+        track_id=track_id,
+        user_id=user.id,
+        mode=mode,
+        question_plan=plan,
+    )
     db.add(session)
     await db.commit()
     await db.refresh(session)
 
-    decision = await _decide(db, session, track_brief["brief"]["content"], last_answer=None)
+    decision = await _decide(db, session, brief_content, last_answer=None)
     turn = await _append_turn(db, session, decision)
     return {"session": _session_dict(session), "turn": _turn_dict(turn)}
 
@@ -220,6 +228,12 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         if questions_asked < 10
         else "advanced"
     )
+    diversity = (
+        "Ask a new question on a distinct learning objective within this track. "
+        "Do not restate or paraphrase any asked_questions entry, and do not re-test "
+        "the same concepts (e.g. array definition + contiguous storage + static vs "
+        "dynamic) under different wording."
+    )
     payload = {
         "mode": session.mode,
         "brief": brief_content,
@@ -244,13 +258,19 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         "difficulty_target": difficulty,
         # Persistent asked list (survives refresh because turns are in Postgres).
         "asked_questions": [t.question for t in turns],
-        "diversity_instruction": (
-            "Ask a new question on a distinct learning objective within this track. "
-            "Do not restate or paraphrase any asked_questions entry, and do not re-test "
-            "the same concepts (e.g. array definition + contiguous storage + static vs "
-            "dynamic) under different wording."
-        ),
+        "diversity_instruction": diversity,
     }
+    # Soft plan slot for this turn (legacy sessions with NULL plan skip this).
+    raw_plan = getattr(session, "question_plan", None)
+    plan = raw_plan if isinstance(raw_plan, list) else None
+    if plan and 0 <= questions_asked < len(plan):
+        slot = plan[questions_asked]
+        if isinstance(slot, dict):
+            payload["question_plan_slot"] = slot
+            objective = slot.get("objective", "")
+            payload["diversity_instruction"] = (
+                f"{diversity} Ask about this objective: {objective}."
+            )
     result = await _graph().ainvoke({"payload": payload})
     decision = TurnDecision.model_validate(result["decision"])
     # Defense in depth: never persist a duplicate even if the agent slipped through.

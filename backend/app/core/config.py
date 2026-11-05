@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     litellm_master_key: str = "sk-local-master"
     llm_client_timeout: int = 90
     interview_max_turns: int = 15
+    # Background catch-up for completed sessions missing a report (0 = disabled).
+    feedback_catch_up_interval_seconds: int = 300
 
     # S3-compatible object storage (SeaweedFS)
     s3_endpoint_url: str = "http://localhost:9000"

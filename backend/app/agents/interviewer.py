@@ -13,7 +13,24 @@ log = get_logger(__name__)
 
 _MAX_REPAIR_ATTEMPTS = 2  # initial call + up to 2 repairs = 3 LLM calls max
 
-STRICT_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer conducting a STRICT interview.
+EVALUATE_SYSTEM_PROMPT = """You are InterviewCopilot's answer evaluator.
+
+Judge ONLY what the candidate actually wrote. Never invent mistakes they did not make.
+Do not write the next interview question — evaluation only.
+
+Coverage rubric:
+- none      = no relevant content or a wrong answer
+- partial   = some correct points, important parts missing or wrong
+- good      = mostly correct and complete, minor gaps
+- excellent = correct, complete, with good reasoning (and complexity/edge cases where relevant)
+
+Always fill strengths, gaps, and expected_answer_explanation.
+For coding/DSA answers also fill corrected_code, time_complexity, space_complexity;
+leave those three empty for non-code answers.
+Use the track/brief context only for grounding — score the answer against the question asked.
+"""
+
+STRICT_QUESTION_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer in STRICT mode.
 
 Rules:
 - Ask ONE question at a time. Questions must be concrete and answerable in text.
@@ -29,23 +46,17 @@ Rules:
 - Progress difficulty with questions_asked: early questions foundational, later
   ones deeper (edge cases, complexity, trade-offs, implementation).
 - Stay relevant to the selected track. Do not invent unrelated domains.
-- After each answer: evaluate coverage honestly, then either ask ONE follow-up
-  probing a gap, move to the next area, or decide the interview is complete.
+- Use the provided answer evaluation (if any) to choose follow-up vs next_area:
+  probe a gap with ONE follow-up, move on, or decide the interview is complete.
 - HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
   MUST choose next_area (from remaining_areas) or complete — never another follow-up.
 - Prefer depth on the candidate's own claimed projects (see candidate_angle_notes).
 - STRICT mode: never put hints, teaching, or the correct answer in next_question.
-- When last_answer is present, fill evaluation thoroughly:
-  strengths, gaps (mistakes / missing concepts), expected_answer_explanation.
-  For coding/DSA answers also fill corrected_code, time_complexity, space_complexity.
-  Keep solutions ONLY in evaluation fields — never in next_question.
-- When last_answer is null (opening question), leave evaluation lists empty and
-  expected_answer_explanation / corrected_code / complexities empty.
 - If questions_remaining is 0, decision MUST be complete.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent.
 """
 
-GUIDED_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer conducting a GUIDED interview.
+GUIDED_QUESTION_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer in GUIDED mode.
 
 Rules:
 - Ask ONE question at a time. Questions must be concrete and answerable in text.
@@ -59,32 +70,29 @@ Rules:
   not been covered yet (see covered_areas).
 - Progress difficulty with questions_asked: early foundational, later deeper.
 - Stay relevant to the selected track. Do not invent unrelated domains.
-- After each answer: evaluate coverage honestly, then either ask ONE follow-up
-  probing a gap, move to the next area, or decide the interview is complete.
+- Use the provided answer evaluation (if any) to choose follow-up vs next_area:
+  probe a gap with ONE follow-up, move on, or decide the interview is complete.
 - HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
   MUST choose next_area (from remaining_areas) or complete — never another follow-up.
 - Prefer depth on the candidate's own claimed projects (see candidate_angle_notes).
 - GUIDED mode: keep next_question conversational. Do NOT dump full answers or
   unsolicited multi-level teaching in next_question — progressive assistance is
   delivered only through the separate assistance API when the candidate asks.
-- When last_answer is present, fill evaluation thoroughly:
-  strengths, gaps (mistakes / missing concepts), expected_answer_explanation.
-  For coding/DSA answers also fill corrected_code, time_complexity, space_complexity.
-  Keep solutions ONLY in evaluation fields — never in next_question.
-- When last_answer is null, leave evaluation extras empty.
 - If questions_remaining is 0, decision MUST be complete.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent. Note if the
   candidate appeared to need coaching.
 """
 
-# Backward-compatible alias used by older imports/tests.
+# Backward-compatible aliases used by older imports/tests.
+STRICT_SYSTEM_PROMPT = STRICT_QUESTION_SYSTEM_PROMPT
+GUIDED_SYSTEM_PROMPT = GUIDED_QUESTION_SYSTEM_PROMPT
 SYSTEM_PROMPT = STRICT_SYSTEM_PROMPT
 
 
 def system_prompt_for_mode(mode: str) -> str:
     if mode == "guided":
-        return GUIDED_SYSTEM_PROMPT
-    return STRICT_SYSTEM_PROMPT
+        return GUIDED_QUESTION_SYSTEM_PROMPT
+    return STRICT_QUESTION_SYSTEM_PROMPT
 
 
 class AnswerEvaluation(BaseModel):
@@ -95,6 +103,23 @@ class AnswerEvaluation(BaseModel):
     corrected_code: str = ""
     time_complexity: str = ""
     space_complexity: str = ""
+
+
+class QuestionMove(BaseModel):
+    """Next-question fields only (evaluation is produced separately)."""
+
+    decision: Literal["follow_up", "next_area", "complete"]
+    next_question: str
+    question_area: str
+    notes_for_report: str = ""
+
+    @model_validator(mode="after")
+    def _question_required_unless_complete(self) -> "QuestionMove":
+        if self.decision != "complete" and not self.next_question.strip():
+            raise ValueError("next_question is required unless decision is complete")
+        if self.decision != "complete" and not self.question_area.strip():
+            raise ValueError("question_area is required unless decision is complete")
+        return self
 
 
 class TurnDecision(BaseModel):
@@ -121,6 +146,20 @@ class InterviewerState(TypedDict, total=False):
 # Kept for older imports/tests.
 def _norm_question(q: str) -> str:
     return normalize_question(q)
+
+
+def _empty_evaluation() -> AnswerEvaluation:
+    return AnswerEvaluation(coverage="none", strengths=[], gaps=[])
+
+
+def _as_turn(move: QuestionMove, evaluation: AnswerEvaluation) -> TurnDecision:
+    return TurnDecision(
+        evaluation=evaluation,
+        decision=move.decision,
+        next_question=move.next_question,
+        question_area=move.question_area,
+        notes_for_report=move.notes_for_report,
+    )
 
 
 def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
@@ -279,22 +318,57 @@ def force_unique_decision(decision: TurnDecision, payload: dict) -> TurnDecision
     )
 
 
-async def run_interviewer_turn(*, payload: dict) -> TurnDecision:
-    """Route by session mode, validate output, repair bounded times, then force-unique."""
+def _has_answer(payload: dict) -> bool:
+    answer = payload.get("last_answer")
+    return bool(answer is not None and str(answer).strip())
+
+
+async def evaluate_answer(payload: dict) -> AnswerEvaluation:
+    """Score the candidate answer only. Skips the LLM when there is no answer."""
+    if not _has_answer(payload):
+        return _empty_evaluation()
+
+    mode = payload.get("mode") or "strict"
+    eval_payload = {
+        "mode": mode,
+        "brief": payload.get("brief"),
+        "last_question": payload.get("last_question"),
+        "last_answer": payload.get("last_answer"),
+        "question_area": (payload.get("transcript") or [{}])[-1].get("area")
+        if payload.get("transcript")
+        else None,
+    }
+    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
+        return await structured_completion(
+            client,
+            system=EVALUATE_SYSTEM_PROMPT,
+            user_payload=eval_payload,
+            schema=AnswerEvaluation,
+        )
+
+
+async def generate_next_question(
+    payload: dict, evaluation: AnswerEvaluation
+) -> TurnDecision:
+    """Produce the next question (with dedupe / repair / fallback). Needs evaluation."""
     mode = payload.get("mode") or "strict"
     if mode not in ("strict", "guided"):
         mode = "strict"
-    routed = {**payload, "mode": mode}
+    routed = {
+        **payload,
+        "mode": mode,
+        "answer_evaluation": evaluation.model_dump(),
+    }
     system = system_prompt_for_mode(mode)
 
     async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        decision = await structured_completion(
+        move = await structured_completion(
             client,
             system=system,
             user_payload=routed,
-            schema=TurnDecision,
+            schema=QuestionMove,
         )
-        decision = apply_local_policy(decision, routed)
+        decision = apply_local_policy(_as_turn(move, evaluation), routed)
         violation = decision_violation(decision, routed)
         if violation is None:
             return decision
@@ -310,13 +384,13 @@ async def run_interviewer_turn(*, payload: dict) -> TurnDecision:
                     "Prefer remaining_areas. Return valid JSON only."
                 ),
             }
-            decision = await structured_completion(
+            move = await structured_completion(
                 client,
                 system=system,
                 user_payload=repair_payload,
-                schema=TurnDecision,
+                schema=QuestionMove,
             )
-            decision = apply_local_policy(decision, routed)
+            decision = apply_local_policy(_as_turn(move, evaluation), routed)
             violation = decision_violation(decision, routed)
             if violation is None:
                 return decision
@@ -331,6 +405,18 @@ async def run_interviewer_turn(*, payload: dict) -> TurnDecision:
         if forced.decision != "complete" and decision_violation(forced, routed):
             return forced.model_copy(update={"decision": "complete", "next_question": ""})
         return forced
+
+
+async def run_interviewer_turn(*, payload: dict) -> TurnDecision:
+    """Evaluate the answer, then generate the next question.
+
+    Sequential (not gather): generate_next_question uses the evaluation for
+    follow-up vs next_area and difficulty. That adds one LLM round-trip of
+    latency on answered turns versus the old single combined call; opening
+    turns still skip the evaluator.
+    """
+    evaluation = await evaluate_answer(payload)
+    return await generate_next_question(payload, evaluation)
 
 
 def build_interviewer_graph(turn_runner=run_interviewer_turn):
