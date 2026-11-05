@@ -33,3 +33,5 @@ backend/m9_track*.json
 
 # Live-test output artifacts
 backend/m9_track*.json
+backend/u3_*.json
+backend/*_track.json

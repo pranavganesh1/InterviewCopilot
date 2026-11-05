@@ -644,64 +644,6 @@ async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, li
         return ev, checks
 
 
-async def generate_next_question(payload: dict, evaluation: AnswerEvaluation) -> TurnDecision:
-    """Produce the next question (with dedupe / repair / fallback). Needs evaluation."""
-    mode = payload.get("mode") or "strict"
-    if mode not in ("strict", "guided"):
-        mode = "strict"
-    routed = {
-        **payload,
-        "mode": mode,
-        "answer_evaluation": evaluation.model_dump(),
-    }
-    system = system_prompt_for_mode(mode)
-
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        move = await structured_completion(
-            client,
-            system=system,
-            user_payload=routed,
-            schema=QuestionMove,
-        )
-        decision = apply_local_policy(_as_turn(move, evaluation), routed)
-        violation = decision_violation(decision, routed)
-        if violation is None:
-            return decision
-
-        for attempt in range(1, _MAX_REPAIR_ATTEMPTS + 1):
-            repair_payload = {
-                **routed,
-                "repair_note": (
-                    f"Your previous decision was rejected (attempt {attempt}): {violation}. "
-                    "Choose a DIFFERENT next_question that is not identical, a paraphrase, "
-                    "or the same learning objective as any asked_questions entry. Cover a "
-                    "genuinely new concept (new algorithm, complexity angle, or technique). "
-                    "Prefer remaining_areas. Return valid JSON only."
-                ),
-            }
-            move = await structured_completion(
-                client,
-                system=system,
-                user_payload=repair_payload,
-                schema=QuestionMove,
-            )
-            decision = apply_local_policy(_as_turn(move, evaluation), routed)
-            violation = decision_violation(decision, routed)
-            if violation is None:
-                return decision
-
-        log.warning(
-            "interviewer_force_unique_after_repairs",
-            violation=violation,
-            asked=len(routed.get("asked_questions") or []),
-        )
-        forced = force_unique_decision(decision, routed)
-        # Final safety: if force still somehow collides, complete.
-        if forced.decision != "complete" and decision_violation(forced, routed):
-            return forced.model_copy(update={"decision": "complete", "next_question": ""})
-        return forced
-
-
 async def run_interviewer_turn(*, payload: dict) -> TurnDecision:
     """Evaluate candidate answer and generate next question in a single LLM call.
 
