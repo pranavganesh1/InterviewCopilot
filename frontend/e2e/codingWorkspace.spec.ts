@@ -83,13 +83,14 @@ test("coding question shows workspace; text question keeps textarea", async ({
   await expect(workspace.getByRole("button", { name: "Python" })).toBeVisible();
   await expect(workspace.getByRole("button", { name: "Java" })).toBeVisible();
   await expect(workspace.getByRole("button", { name: "C" })).toBeVisible();
-  await expect(workspace.getByRole("button", { name: "Run" })).toBeVisible();
+  const runBtn = workspace.getByTestId("run-disabled");
+  await expect(runBtn).toBeVisible();
+  await expect(runBtn).toBeDisabled();
   await expect(workspace.getByRole("button", { name: "Submit Answer" })).toBeVisible();
-  await expect(page.getByText(/execution unavailable/i)).toBeVisible();
+  await expect(workspace.getByTestId("ai-reviewed-badge")).toHaveText(
+    /AI-reviewed, not executed/i,
+  );
   await expect(page.getByRole("heading", { name: "Need Help?" })).toBeVisible();
-
-  await workspace.getByRole("button", { name: "Run" }).click();
-  await expect(page.getByText(/No secure code-execution sandbox/i)).toBeVisible();
 
   // Text / conceptual path still uses the classic answer box.
   await page.route("**/api/v1/sessions/text1", (route) =>

@@ -1,81 +1,69 @@
 """Manual stability check for answer evaluation labels.
 
 Usage (from backend/):
-  uv run python scripts/eval_check.py --dry     # stubbed labels, no network
-  uv run python scripts/eval_check.py           # real evaluator (needs LLM)
+  uv run python scripts/eval_check.py --dry
+  uv run python scripts/eval_check.py --dry --runs 3
+  uv run python scripts/eval_check.py --runs 3          # real evaluator
 
-Not run by pytest.
+Not run by pytest (see tests/test_eval_consistency.py::test_live_eval_...).
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from pathlib import Path
 
-# Allow `python scripts/eval_check.py` from backend/.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.agents.interviewer import AnswerEvaluation, evaluate_answer  # noqa: E402
+from app.agents.interviewer import evaluate_answer  # noqa: E402
 
-QUESTION = (
-    "Given an array of integers, explain how you would find two indices whose "
-    "values sum to a target. What is the time and space complexity?"
-)
-
-SAMPLES: list[tuple[str, str]] = [
-    ("wrong", "I would sort the array and hope the first two numbers add up."),
-    (
-        "partial",
-        "Use a hashmap of seen values. For each number check if target-num was seen.",
-    ),
-    (
-        "correct",
-        "One pass with a hash map from value→index. For each nums[i], look up "
-        "target-nums[i]; if present return the pair of indices. O(n) time, O(n) space.",
-    ),
-    ("wrong", "Just print the array. Arrays are contiguous so the answer is obvious."),
-    (
-        "partial",
-        "Brute force nested loops check every pair. That works but is slow for large n.",
-    ),
-    (
-        "correct",
-        "Two-sum: store complements in a dict while iterating once. Handle duplicates "
-        "by recording indices carefully. Time O(n), space O(n).",
-    ),
-]
+FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "eval_samples.json"
 
 
-async def _dry_run() -> None:
-    for expected, answer in SAMPLES:
-        # Deterministic stub: mirror the labelled intent without calling the LLM.
-        coverage = {
-            "wrong": "none",
-            "partial": "partial",
-            "correct": "excellent",
-        }[expected]
-        print(f"expected={expected:8} dry_label={coverage:10} answer={answer[:60]}...")
+def _load_samples() -> list[dict]:
+    if FIXTURES.is_file():
+        return json.loads(FIXTURES.read_text(encoding="utf-8"))
+    # Tiny fallback if fixtures are missing.
+    return [
+        {
+            "expected": "none",
+            "answer": "I don't know",
+            "question": "What is an array?",
+            "topic": "arrays",
+        }
+    ]
 
 
-async def _live_run() -> None:
-    for expected, answer in SAMPLES:
-        ev: AnswerEvaluation = await evaluate_answer(
-            {
-                "mode": "strict",
-                "brief": {
-                    "summary": "Arrays / hashing",
-                    "question_areas": [{"topic": "Arrays", "guidance": "two-sum"}],
-                },
-                "last_question": QUESTION,
-                "last_answer": answer,
-            }
-        )
-        print(
-            f"expected={expected:8} got={ev.coverage:10} "
-            f"strengths={len(ev.strengths)} gaps={len(ev.gaps)}"
-        )
+async def _dry_run(samples: list[dict], runs: int) -> None:
+    for sample in samples:
+        expected = sample["expected"]
+        for i in range(runs):
+            print(
+                f"run={i + 1} expected={expected:10} dry_label={expected:10} "
+                f"topic={sample.get('topic', '')} answer={str(sample['answer'])[:50]!r}"
+            )
+
+
+async def _live_run(samples: list[dict], runs: int) -> None:
+    for sample in samples:
+        expected = sample["expected"]
+        for i in range(runs):
+            ev = await evaluate_answer(
+                {
+                    "mode": "strict",
+                    "brief": {"summary": sample.get("topic", "")},
+                    "last_question": sample["question"],
+                    "last_answer": sample["answer"],
+                }
+            )
+            print(
+                f"run={i + 1} expected={expected:10} got={ev.coverage:10} "
+                f"strengths={len(ev.strengths)} gaps={len(ev.gaps)} "
+                f"topic={sample.get('topic', '')}"
+            )
 
 
 def main() -> None:
@@ -85,8 +73,16 @@ def main() -> None:
         action="store_true",
         help="Print stubbed labels without calling the LLM",
     )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="Repeat each sample N times (default 1)",
+    )
     args = parser.parse_args()
-    asyncio.run(_dry_run() if args.dry else _live_run())
+    samples = _load_samples()
+    runs = max(1, int(args.runs))
+    asyncio.run(_dry_run(samples, runs) if args.dry else _live_run(samples, runs))
 
 
 if __name__ == "__main__":

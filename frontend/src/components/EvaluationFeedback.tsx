@@ -1,3 +1,4 @@
+import { AI_REVIEWED_NOT_EXECUTED } from "../lib/codingReview";
 import { COVERAGE_STYLE } from "../lib/ui";
 import type { TurnResult } from "../lib/api";
 
@@ -7,17 +8,21 @@ type Props = {
   evaluation: Evaluation;
   questionIndex?: number;
   compact?: boolean;
+  /** When true (coding question), show the static-review badge. */
+  coding?: boolean;
 };
 
 export default function EvaluationFeedback({
   evaluation,
   questionIndex,
   compact = false,
+  coding = false,
 }: Props) {
   const hasExplanation = !!evaluation.expected_answer_explanation?.trim();
   const hasCode = !!evaluation.corrected_code?.trim();
   const hasComplexity =
     !!evaluation.time_complexity?.trim() || !!evaluation.space_complexity?.trim();
+  const showAiReviewed = coding || hasCode || hasComplexity;
 
   return (
     <div
@@ -37,6 +42,14 @@ export default function EvaluationFeedback({
         >
           {evaluation.coverage}
         </span>
+        {showAiReviewed && (
+          <span
+            className="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800"
+            data-testid="ai-reviewed-badge"
+          >
+            {AI_REVIEWED_NOT_EXECUTED}
+          </span>
+        )}
       </div>
 
       {evaluation.strengths.length > 0 && (

@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     litellm_master_key: str = "sk-local-master"
     llm_client_timeout: int = 90
     interview_max_turns: int = 15
+    # Answers shorter than this (after strip) skip the LLM and score as none.
+    eval_min_answer_chars: int = 12
     # Background catch-up for completed sessions missing a report (0 = disabled).
     feedback_catch_up_interval_seconds: int = 300
 

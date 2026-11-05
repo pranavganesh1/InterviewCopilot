@@ -58,26 +58,6 @@ test("dashboard lists tracks from the API", async ({ page }) => {
 });
 
 test("track detail shows the question bank (M9)", async ({ page }) => {
-  await page.route("**/api/v1/auth/me", (route) => {
-    // handled by shared mock below in beforeEach — this spec-level route is
-    // unnecessary; kept intentionally empty to avoid double registration.
-    void route;
-  });
-  await page.route("**/api/v1/me/assessments", (route) =>
-    route.fulfill({
-      json: {
-        dashboard: {
-          completed_interviews: 0,
-          average_score: null,
-          total_questions_attempted: 0,
-          strongest_skills: [],
-          skills_needing_improvement: [],
-          recommended_topics: [],
-        },
-        assessments: [],
-      },
-    }),
-  );
   await page.route("**/api/v1/tracks/t1", (route) =>
     route.fulfill({
       json: {
@@ -93,6 +73,10 @@ test("track detail shows the question bank (M9)", async ({ page }) => {
           version: 1,
           content: {
             summary: "DSA basics",
+            competencies: [],
+            question_areas: [],
+            preparation_plan: [],
+            candidate_angle_notes: "",
             question_bank: [
               {
                 area: "Hashmaps",

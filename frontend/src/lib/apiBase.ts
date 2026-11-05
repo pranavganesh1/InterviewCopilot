@@ -7,5 +7,6 @@ export const API_BASE = "/api/v1";
  * (127.0.0.1:5173 vs localhost:8000 otherwise causes MismatchingStateError).
  */
 export const AUTH_ORIGIN = (
-  import.meta.env.VITE_AUTH_ORIGIN as string | undefined
+  (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+    .env?.VITE_AUTH_ORIGIN
 )?.replace(/\/$/, "") || "http://localhost:8000";

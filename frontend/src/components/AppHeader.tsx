@@ -28,7 +28,7 @@ export default function AppHeader() {
   if (!user) return null;
 
   return (
-    <header className="sticky top-0 z-40 overflow-x-hidden border-b border-indigo-100/80 bg-white/95 backdrop-blur">
+    <header className="sticky top-0 z-40 overflow-x-clip border-b border-indigo-100/80 bg-white/95 backdrop-blur">
       <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center gap-2 px-3 py-3 sm:gap-6 sm:px-4">
         <Link to="/" className="shrink-0 text-sm font-bold tracking-tight text-slate-900 sm:text-base">
           Interview<span className="text-indigo-600">Copilot</span>

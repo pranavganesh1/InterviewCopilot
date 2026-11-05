@@ -7,6 +7,10 @@ import {
   formatCodeAnswer,
   type CodeLanguage,
 } from "../lib/codeTemplates";
+import {
+  AI_REVIEWED_NOT_EXECUTED,
+  CODE_EXECUTION_UNAVAILABLE_NOTE,
+} from "../lib/codingReview";
 import { parseProblemSections } from "../lib/questionKind";
 import type { AssistanceResult } from "../lib/api";
 
@@ -58,7 +62,7 @@ export default function CodingWorkspace({
     () => ({ ...STARTER_CODE }),
   );
   const [terminal, setTerminal] = useState(
-    "Code execution is not available in this environment.\nRun is disabled until a secure sandbox is connected.\nYou can still edit code and Submit Answer for interview evaluation.",
+    `${CODE_EXECUTION_UNAVAILABLE_NOTE}\nSubmit Answer for static AI review (${AI_REVIEWED_NOT_EXECUTED}).`,
   );
 
   const sections = useMemo(() => parseProblemSections(question), [question]);
@@ -74,17 +78,6 @@ export default function CodingWorkspace({
   const resetCode = () => {
     setCodeByLang((prev) => ({ ...prev, [language]: STARTER_CODE[language] }));
     setTerminal(`Reset ${language} starter template.`);
-  };
-
-  const runCode = () => {
-    setTerminal(
-      [
-        "$ run",
-        "Status: unavailable",
-        "Reason: No secure code-execution sandbox is configured for InterviewCopilot.",
-        "Nothing was executed. Output below is not a fake result — execution was blocked.",
-      ].join("\n"),
-    );
   };
 
   const submit = () => {
@@ -153,9 +146,11 @@ export default function CodingWorkspace({
             <div className="ml-auto flex flex-wrap gap-2 px-1">
               <button
                 type="button"
-                onClick={runCode}
-                disabled={submitPending}
-                className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-50 disabled:opacity-40"
+                disabled
+                title={CODE_EXECUTION_UNAVAILABLE_NOTE}
+                aria-disabled="true"
+                data-testid="run-disabled"
+                className="cursor-not-allowed rounded-lg border border-stone-200 bg-stone-100 px-3 py-1.5 text-xs font-semibold text-stone-400"
               >
                 Run
               </button>
@@ -204,6 +199,13 @@ export default function CodingWorkspace({
             >
               {submitPending ? "Evaluating…" : "Submit Answer"}
             </button>
+            <span
+              className="rounded-md bg-violet-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-violet-800"
+              data-testid="ai-reviewed-badge"
+              title={CODE_EXECUTION_UNAVAILABLE_NOTE}
+            >
+              {AI_REVIEWED_NOT_EXECUTED}
+            </span>
             {submitPending && (
               <span className="text-xs text-indigo-700">
                 Waiting for AI evaluation…
@@ -228,7 +230,7 @@ export default function CodingWorkspace({
                 Output
               </p>
               <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
-                execution unavailable
+                {AI_REVIEWED_NOT_EXECUTED}
               </span>
             </div>
             <pre className="flex-1 overflow-auto px-3 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-emerald-300">

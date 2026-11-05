@@ -36,6 +36,9 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "live: hits the real LLM gateway (skip unless RUN_LIVE_EVAL=1)",
+]
 
 [tool.ruff]
 line-length = 100

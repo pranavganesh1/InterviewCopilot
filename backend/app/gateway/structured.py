@@ -16,6 +16,7 @@ async def structured_completion(
     model: str = "structured-json",
     mongo_db: AsyncIOMotorDatabase | None = None,
     request_id: str | None = None,
+    temperature: float | None = None,
 ) -> BaseModel:
     """Ask for JSON, validate against schema, repair once, then give up.
 
@@ -42,6 +43,7 @@ async def structured_completion(
             messages=messages,
             mongo_db=mongo_db,
             request_id=request_id,
+            temperature=temperature,
             response_format={"type": "json_object"},
         )
         try:

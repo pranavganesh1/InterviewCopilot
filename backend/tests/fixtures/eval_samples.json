@@ -1,0 +1,122 @@
+[
+  {
+    "id": "arrays-none",
+    "topic": "arrays",
+    "question": "Explain how you would find two indices in an array that sum to a target. What are the time and space complexities?",
+    "answer": "Just print the array. Arrays are contiguous so the answer is obvious.",
+    "expected": "none",
+    "reason": "Irrelevant; no two-sum approach."
+  },
+  {
+    "id": "arrays-partial",
+    "topic": "arrays",
+    "question": "Explain how you would find two indices in an array that sum to a target. What are the time and space complexities?",
+    "answer": "Brute force nested loops check every pair. That works but is slow for large n.",
+    "expected": "partial",
+    "reason": "Correct O(n^2) idea; missing hash-map approach and clear complexities."
+  },
+  {
+    "id": "arrays-good",
+    "topic": "arrays",
+    "question": "Explain how you would find two indices in an array that sum to a target. What are the time and space complexities?",
+    "answer": "Use a hashmap of seen values. For each number check if target-num was seen and return the indices. Time is about O(n).",
+    "expected": "good",
+    "reason": "Correct core approach; minor gaps on space and edge cases."
+  },
+  {
+    "id": "arrays-excellent",
+    "topic": "arrays",
+    "question": "Explain how you would find two indices in an array that sum to a target. What are the time and space complexities?",
+    "answer": "One pass with a hash map from value to index. For each nums[i], look up target-nums[i]; if present return the pair. Handle self-pairs carefully. O(n) time, O(n) space.",
+    "expected": "excellent",
+    "reason": "Complete correct approach with complexities and an edge-case note."
+  },
+  {
+    "id": "arrays-idk",
+    "topic": "arrays",
+    "question": "Explain how you would find two indices in an array that sum to a target. What are the time and space complexities?",
+    "answer": "I don't know",
+    "expected": "none",
+    "reason": "Explicit refusal."
+  },
+  {
+    "id": "hashmaps-none",
+    "topic": "hash_maps",
+    "question": "How do hash maps resolve collisions, and what is average lookup complexity?",
+    "answer": "Hash maps are the same as arrays sorted backwards.",
+    "expected": "none",
+    "reason": "Factually wrong / irrelevant."
+  },
+  {
+    "id": "hashmaps-partial",
+    "topic": "hash_maps",
+    "question": "How do hash maps resolve collisions, and what is average lookup complexity?",
+    "answer": "They use chaining with linked lists so multiple keys can share a bucket.",
+    "expected": "partial",
+    "reason": "Mentions chaining; omits open addressing and average O(1) lookup."
+  },
+  {
+    "id": "hashmaps-good",
+    "topic": "hash_maps",
+    "question": "How do hash maps resolve collisions, and what is average lookup complexity?",
+    "answer": "Common options are chaining (list per bucket) or open addressing (probe for next slot). Average lookup is O(1) when the load factor is controlled.",
+    "expected": "good",
+    "reason": "Both strategies and average complexity; light on worst case."
+  },
+  {
+    "id": "hashmaps-excellent",
+    "topic": "hash_maps",
+    "question": "How do hash maps resolve collisions, and what is average lookup complexity?",
+    "answer": "Collisions are handled with chaining or open addressing (linear/quadratic probing, double hashing). With a good hash and load factor, average lookup is O(1); worst case can degrade to O(n) if everything collides. Resizing keeps the load factor bounded.",
+    "expected": "excellent",
+    "reason": "Strategies, average vs worst case, load factor."
+  },
+  {
+    "id": "hashmaps-short",
+    "topic": "hash_maps",
+    "question": "How do hash maps resolve collisions, and what is average lookup complexity?",
+    "answer": "ok",
+    "expected": "none",
+    "reason": "Too short to be substantive."
+  },
+  {
+    "id": "os-none",
+    "topic": "operating_systems",
+    "question": "What is the difference between a process and a thread, and why might a server use threads?",
+    "answer": "Processes are when the CPU is overclocked and threads are USB cables.",
+    "expected": "none",
+    "reason": "Nonsense / wrong."
+  },
+  {
+    "id": "os-partial",
+    "topic": "operating_systems",
+    "question": "What is the difference between a process and a thread, and why might a server use threads?",
+    "answer": "A process is a running program. Threads are lighter pieces that run inside it.",
+    "expected": "partial",
+    "reason": "Basic distinction; missing shared memory / why servers use threads."
+  },
+  {
+    "id": "os-good",
+    "topic": "operating_systems",
+    "question": "What is the difference between a process and a thread, and why might a server use threads?",
+    "answer": "A process has its own address space; threads share that space and are cheaper to create. Servers use threads to handle many connections concurrently without the cost of full processes.",
+    "expected": "good",
+    "reason": "Address space, cost, concurrency motivation."
+  },
+  {
+    "id": "os-excellent",
+    "topic": "operating_systems",
+    "question": "What is the difference between a process and a thread, and why might a server use threads?",
+    "answer": "A process is an isolated execution environment with its own virtual memory; threads are schedulable units that share the process heap/code while keeping separate stacks. Isolation between processes is stronger, so a crash in one process does not take down others. Threaded servers share memory for request state and avoid process-switch overhead, at the cost of needing synchronization for shared data.",
+    "expected": "excellent",
+    "reason": "Isolation, stacks, trade-offs, synchronization cost."
+  },
+  {
+    "id": "os-empty",
+    "topic": "operating_systems",
+    "question": "What is the difference between a process and a thread, and why might a server use threads?",
+    "answer": "   ",
+    "expected": "none",
+    "reason": "Whitespace-only answer."
+  }
+]

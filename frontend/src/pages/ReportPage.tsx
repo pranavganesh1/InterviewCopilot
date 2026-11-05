@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api, type Report } from "../lib/api";
+import { AI_REVIEWED_NOT_EXECUTED } from "../lib/codingReview";
 import {
   deriveReportViewState,
   nextReportPollInterval,
@@ -224,6 +225,15 @@ export default function ReportPage() {
             {c.coverage_status}
           </span>
           <span className="text-stone-400">{c.session_mode} interview</span>
+          {(c.coding_review_note ||
+            c.question_assessments.some((q) => q.executed === false)) && (
+            <span
+              className="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800"
+              data-testid="ai-reviewed-badge"
+            >
+              {c.coding_review_note || AI_REVIEWED_NOT_EXECUTED}
+            </span>
+          )}
         </div>
         <p className="mt-3 text-sm leading-relaxed text-stone-800">
           {c.summary_overview}
@@ -332,6 +342,11 @@ export default function ReportPage() {
                   {qa.coverage}
                   {qa.score != null ? ` · ${qa.score}%` : ""}
                 </span>
+                {(qa.executed === false || qa.review_label) && (
+                  <span className="mr-2 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800">
+                    {qa.review_label || AI_REVIEWED_NOT_EXECUTED}
+                  </span>
+                )}
                 <span className="font-semibold">Q{qa.turn_index}</span>
                 {qa.question ? (
                   <span className="text-stone-600"> — {qa.question}</span>
