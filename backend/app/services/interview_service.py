@@ -12,6 +12,7 @@ from app.agents.assistance import (
     next_assistance_level,
 )
 from app.agents.interviewer import TurnDecision, build_interviewer_graph
+from app.agents.question_plan import build_question_plan
 from app.core.config import get_settings
 from app.models.interview import InterviewSession, SessionTurn
 from app.models.user import User
@@ -34,6 +35,58 @@ def _graph():
     return build_interviewer_graph(turn_runner=run_interviewer_turn)
 
 
+def build_covered_so_far(
+    turns: list,
+    *,
+    plan: list | None,
+    questions_asked: int,
+) -> dict:
+    """Compact session memory for the interviewer (no new tables)."""
+    covered_objectives: list[str] = []
+    seen: set[str] = set()
+    if isinstance(plan, list):
+        for i, slot in enumerate(plan):
+            if i >= questions_asked or not isinstance(slot, dict):
+                break
+            obj = (slot.get("objective") or slot.get("topic") or "").strip()
+            if obj and obj.lower() not in seen:
+                seen.add(obj.lower())
+                covered_objectives.append(obj)
+    for t in turns:
+        area = (getattr(t, "question_area", None) or "").strip()
+        if area and area.lower() not in seen:
+            seen.add(area.lower())
+            covered_objectives.append(area)
+
+    next_planned = None
+    if isinstance(plan, list) and 0 <= questions_asked < len(plan):
+        slot = plan[questions_asked]
+        if isinstance(slot, dict):
+            next_planned = {
+                "topic": slot.get("topic") or "",
+                "objective": slot.get("objective") or "",
+                "difficulty": slot.get("difficulty") or "intermediate",
+            }
+
+    weak_areas: list[dict] = []
+    for t in turns:
+        cov = (getattr(t, "evaluation_coverage", None) or "").lower()
+        if cov in ("none", "partial") and getattr(t, "answer", None):
+            weak_areas.append(
+                {
+                    "area": t.question_area,
+                    "coverage": cov,
+                    "question": (t.question or "")[:160],
+                }
+            )
+
+    return {
+        "covered_objectives": covered_objectives,
+        "next_planned_objective": next_planned,
+        "weak_areas": weak_areas[:8],
+    }
+
+
 async def start_session(
     db: AsyncSession, user: User, track_id, mode: str = "strict", duration_minutes: int = 60
 ) -> dict:
@@ -50,14 +103,20 @@ async def start_session(
     if mode == "guided" and not await guided_unlocked(db, track_id):
         raise PermissionError("guided_locked")
 
+    brief_content = track_brief["brief"]["content"]
+    plan = await build_question_plan(brief_content, get_settings().interview_max_turns)
     session = InterviewSession(
-        track_id=track_id, user_id=user.id, mode=mode, duration_minutes=duration_minutes
+        track_id=track_id,
+        user_id=user.id,
+        mode=mode,
+        duration_minutes=duration_minutes,
+        question_plan=plan,
     )
     db.add(session)
     await db.commit()
     await db.refresh(session)
 
-    decision = await _decide(db, session, track_brief["brief"]["content"], last_answer=None)
+    decision = await _decide(db, session, brief_content, last_answer=None)
     turn = await _append_turn(db, session, decision)
     return {"session": _session_dict(session), "turn": _turn_dict(turn)}
 
@@ -228,11 +287,29 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         if questions_asked < 10
         else "advanced"
     )
+    diversity = (
+        "Ask a new question on a distinct learning objective within this track. "
+        "Do not restate or paraphrase any asked_questions entry, and do not re-test "
+        "the same concepts (e.g. array definition + contiguous storage + static vs "
+        "dynamic) under different wording."
+    )
+    raw_plan = getattr(session, "question_plan", None)
+    plan = raw_plan if isinstance(raw_plan, list) else None
+    covered_so_far = build_covered_so_far(turns, plan=plan, questions_asked=questions_asked)
+
+    duration = int(getattr(session, "duration_minutes", None) or 60)
+    # Tests may pass a lightweight namespace without created_at / duration.
+    try:
+        minutes_remaining = round(max(0.0, _minutes_remaining(session)), 1)
+        minutes_elapsed = round(duration - minutes_remaining, 1)
+    except Exception:
+        minutes_remaining = float(duration)
+        minutes_elapsed = 0.0
     payload = {
         "mode": session.mode,
-        "duration_minutes": session.duration_minutes,
-        "minutes_elapsed": round(session.duration_minutes - _minutes_remaining(session), 1),
-        "minutes_remaining": round(max(0.0, _minutes_remaining(session)), 1),
+        "duration_minutes": duration,
+        "minutes_elapsed": minutes_elapsed,
+        "minutes_remaining": minutes_remaining,
         "brief": brief_content,
         "transcript": [
             {
@@ -262,13 +339,20 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
             for q in brief_content.get("question_bank", [])
             if q.get("question") and q["question"] not in {t.question for t in turns}
         ],
-        "diversity_instruction": (
-            "Ask a new question on a distinct learning objective within this track. "
-            "Do not restate or paraphrase any asked_questions entry, and do not re-test "
-            "the same concepts (e.g. array definition + contiguous storage + static vs "
-            "dynamic) under different wording."
+        "covered_so_far": covered_so_far,
+        "memory_instruction": (
+            "Use covered_so_far: avoid repeating covered_objectives; prefer "
+            "next_planned_objective when present; you may revisit ONE weak_areas "
+            "entry with a DIFFERENT question (never a rephrase of asked_questions)."
         ),
+        "diversity_instruction": diversity,
     }
+    if covered_so_far.get("next_planned_objective"):
+        slot = covered_so_far["next_planned_objective"]
+        payload["question_plan_slot"] = slot
+        payload["diversity_instruction"] = (
+            f"{diversity} Ask about this objective: {slot.get('objective', '')}."
+        )
     result = await _graph().ainvoke({"payload": payload})
     decision = TurnDecision.model_validate(result["decision"])
     # Defense in depth: never persist a duplicate even if the agent slipped through.
@@ -338,8 +422,12 @@ async def _complete_if_needed(db: AsyncSession, session: InterviewSession) -> bo
 
 
 def _minutes_remaining(session: InterviewSession) -> float:
-    elapsed = (datetime.now(UTC) - session.created_at).total_seconds() / 60
-    return session.duration_minutes - elapsed
+    duration = int(getattr(session, "duration_minutes", None) or 60)
+    created = getattr(session, "created_at", None)
+    if created is None:
+        return float(duration)
+    elapsed = (datetime.now(UTC) - created).total_seconds() / 60
+    return duration - elapsed
 
 
 async def _dispatch_feedback(session: InterviewSession, nc=None) -> None:

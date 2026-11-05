@@ -12,11 +12,7 @@ from app.gateway.structured import structured_completion
 log = get_logger(__name__)
 
 # Free-tier TPM windows: pipeline LLM calls are spaced out. Tests patch to 0.
-feat/m9-question-bank
-BANK_CALL_SPACING_S = 45
-=======
 BANK_CALL_SPACING_S = 5
-main
 
 SYSTEM_PROMPT = """You are InterviewCopilot's interview architect. Design an interview
 brief for a preparation track.
@@ -257,7 +253,6 @@ def build_track_creator_graph(
 
                 if not rejects or round_no == 1:
                     log.info("bank_built", accepted=len(all_accepted), rejected=len(rejects))
-                    break
                     break
 
                 # One regeneration round: replace ONLY the rejected questions.

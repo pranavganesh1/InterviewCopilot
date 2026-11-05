@@ -17,6 +17,21 @@ from app.models.user import User  # noqa: E402
 from app.models.vault import VaultItem  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _noop_publish_feedback_job(monkeypatch):
+    """Prevent ASGITransport tests from publishing real JetStream jobs.
+
+    Tests that need a spy can still monkeypatch either import path; this
+    fixture only stops the default path from hitting the shared NATS.
+    """
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.interview_service.publish_feedback_job", _noop)
+    monkeypatch.setattr("app.services.events.publish_feedback_job", _noop)
+
+
 @pytest.fixture
 async def clean_users_table():
     """Remove vault items and users after a DB-touching test (test DB only)."""

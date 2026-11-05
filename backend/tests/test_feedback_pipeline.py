@@ -113,12 +113,32 @@ async def test_process_persists_report_when_agent_fails(monkeypatch, clean_users
     assert result["report"]["questions_attempted"] == 1
     assert result["report"]["content"]["question_assessments"][0]["coverage"] == "excellent"
 
-    # Invalid ID is permanent
+    # Unknown session: foreign DB is skipped; same-DB missing session retries then
+    # becomes permanent (covered in test_feedback_worker).
+    from app.core.config import get_settings
+
+    worker_db = get_settings().database_url.rsplit("/", 1)[-1]
+    skipped = await process_event(
+        json.dumps(
+            {
+                "job_id": "j-missing",
+                "session_id": str(uuid.uuid4()),
+                "database": "other_env",
+            }
+        ).encode()
+    )
+    assert skipped.get("skipped") is True
+
     with pytest.raises(PermanentFeedbackError, match="session_not_found"):
         await process_event(
             json.dumps(
-                {"job_id": "j-missing", "session_id": str(uuid.uuid4()), "database": "test"}
-            ).encode()
+                {
+                    "job_id": "j-missing",
+                    "session_id": str(uuid.uuid4()),
+                    "database": worker_db,
+                }
+            ).encode(),
+            num_delivered=4,
         )
 
 

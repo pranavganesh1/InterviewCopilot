@@ -28,18 +28,18 @@ export default function AppHeader() {
   if (!user) return null;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-indigo-100/80 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:gap-6">
-        <Link to="/" className="shrink-0 text-base font-bold tracking-tight text-slate-900">
+    <header className="sticky top-0 z-40 overflow-x-hidden border-b border-indigo-100/80 bg-white/95 backdrop-blur">
+      <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center gap-2 px-3 py-3 sm:gap-6 sm:px-4">
+        <Link to="/" className="shrink-0 text-sm font-bold tracking-tight text-slate-900 sm:text-base">
           Interview<span className="text-indigo-600">Copilot</span>
         </Link>
 
-        <nav className="flex gap-1 text-sm">
+        <nav className="flex min-w-0 gap-0.5 text-sm sm:gap-1">
           <NavLink
             to="/"
             end
             className={({ isActive }) =>
-              `rounded-full px-3.5 py-1.5 font-medium transition ${
+              `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
                 isActive
                   ? "bg-indigo-100 text-indigo-800"
                   : "text-slate-600 hover:bg-slate-50"
@@ -51,7 +51,7 @@ export default function AppHeader() {
           <NavLink
             to="/onboarding"
             className={({ isActive }) =>
-              `rounded-full px-3.5 py-1.5 font-medium transition ${
+              `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
                 isActive
                   ? "bg-indigo-100 text-indigo-800"
                   : "text-slate-600 hover:bg-slate-50"

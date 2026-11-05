@@ -21,6 +21,8 @@ class InterviewSession(Base):
     mode: Mapped[str] = mapped_column(String(16), default="strict")
     duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
     status: Mapped[str] = mapped_column(String(16), default="in_progress")
+    # Soft per-turn guidance [{topic, objective, difficulty}, ...]; NULL = legacy.
+    question_plan: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

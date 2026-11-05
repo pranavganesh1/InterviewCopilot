@@ -75,6 +75,10 @@ async def create_track_with_brief(
         },
         vault_summary=await vault_summary(db, user.id),
     )
+    # Optional off-by-default web enrichment (never during a live interview).
+    from app.services.web_research import maybe_enrich_brief_from_web
+
+    content = await maybe_enrich_brief_from_web(content, subject=subject)
 
     brief = InterviewBrief(track_id=track.id, version=1, content=content)
     db.add(brief)

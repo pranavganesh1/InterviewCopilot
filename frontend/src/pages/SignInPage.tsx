@@ -1,6 +1,14 @@
+import { AUTH_ORIGIN } from "../lib/apiBase";
+
 export default function SignInPage() {
+  const authError =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("auth_error") === "state";
+
   const start = () => {
-    window.location.href = "/api/v1/auth/google/url";
+    // Navigate to the API host directly (not via the Vite proxy) so the OAuth
+    // state session cookie is set on the same host as the Google callback.
+    window.location.href = `${AUTH_ORIGIN}/api/v1/auth/google/url`;
   };
 
   return (
@@ -12,6 +20,11 @@ export default function SignInPage() {
         <p className="mt-2 text-sm text-stone-500">
           Know your story. Face your interview. Close your gaps.
         </p>
+        {authError && (
+          <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Sign-in was interrupted. Please try Continue with Google again.
+          </p>
+        )}
         <button
           onClick={start}
           className="mt-6 w-full rounded-xl bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700"

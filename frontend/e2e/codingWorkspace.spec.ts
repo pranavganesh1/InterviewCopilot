@@ -78,18 +78,17 @@ test("coding question shows workspace; text question keeps textarea", async ({
   );
 
   await page.goto("/tracks/t1/interview/code1");
-  await expect(page.getByTestId("coding-workspace")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Python" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Java" })).toBeVisible();
-  await expect(
-    page.getByTestId("coding-workspace").getByRole("button", { name: "C" }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Run" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Submit Answer" })).toBeVisible();
+  const workspace = page.getByTestId("coding-workspace");
+  await expect(workspace).toBeVisible();
+  await expect(workspace.getByRole("button", { name: "Python" })).toBeVisible();
+  await expect(workspace.getByRole("button", { name: "Java" })).toBeVisible();
+  await expect(workspace.getByRole("button", { name: "C" })).toBeVisible();
+  await expect(workspace.getByRole("button", { name: "Run" })).toBeVisible();
+  await expect(workspace.getByRole("button", { name: "Submit Answer" })).toBeVisible();
   await expect(page.getByText(/execution unavailable/i)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Need Help?" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Run" }).click();
+  await workspace.getByRole("button", { name: "Run" }).click();
   await expect(page.getByText(/No secure code-execution sandbox/i)).toBeVisible();
 
   // Text / conceptual path still uses the classic answer box.
@@ -146,17 +145,13 @@ test("language tabs switch without leaving workspace", async ({ page }) => {
     }),
   );
   await page.goto("/tracks/t1/interview/code2");
-  await page.getByRole("button", { name: "Java" }).click();
-  await expect(page.getByRole("button", { name: "Java" })).toHaveClass(
+  const workspace = page.getByTestId("coding-workspace");
+  await workspace.getByRole("button", { name: "Java" }).click();
+  await expect(workspace.getByRole("button", { name: "Java" })).toHaveClass(
     /bg-indigo-600/,
   );
-  await page
-    .getByTestId("coding-workspace")
-    .getByRole("button", { name: "C" })
-    .click();
-  await expect(
-    page.getByTestId("coding-workspace").getByRole("button", { name: "C" }),
-  ).toHaveClass(
+  await workspace.getByRole("button", { name: "C" }).click();
+  await expect(workspace.getByRole("button", { name: "C" })).toHaveClass(
     /bg-indigo-600/,
   );
   await expect(

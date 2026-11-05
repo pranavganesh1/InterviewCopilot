@@ -1,4 +1,4 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Link, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 import AppHeader from "./components/AppHeader";
 import DashboardPage from "./pages/DashboardPage";
@@ -11,6 +11,8 @@ import SignInPage from "./pages/SignInPage";
 
 export default function App() {
   const { user, loading } = useAuth();
+  const { pathname } = useLocation();
+  const isInterviewSession = /\/tracks\/[^/]+\/interview\//.test(pathname);
 
   if (loading) {
     return (
@@ -25,9 +27,15 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f6f4fb] text-slate-900">
+    <div className="flex min-h-dvh flex-col overflow-x-hidden bg-[#f6f4fb] text-slate-900">
       <AppHeader />
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:py-8">
+      <main
+        className={
+          isInterviewSession
+            ? "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-hidden"
+            : "mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:py-8"
+        }
+      >
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />

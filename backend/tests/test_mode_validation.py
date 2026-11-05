@@ -126,9 +126,13 @@ async def test_invalid_mode_rejected(monkeypatch, clean_users_table):
 
 
 def test_strict_prompt_forbids_assistance_guided_allows_coaching_path():
+    from app.agents.interviewer import EVALUATE_SYSTEM_PROMPT
+
     strict = system_prompt_for_mode("strict").lower()
     guided = system_prompt_for_mode("guided").lower()
+    evaluate = EVALUATE_SYSTEM_PROMPT.lower()
     assert "never put hints" in strict or "never give hints" in strict
-    assert "evaluation fields" in strict
+    # Scoring lives in the evaluator prompt after the evaluate/generate split.
+    assert "coverage" in evaluate and "never invent mistakes" in evaluate
     assert "assistance" in guided or "coaching" in guided
     assert "never put hints" not in guided and "never give hints" not in guided

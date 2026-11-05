@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import CodingWorkspace from "../components/CodingWorkspace";
@@ -55,8 +55,8 @@ export default function InterviewPage() {
     turnIndex: number;
     evaluation: TurnEvaluation;
   } | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null);
+  /** Which turn is on screen; null = follow the live open question. */
+  const [viewTurnIndex, setViewTurnIndex] = useState<number | null>(null);
 
   const session = useQuery({
     queryKey: ["session", sessionId],
@@ -81,6 +81,8 @@ export default function InterviewPage() {
         turnIndex: vars.turnIndex,
         evaluation: d.evaluation,
       });
+      // Stay on this question so feedback + Next are visible (one screen at a time).
+      setViewTurnIndex(vars.turnIndex);
       if (d.completed) setCompleted(true);
       setLatestHint(null);
       setReportedMaxLevel(null);
@@ -129,50 +131,79 @@ export default function InterviewPage() {
     completed || session.data?.session.status === "completed";
   const isGuided = session.data?.session.mode === "guided";
   const openQuestion = [...turns].reverse().find((t) => t.answer === null);
-  const awaitingAnswer = !interviewDone && !!openQuestion;
-  const openAssistanceLevel = openQuestion?.assistance_level ?? 0;
-  const openKind = openQuestion
-    ? resolveKind(openQuestion)
+  const maxTurns = session.data?.session.max_turns ?? DEFAULT_MAX_TURNS;
+  const answeredCount = turns.filter((t) => t.answer !== null).length;
+
+  const focusIndex =
+    viewTurnIndex ??
+    openQuestion?.turn_index ??
+    turns[turns.length - 1]?.turn_index ??
+    1;
+  const focusTurn =
+    turns.find((t) => t.turn_index === focusIndex) ?? openQuestion ?? null;
+
+  const awaitingAnswer =
+    !interviewDone && !!focusTurn && focusTurn.answer === null;
+  const openAssistanceLevel = focusTurn?.assistance_level ?? 0;
+  const focusKind = focusTurn
+    ? classifyQuestion(focusTurn.question_area, focusTurn.question)
     : "text";
   const assistMaxLevel =
-    reportedMaxLevel ?? (openKind === "coding" ? 5 : 3);
+    reportedMaxLevel ?? (focusKind === "coding" ? 5 : 3);
   const canAssist =
     isGuided &&
     awaitingAnswer &&
     openAssistanceLevel < assistMaxLevel &&
     !submit.isPending;
-  const answeredCount = turns.filter((t) => t.answer !== null).length;
-  const currentIndex = openQuestion?.turn_index ?? answeredCount;
-  const maxTurns = session.data?.session.max_turns ?? DEFAULT_MAX_TURNS;
-  const showCodingWorkspace =
-    awaitingAnswer && openKind === "coding";
+  const showCodingWorkspace = awaitingAnswer && focusKind === "coding";
+
+  const focusEvaluation =
+    focusTurn?.evaluation ??
+    (lastEvaluation && lastEvaluation.turnIndex === focusTurn?.turn_index
+      ? lastEvaluation.evaluation
+      : undefined);
+  const showFeedback = !!focusTurn && focusTurn.answer !== null && !!focusEvaluation;
+
+  const progressNum = interviewDone
+    ? answeredCount
+    : (openQuestion?.turn_index ?? (answeredCount || focusIndex));
   const statusLabel = interviewDone
     ? "Completed"
     : submit.isPending
       ? "Evaluating"
       : awaitingAnswer
         ? "Awaiting answer"
-        : "In progress";
+        : showFeedback
+          ? "Feedback ready"
+          : "In progress";
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [turns.length, submit.isPending, lastEvaluation]);
-
-  useEffect(() => {
-    if (awaitingAnswer && !showCodingWorkspace) {
-      composerRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-  }, [openQuestion?.turn_index, awaitingAnswer, showCodingWorkspace]);
+  const canGoNext =
+    !!focusTurn &&
+    focusTurn.answer !== null &&
+    !submit.isPending &&
+    (interviewDone || !!openQuestion);
 
   const sendText = () => {
     const a = answer.trim();
-    if (!a || submit.isPending || !awaitingAnswer || !openQuestion) return;
-    submit.mutate({ answer: a, turnIndex: openQuestion.turn_index });
+    if (!a || submit.isPending || !awaitingAnswer || !focusTurn) return;
+    submit.mutate({ answer: a, turnIndex: focusTurn.turn_index });
+  };
+
+  const goNext = () => {
+    if (interviewDone) {
+      navigate(`/tracks/${trackId}/report/${sessionId}`);
+      return;
+    }
+    if (openQuestion) {
+      setViewTurnIndex(openQuestion.turn_index);
+      setAnswer("");
+      setLatestHint(null);
+    }
   };
 
   if (session.isLoading) {
     return (
-      <div className="rounded-2xl border border-stone-200 bg-white px-5 py-10 text-center text-sm text-stone-500">
+      <div className="grid flex-1 place-items-center px-4 text-sm text-stone-500">
         Loading session…
       </div>
     );
@@ -180,15 +211,19 @@ export default function InterviewPage() {
 
   return (
     <div
-      className={`mx-auto space-y-4 ${showCodingWorkspace ? "max-w-6xl" : "max-w-3xl"}`}
+      className="mx-auto flex min-h-0 w-full min-w-0 max-w-[1100px] flex-1 flex-col overflow-x-hidden px-3 py-3 sm:px-6 sm:py-4"
+      data-testid="interview-session"
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+      {/* Top bar: title + progress + exit */}
+      <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wide text-indigo-600">
             {session.data?.session.mode} interview
           </p>
-          <h1 className="text-xl font-semibold tracking-tight">Interview session</h1>
-          <p className="mt-0.5 text-sm text-stone-500">
+          <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
+            Interview session
+          </h1>
+          <p className="mt-0.5 hidden text-sm text-stone-500 sm:block">
             {showCodingWorkspace
               ? "Write your own solution, then submit for evaluation."
               : isGuided
@@ -196,48 +231,21 @@ export default function InterviewPage() {
                 : "Answer one question at a time. Your full evaluation arrives in the final report."}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          {(() => {
-            const s = session.data?.session;
-            if (!s) return null;
-            const end = new Date(s.created_at).getTime() + s.duration_minutes * 60000;
-            const mins = Math.max(0, Math.ceil((end - Date.now()) / 60000));
-            return (
-              <div
-                data-testid="time-remaining"
-                className={`min-w-[9.5rem] rounded-xl border px-3 py-2 text-right ${
-                  mins <= 5
-                    ? "border-rose-200 bg-rose-50"
-                    : "border-stone-200 bg-white"
-                }`}
-              >
-                <p className="text-[10px] font-medium uppercase tracking-wide text-stone-400">
-                  Time remaining
-                </p>
-                <p
-                  className={`text-lg font-semibold tabular-nums ${
-                    mins <= 5 ? "text-rose-700" : "text-stone-800"
-                  }`}
-                >
-                  {mins > 0 ? `${mins} min` : "Time's up"}
-                </p>
-              </div>
-            );
-          })()}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <div
-            className="min-w-[9.5rem] rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-right"
-            aria-label={`Question progress ${currentIndex} of ${maxTurns}`}
+            className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-right sm:min-w-[9rem] sm:py-2"
+            aria-label={`Question progress ${progressNum} of ${maxTurns}`}
           >
             <p className="text-[10px] font-medium uppercase tracking-wide text-indigo-500">
               Progress
             </p>
-            <p className="text-lg font-semibold tabular-nums text-indigo-950">
-              {interviewDone ? answeredCount : currentIndex || answeredCount}
+            <p className="text-base font-semibold tabular-nums text-indigo-950 sm:text-lg">
+              {progressNum}
               <span className="text-sm font-medium text-indigo-400">
                 /{maxTurns}
               </span>
             </p>
-            <p className="mt-0.5 text-[11px] font-medium text-indigo-700">
+            <p className="text-[11px] font-medium text-indigo-700">
               Status: {statusLabel}
             </p>
           </div>
@@ -249,15 +257,48 @@ export default function InterviewPage() {
               disabled={submit.isPending || finishEarly.isPending}
               className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 shadow-sm hover:bg-rose-50 disabled:opacity-40"
             >
-              Finish Assessment & Exit
+              <span className="sm:hidden">Finish & Exit</span>
+              <span className="hidden sm:inline">Finish Assessment & Exit</span>
             </button>
           )}
         </div>
       </div>
 
+      {/* Question stepper */}
+      <nav
+        className="mt-3 -mx-1 flex min-w-0 w-full shrink-0 gap-1 overflow-x-auto overscroll-x-contain px-1 pb-1"
+        aria-label="Question stepper"
+      >
+        {Array.from({ length: maxTurns }, (_, i) => {
+          const n = i + 1;
+          const turn = turns.find((t) => t.turn_index === n);
+          const answered = !!turn && turn.answer !== null;
+          const isCurrent = n === focusIndex;
+          const reachable = answered || turn?.answer === null;
+          return (
+            <button
+              key={n}
+              type="button"
+              disabled={!reachable}
+              onClick={() => reachable && setViewTurnIndex(n)}
+              aria-current={isCurrent ? "step" : undefined}
+              className={`h-7 w-7 shrink-0 rounded-lg text-[11px] font-semibold tabular-nums transition sm:h-8 sm:w-8 sm:text-xs ${
+                isCurrent
+                  ? "bg-indigo-600 text-white"
+                  : answered
+                    ? "bg-indigo-100 text-indigo-800 hover:bg-indigo-200"
+                    : "bg-stone-100 text-stone-400"
+              } disabled:cursor-default disabled:opacity-50`}
+            >
+              {n}
+            </button>
+          );
+        })}
+      </nav>
+
       {confirmExit && !interviewDone && (
         <div
-          className="rounded-2xl border border-rose-200 bg-rose-50 p-4 shadow-sm sm:p-5"
+          className="mt-3 shrink-0 rounded-2xl border border-rose-200 bg-rose-50 p-4 shadow-sm sm:p-5"
           role="dialog"
           aria-labelledby="finish-exit-title"
           data-testid="finish-exit-confirm"
@@ -309,241 +350,219 @@ export default function InterviewPage() {
         </div>
       )}
 
-      {/* Transcript — scrollable; composer stays outside so Submit is always reachable */}
-      <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
-        <div className="border-b border-stone-100 bg-stone-50/80 px-4 py-2.5 sm:px-5">
-          <p className="text-xs font-medium text-stone-500">Transcript</p>
-        </div>
-        <div className="max-h-[min(50vh,28rem)] space-y-5 overflow-y-auto px-4 py-5 sm:px-5">
-          {turns.map((t) => {
-            const evaluation = t.evaluation ?? undefined;
-            const isOpen = t.answer === null && !interviewDone;
-            const kind = resolveKind(t);
-            return (
-              <div key={t.turn_index} className="space-y-2">
-                <div
-                  className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                    isOpen
-                      ? "border border-indigo-200 bg-indigo-50/60 ring-1 ring-indigo-100"
-                      : "bg-stone-100 text-stone-800"
-                  }`}
-                >
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="rounded-md bg-white px-2 py-0.5 text-[11px] font-semibold tabular-nums text-indigo-700 ring-1 ring-indigo-100">
-                      Q{t.turn_index}/{maxTurns}
-                    </span>
-                    <span className="rounded-md bg-white/80 px-2 py-0.5 text-[11px] font-medium text-stone-500">
-                      {t.question_area}
-                    </span>
-                    {kind === "coding" && (
-                      <span className="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-700">
-                        Coding
-                      </span>
-                    )}
-                    {isOpen && (
-                      <span className="rounded-md bg-indigo-600 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
-                        Current
-                      </span>
-                    )}
-                  </div>
-                  {t.question}
-                </div>
-                {t.answer !== null && (
-                  <div className="ml-auto max-w-[92%] rounded-2xl bg-indigo-600 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-white">
-                    {t.answer}
-                  </div>
+      {/* Main content fills remaining height */}
+      <div className="mt-3 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+        {showCodingWorkspace && focusTurn ? (
+          <CodingWorkspace
+            key={focusTurn.turn_index}
+            question={focusTurn.question}
+            questionArea={focusTurn.question_area}
+            turnIndex={focusTurn.turn_index}
+            maxTurns={maxTurns}
+            isGuided={isGuided}
+            assistanceLevel={openAssistanceLevel}
+            maxAssistanceLevel={assistMaxLevel}
+            latestHelp={latestHint}
+            assistError={
+              assist.error instanceof Error ? assist.error.message : null
+            }
+            assistPending={assist.isPending}
+            submitPending={submit.isPending}
+            submitError={
+              submit.error instanceof Error ? submit.error.message : null
+            }
+            leaveHref={`/tracks/${trackId}`}
+            onAssist={() => assist.mutate()}
+            onSubmit={(payload) =>
+              submit.mutate({
+                answer: payload,
+                turnIndex: focusTurn.turn_index,
+              })
+            }
+          />
+        ) : focusTurn ? (
+          <>
+            <section className="shrink-0 rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-indigo-700 ring-1 ring-indigo-100">
+                  Q{focusTurn.turn_index}/{maxTurns}
+                </span>
+                <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-600">
+                  {focusTurn.question_area}
+                </span>
+                {focusKind === "coding" && (
+                  <span className="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-700">
+                    Coding
+                  </span>
                 )}
-                {/* Strict mode: zero live feedback — everything lands in the
-                    report (product rule, M9). Guided shows chips live. */}
-                {isGuided && evaluation && (
-                  <div className="ml-auto max-w-[92%]">
-                    <EvaluationFeedback
-                      evaluation={evaluation}
-                      questionIndex={t.turn_index}
-                      compact
-                    />
-                  </div>
+                {awaitingAnswer && (
+                  <span className="rounded-md bg-indigo-600 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
+                    Current
+                  </span>
                 )}
               </div>
-            );
-          })}
-          {submit.isPending && (
-            <div className="rounded-2xl border border-dashed border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
-              {isGuided
-                ? "Evaluating your answer… please wait. Submit is disabled until this finishes."
-                : "Recording your answer…"}
-            </div>
-          )}
-          {submit.isError && (
-            <p className="text-sm text-red-600">
-              {submit.error instanceof Error
-                ? submit.error.message
-                : "Submission failed. Try again."}
-            </p>
-          )}
-          <div ref={bottomRef} />
-        </div>
+              <p className="text-sm leading-relaxed text-stone-900 sm:text-[15px]">
+                {focusTurn.question}
+              </p>
+            </section>
+
+            {focusTurn.answer !== null && (
+              <section className="shrink-0 rounded-2xl bg-indigo-600 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-white sm:px-5">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-200">
+                  Your answer
+                </p>
+                {focusTurn.answer}
+              </section>
+            )}
+
+            {submit.isPending && (
+              <div className="rounded-2xl border border-dashed border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                Evaluating your answer… please wait.
+              </div>
+            )}
+
+            {showFeedback && focusEvaluation && (
+              <EvaluationFeedback
+                evaluation={focusEvaluation}
+                questionIndex={focusTurn.turn_index}
+              />
+            )}
+
+            {interviewDone && showFeedback && (
+              <div
+                className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-4 shadow-sm"
+                data-testid="interview-complete"
+              >
+                <p className="text-base font-semibold text-indigo-950">
+                  Interview completed.
+                </p>
+                <p className="mt-1 text-sm text-indigo-900/80">
+                  You finished the question set ({answeredCount}/{maxTurns}).
+                  Feedback is pending — the report is generated asynchronously.
+                </p>
+              </div>
+            )}
+
+            {!showCodingWorkspace && latestHint && awaitingAnswer && (
+              <div
+                className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950"
+                data-testid="assistance-panel"
+              >
+                <p className="text-xs font-medium uppercase tracking-wide text-sky-700">
+                  {latestHint.assistance_type} · level {latestHint.level}
+                </p>
+                <p className="mt-2 whitespace-pre-wrap leading-relaxed">
+                  {latestHint.content}
+                </p>
+              </div>
+            )}
+
+            {awaitingAnswer && (
+              <div
+                data-testid="answer-composer"
+                className="flex min-h-[40vh] flex-1 flex-col rounded-2xl border border-indigo-200 bg-white p-3 shadow-sm sm:min-h-0 sm:p-4"
+              >
+                <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-stone-500">
+                  Your answer · Q{focusTurn.turn_index}/{maxTurns}
+                </label>
+                <textarea
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  placeholder={
+                    isGuided
+                      ? "Type your answer… (optional hints available)"
+                      : "Type your answer… (no hints in strict mode!)"
+                  }
+                  className="min-h-[40vh] w-full flex-1 resize-none rounded-xl border border-stone-200 px-4 py-3 text-sm leading-relaxed outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 sm:min-h-[12rem]"
+                  disabled={submit.isPending}
+                />
+              </div>
+            )}
+
+            {submit.isError && (
+              <p className="text-sm text-red-600">
+                {submit.error instanceof Error
+                  ? submit.error.message
+                  : "Submission failed. Try again."}
+              </p>
+            )}
+            {!showCodingWorkspace && assist.error instanceof Error && (
+              <p className="text-sm text-red-600">{assist.error.message}</p>
+            )}
+          </>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center text-sm text-stone-500">
+            Preparing the next question…
+            <button
+              type="button"
+              className="mt-2 block w-full text-indigo-600 hover:underline"
+              onClick={() => void session.refetch()}
+            >
+              Refresh
+            </button>
+          </div>
+        )}
       </div>
 
-      {showCodingWorkspace && openQuestion && (
-        <CodingWorkspace
-          key={openQuestion.turn_index}
-          question={openQuestion.question}
-          questionArea={openQuestion.question_area}
-          turnIndex={openQuestion.turn_index}
-          maxTurns={maxTurns}
-          isGuided={isGuided}
-          assistanceLevel={openAssistanceLevel}
-          maxAssistanceLevel={assistMaxLevel}
-          latestHelp={latestHint}
-          assistError={
-            assist.error instanceof Error ? assist.error.message : null
-          }
-          assistPending={assist.isPending}
-          submitPending={submit.isPending}
-          submitError={
-            submit.error instanceof Error ? submit.error.message : null
-          }
-          leaveHref={`/tracks/${trackId}`}
-          onAssist={() => assist.mutate()}
-          onSubmit={(payload) =>
-            submit.mutate({
-              answer: payload,
-              turnIndex: openQuestion.turn_index,
-            })
-          }
-        />
-      )}
-
-      {!showCodingWorkspace && latestHint && (
-        <div
-          className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950"
-          data-testid="assistance-panel"
-        >
-          <p className="text-xs font-medium uppercase tracking-wide text-sky-700">
-            {latestHint.assistance_type} · level {latestHint.level}
-          </p>
-          <p className="mt-2 whitespace-pre-wrap leading-relaxed">
-            {latestHint.content}
-          </p>
-        </div>
-      )}
-
-      {!showCodingWorkspace && assist.error instanceof Error && (
-        <p className="text-sm text-red-600">{assist.error.message}</p>
-      )}
-
-      {interviewDone ? (
-        <div
-          className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-5 shadow-sm"
-          data-testid="interview-complete"
-        >
-          <p className="text-base font-semibold text-indigo-950">
-            Interview completed.
-          </p>
-          <p className="mt-1 text-sm text-indigo-900/80">
-            You finished the question set ({answeredCount}/{maxTurns}). Feedback
-            is pending — the report is generated asynchronously.
-          </p>
-          {isGuided && lastEvaluation && (
-            <div className="mt-4">
-              <EvaluationFeedback
-                evaluation={lastEvaluation.evaluation}
-                questionIndex={lastEvaluation.turnIndex}
-              />
-            </div>
+      {/* Sticky action bar */}
+      {!showCodingWorkspace && (
+        <div className="mt-3 flex shrink-0 flex-col gap-2 border-t border-stone-200/80 bg-[#f6f4fb] pt-3 sm:flex-row sm:flex-wrap sm:items-center">
+          {awaitingAnswer && (
+            <>
+              <button
+                type="button"
+                onClick={sendText}
+                disabled={submit.isPending || !answer.trim()}
+                data-testid="submit-answer"
+                className="w-full rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-40 sm:w-auto"
+              >
+                {submit.isPending ? "Evaluating…" : "Submit Answer"}
+              </button>
+              {isGuided && (
+                <button
+                  type="button"
+                  onClick={() => assist.mutate()}
+                  disabled={!canAssist || assist.isPending || submit.isPending}
+                  className="w-full rounded-xl border border-sky-300 bg-white px-4 py-2.5 text-sm font-medium text-sky-800 hover:bg-sky-50 disabled:opacity-40 sm:w-auto"
+                >
+                  {assist.isPending
+                    ? "Getting help…"
+                    : openAssistanceLevel >= assistMaxLevel
+                      ? "No more assistance for this question"
+                      : openAssistanceLevel === 0
+                        ? "Get a nudge"
+                        : openAssistanceLevel === 1
+                          ? "Get a clue"
+                          : "Get an explanation"}
+                </button>
+              )}
+            </>
           )}
-          <div className="mt-4 flex flex-wrap gap-2">
+
+          {canGoNext && (
+            <button
+              type="button"
+              data-testid={interviewDone ? "finish-interview" : "next-question"}
+              onClick={goNext}
+              className="w-full rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 sm:w-auto"
+            >
+              {interviewDone ? "View report" : "Next question"}
+            </button>
+          )}
+
+          {interviewDone && !canGoNext && (
             <Link
               to={`/tracks/${trackId}/report/${sessionId}`}
               data-testid="finish-interview"
-              className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700"
+              className="inline-flex w-full justify-center rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white hover:bg-indigo-700 sm:w-auto"
             >
-              Finish Interview
+              View report
             </Link>
-            <Link
-              to={`/tracks/${trackId}`}
-              className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-50"
-            >
-              Back to track
-            </Link>
-          </div>
-        </div>
-      ) : awaitingAnswer && !showCodingWorkspace ? (
-        <div
-          ref={composerRef}
-          data-testid="answer-composer"
-          className="sticky bottom-3 z-10 rounded-2xl border border-indigo-200 bg-white p-4 shadow-lg ring-1 ring-indigo-100 sm:p-5"
-        >
-          <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-stone-500">
-            Your answer · Q{openQuestion!.turn_index}/{maxTurns}
-          </label>
-          <textarea
-            value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            rows={4}
-            placeholder={
-              isGuided
-                ? "Type your answer… (optional hints available)"
-                : "Type your answer… (no hints in strict mode!)"
-            }
-            className="w-full resize-y rounded-xl border border-stone-200 px-4 py-3 text-sm leading-relaxed outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-            disabled={submit.isPending}
-          />
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={sendText}
-              disabled={submit.isPending || !answer.trim()}
-              data-testid="submit-answer"
-              className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-40"
-            >
-              {submit.isPending ? "Evaluating…" : "Submit Answer"}
-            </button>
-            {isGuided && (
-              <button
-                type="button"
-                onClick={() => assist.mutate()}
-                disabled={!canAssist || assist.isPending || submit.isPending}
-                className="rounded-xl border border-sky-300 bg-white px-4 py-2.5 text-sm font-medium text-sky-800 hover:bg-sky-50 disabled:opacity-40"
-              >
-                {assist.isPending
-                  ? "Getting help…"
-                  : openAssistanceLevel >= assistMaxLevel
-                    ? "No more assistance for this question"
-                    : openAssistanceLevel === 0
-                      ? "Get a nudge"
-                      : openAssistanceLevel === 1
-                        ? "Get a clue"
-                        : "Get an explanation"}
-              </button>
-            )}
-            <Link
-              to={`/tracks/${trackId}`}
-              className="ml-auto text-sm text-stone-500 hover:text-indigo-600 hover:underline"
-            >
-              Leave session
-            </Link>
-          </div>
-        </div>
-      ) : !interviewDone && !showCodingWorkspace ? (
-        <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center text-sm text-stone-500">
-          Preparing the next question…
-          <button
-            type="button"
-            className="mt-2 block w-full text-indigo-600 hover:underline"
-            onClick={() => void session.refetch()}
-          >
-            Refresh
-          </button>
-        </div>
-      ) : null}
+          )}
 
-      {awaitingAnswer && showCodingWorkspace && (
-        <div className="flex justify-end">
           <Link
             to={`/tracks/${trackId}`}
-            className="text-sm text-stone-500 hover:text-indigo-600 hover:underline"
+            className="text-center text-sm text-stone-500 hover:text-indigo-600 hover:underline sm:ml-auto"
           >
             Leave session
           </Link>

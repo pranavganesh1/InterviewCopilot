@@ -182,66 +182,13 @@ test("interview page renders question and submits answer", async ({ page }) => {
   await page.fill("textarea", "Buckets store multiple entries...");
   await page.getByRole("button", { name: "Submit Answer" }).click();
 
-  // STRICT mode (M9): next question arrives, but zero live evaluation.
-  await expect(page.getByText("How would you resolve one?")).toBeVisible();
-  await expect(page.getByTestId("evaluation-feedback")).toHaveCount(0);
-  await expect(page.getByText("partial")).toHaveCount(0);
-});
-
-test("guided interview shows live evaluation chips", async ({ page }) => {
-  const turns = [
-    {
-      turn_index: 1,
-      question_area: "Hashmaps",
-      question: "Explain hash collisions.",
-      answer: null as string | null,
-      evaluation: null as Record<string, unknown> | null,
-    },
-  ];
-  await page.route("**/api/v1/sessions/g1", (route) =>
-    route.fulfill({
-      json: {
-        session: { id: "g1", track_id: "t1", mode: "guided", status: "in_progress" },
-        turns,
-      },
-    }),
-  );
-  await page.route("**/api/v1/sessions/g1/turns", async (route) => {
-    turns[0].answer = "Buckets store multiple entries...";
-    turns[0].evaluation = {
-      coverage: "partial",
-      strengths: ["Clear structure"],
-      gaps: ["No examples"],
-    };
-    turns.push({
-      turn_index: 2,
-      question_area: "Hashmaps",
-      question: "How would you resolve one?",
-      answer: null,
-      evaluation: null,
-    });
-    await route.fulfill({
-      json: {
-        completed: false,
-        evaluation: {
-          coverage: "partial",
-          strengths: ["Clear structure"],
-          gaps: ["No examples"],
-        },
-        turn: turns[1],
-      },
-    });
-  });
-
-  await page.goto("/tracks/t1/interview/g1");
-  await expect(page.getByText("Explain hash collisions.")).toBeVisible();
-
-  await page.fill("textarea", "Buckets store multiple entries...");
-  await page.getByRole("button", { name: "Submit Answer" }).click();
-
-  // GUIDED mode (M9): live evaluation chips are the point.
-  await expect(page.getByTestId("evaluation-feedback").first()).toBeVisible();
+  await expect(page.getByTestId("evaluation-feedback")).toBeVisible();
+  await expect(page.getByText("partial")).toBeVisible();
   await expect(page.getByText("No examples")).toBeVisible();
+  await expect(page.getByText("How would you resolve one?")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Next question" }).click();
+  await expect(page.getByText("How would you resolve one?")).toBeVisible();
 });
 
 test("report page shows competencies and recommendations", async ({ page }) => {

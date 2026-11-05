@@ -132,10 +132,12 @@ test("interview completion does not claim feedback is ready", async ({ page }) =
   await page.fill("textarea", "SYN SYN-ACK ACK");
   await page.getByRole("button", { name: "Submit Answer" }).click();
 
+  await expect(page.getByTestId("evaluation-feedback")).toBeVisible();
   await expect(page.getByText("Interview completed.")).toBeVisible();
   await expect(page.getByText(/Feedback is pending/)).toBeVisible();
   await expect(page.getByText(/report is ready/i)).toHaveCount(0);
   await expect(page.getByTestId("finish-interview")).toBeVisible();
+  await expect(page.getByRole("button", { name: "View report" })).toBeVisible();
 });
 
 test("report page shows pending then ready after 404 clears", async ({ page }) => {
