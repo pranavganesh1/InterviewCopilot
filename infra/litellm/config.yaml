@@ -12,7 +12,7 @@ model_list:
       api_key: os.environ/GROQ_API_KEY
   - model_name: interview-chat-gemini
     litellm_params:
-      model: gemini/gemini-2.0-flash
+      model: gemini/gemini-flash-latest
       api_key: os.environ/GEMINI_API_KEY
   - model_name: structured-json
     litellm_params:
@@ -21,7 +21,7 @@ model_list:
       response_format: {"type": "json_object"}
   - model_name: structured-json-gemini
     litellm_params:
-      model: gemini/gemini-2.0-flash
+      model: gemini/gemini-flash-latest
       api_key: os.environ/GEMINI_API_KEY
 
 litellm_settings:
