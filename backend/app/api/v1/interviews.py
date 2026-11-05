@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.sqlalchemy import get_db
+from app.gateway.llm import LLMGatewayError
 from app.models.user import User
 from app.services import interview_service
 
@@ -37,6 +38,11 @@ async def start_session(
             mode=(body.mode if body else "strict"),
             duration_minutes=(body.duration_minutes if body else 60),
         )
+    except LLMGatewayError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The LLM provider is rate-limited right now — please retry in a minute.",
+        ) from exc
     except LookupError as exc:
         detail = {
             "track_not_found": ("Track not found", 404),
@@ -86,6 +92,11 @@ async def submit_turn(
             body.answer,
             nc=getattr(request.app.state, "nats", None),
         )
+    except LLMGatewayError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The LLM provider is rate-limited right now — please retry in a minute.",
+        ) from exc
     except LookupError as exc:
         if str(exc) == "no_open_question":
             raise HTTPException(
