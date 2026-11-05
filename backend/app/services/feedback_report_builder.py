@@ -6,6 +6,7 @@ feedback agent is unavailable). Only submitted answers are assessed.
 
 from __future__ import annotations
 
+from app.agents.coding_review import AI_REVIEWED_NOT_EXECUTED
 from app.agents.feedback_agent import (
     AssessedCompetency,
     FeedbackReportContent,
@@ -62,10 +63,13 @@ def enrich_assessments_with_turns(content: dict, answered_turns: list[SessionTur
                 row["time_complexity"] = str(detail.get("time_complexity") or "")
             if not row.get("space_complexity"):
                 row["space_complexity"] = str(detail.get("space_complexity") or "")
-            if row.get("score") is None:
-                row["score"] = _COVERAGE_SCORE.get(coverage)
+            # Scores always come from coverage labels in code — never from the LLM.
+            row["score"] = _COVERAGE_SCORE.get(coverage)
             if not row.get("evidence_excerpt"):
                 row["evidence_excerpt"] = (t.answer or "").strip().replace("\n", " ")[:240]
+            if detail.get("executed") is False or (t.question_type or "").lower() == "coding":
+                row["executed"] = False
+                row["review_label"] = AI_REVIEWED_NOT_EXECUTED
         enriched.append(row)
 
     # Ensure every answered turn appears even if the agent omitted it.
@@ -75,25 +79,29 @@ def enrich_assessments_with_turns(content: dict, answered_turns: list[SessionTur
             continue
         coverage = (t.evaluation_coverage or "none").lower()
         detail = t.evaluation_detail if isinstance(t.evaluation_detail, dict) else {}
-        enriched.append(
-            {
-                "turn_index": t.turn_index,
-                "coverage": coverage if coverage in _COVERAGE_SCORE else "none",
-                "observation": "Submitted answer recorded.",
-                "evidence_excerpt": (t.answer or "").strip().replace("\n", " ")[:240],
-                "question": t.question or "",
-                "answer": t.answer or "",
-                "strengths": list(t.evaluation_strengths or []),
-                "gaps": list(t.evaluation_gaps or []),
-                "expected_answer_explanation": str(detail.get("expected_answer_explanation") or ""),
-                "corrected_code": str(detail.get("corrected_code") or ""),
-                "time_complexity": str(detail.get("time_complexity") or ""),
-                "space_complexity": str(detail.get("space_complexity") or ""),
-                "score": _COVERAGE_SCORE.get(coverage, 0),
-            }
-        )
+        row = {
+            "turn_index": t.turn_index,
+            "coverage": coverage if coverage in _COVERAGE_SCORE else "none",
+            "observation": "Submitted answer recorded.",
+            "evidence_excerpt": (t.answer or "").strip().replace("\n", " ")[:240],
+            "question": t.question or "",
+            "answer": t.answer or "",
+            "strengths": list(t.evaluation_strengths or []),
+            "gaps": list(t.evaluation_gaps or []),
+            "expected_answer_explanation": str(detail.get("expected_answer_explanation") or ""),
+            "corrected_code": str(detail.get("corrected_code") or ""),
+            "time_complexity": str(detail.get("time_complexity") or ""),
+            "space_complexity": str(detail.get("space_complexity") or ""),
+            "score": _COVERAGE_SCORE.get(coverage, 0),
+        }
+        if detail.get("executed") is False or (t.question_type or "").lower() == "coding":
+            row["executed"] = False
+            row["review_label"] = AI_REVIEWED_NOT_EXECUTED
+        enriched.append(row)
     enriched.sort(key=lambda r: int(r.get("turn_index") or 0))
     content = {**content, "question_assessments": enriched}
+    if any(r.get("executed") is False for r in enriched):
+        content["coding_review_note"] = AI_REVIEWED_NOT_EXECUTED
     return content
 
 

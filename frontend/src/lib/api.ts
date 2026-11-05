@@ -240,6 +240,9 @@ export interface QuestionAssessment {
   time_complexity?: string;
   space_complexity?: string;
   score?: number | null;
+  /** false when coding answer was reviewed statically (never run). */
+  executed?: boolean | null;
+  review_label?: string;
 }
 
 export interface ReportContent {
@@ -259,6 +262,8 @@ export interface ReportContent {
   improvement_areas: string[];
   unassessed_topics: string[];
   recommendations: string[];
+  /** Present when any coding answer was assessed without execution. */
+  coding_review_note?: string;
 }
 
 export interface Report {

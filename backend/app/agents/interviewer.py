@@ -3,8 +3,9 @@ from typing import Literal, TypedDict
 
 import httpx
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.agents.coding_review import CODING_STATIC_REVIEW_RULES
 from app.agents.question_dedupe import duplicate_of, is_duplicate_question, normalize_question
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -28,22 +29,36 @@ Persona (human interviewer):
   still belong in the assistance API, not in next_question.
 """
 
-EVALUATE_SYSTEM_PROMPT = """You are InterviewCopilot's answer evaluator.
-
-Judge ONLY what the candidate actually wrote. Never invent mistakes they did not make.
-Do not write the next interview question — evaluation only.
-
-Coverage rubric:
-- none      = no relevant content or a wrong answer
+COVERAGE_RUBRIC = """Coverage rubric:
+- none      = no relevant content, or the answer is wrong
 - partial   = some correct points, important parts missing or wrong
 - good      = mostly correct and complete, minor gaps
-- excellent = correct, complete, with good reasoning (and complexity/edge cases where relevant)
-
-Always fill strengths, gaps, and expected_answer_explanation.
-For coding/DSA answers also fill corrected_code, time_complexity, space_complexity;
-leave those three empty for non-code answers.
-Use the track/brief context only for grounding — score the answer against the question asked.
+- excellent = correct, complete, with sound reasoning (and complexity/edge cases where relevant)
 """
+
+RUBRIC_VERSION = "v1"
+
+EVALUATE_SYSTEM_PROMPT = f"""You are InterviewCopilot's answer evaluator.
+
+Do not write the next interview question — evaluation only.
+
+{COVERAGE_RUBRIC}
+Rules:
+- Judge ONLY what the candidate actually wrote. Never invent mistakes.
+- Every gap must refer to something the candidate said or clearly omitted.
+- Do not reward length or confident tone. Do not penalise wording differences.
+- Always fill strengths, gaps, and expected_answer_explanation.
+- For coding/DSA answers also fill corrected_code, time_complexity, space_complexity;
+  leave those three empty for non-code answers.
+- Use the track/brief context only for grounding — score against the question asked.
+- Never output numeric scores; coverage labels only.
+"""
+
+_IDK_RE = re.compile(
+    r"^\s*(i\s*(do\s*not|don't|dont)\s*know|idk|no\s*idea|n/?a|pass)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_FIXED_NONE_GAP = "No substantive answer was provided for this question."
 
 STRICT_QUESTION_SYSTEM_PROMPT = """You are InterviewCopilot's interviewer in STRICT mode.
 """ + PERSONA_BLOCK + """
@@ -163,12 +178,17 @@ class QuestionMove(BaseModel):
 
 
 class TurnDecision(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     evaluation: AnswerEvaluation
     decision: Literal["follow_up", "next_area", "complete"]
     next_question: str
     question_area: str
     question_type: Literal["coding", "conceptual", "behavioral"] = "conceptual"
     notes_for_report: str = ""
+    # Persistence-only metadata (excluded from LLM schema / default dumps).
+    evaluator_checks: list[str] = Field(default_factory=list, exclude=True)
+    rubric_version: str = Field(default=RUBRIC_VERSION, exclude=True)
 
     @model_validator(mode="after")
     def _question_required_unless_complete(self) -> "TurnDecision":
@@ -463,28 +483,139 @@ def _has_answer(payload: dict) -> bool:
     return bool(answer is not None and str(answer).strip())
 
 
-async def evaluate_answer(payload: dict) -> AnswerEvaluation:
-    """Score the candidate answer only. Skips the LLM when there is no answer."""
-    if not _has_answer(payload):
-        return _empty_evaluation()
+def _looks_like_code_answer(payload: dict, answer: str) -> bool:
+    qtype = (payload.get("open_question_type") or "").lower()
+    if qtype == "coding":
+        return True
+    blob = f"{payload.get('last_question') or ''}\n{answer}".lower()
+    return any(
+        token in blob
+        for token in ("```", "def ", "class ", "public static", "#include", "time complexity")
+    )
 
+
+def evaluation_inconsistencies(ev: AnswerEvaluation, *, is_code: bool) -> list[str]:
+    """Return check ids for inconsistent evaluation shapes."""
+    issues: list[str] = []
+    if ev.coverage in ("excellent", "good") and not ev.strengths:
+        issues.append("high_label_without_strengths")
+    if ev.coverage == "none" and ev.strengths:
+        issues.append("none_with_strengths")
+    if ev.coverage in ("none", "partial") and not [g for g in ev.gaps if str(g).strip()]:
+        issues.append("low_label_without_gaps")
+    # Fields must exist (schema) and be strings — empty string is explicit.
+    if is_code and (ev.time_complexity is None or ev.space_complexity is None):
+        issues.append("code_missing_complexity_fields")
+    return issues
+
+
+def _safe_eval_fallback(ev: AnswerEvaluation, issues: list[str]) -> AnswerEvaluation:
+    """Deterministic repair when the LLM stays inconsistent after one retry."""
+    strengths = list(ev.strengths)
+    gaps = list(ev.gaps)
+    coverage = ev.coverage
+    if "high_label_without_strengths" in issues:
+        coverage = "partial"
+        if not gaps:
+            gaps = ["Important details were incomplete or unclear."]
+    if "none_with_strengths" in issues:
+        strengths = []
+    if "low_label_without_gaps" in issues and not gaps:
+        gaps = [_FIXED_NONE_GAP]
+    if coverage == "none" and not gaps:
+        gaps = [_FIXED_NONE_GAP]
+    return ev.model_copy(update={"coverage": coverage, "strengths": strengths, "gaps": gaps})
+
+
+def _guarded_none_evaluation(*, check: str) -> tuple[AnswerEvaluation, list[str]]:
+    ev = AnswerEvaluation(
+        coverage="none",
+        strengths=[],
+        gaps=[_FIXED_NONE_GAP],
+        expected_answer_explanation="",
+    )
+    return ev, [check]
+
+
+async def evaluate_answer(payload: dict) -> AnswerEvaluation:
+    """Score the candidate answer (guards + temp=0 LLM + consistency checks)."""
+    evaluation, _checks = await evaluate_answer_with_meta(payload)
+    return evaluation
+
+
+async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, list[str]]:
+    """Evaluate with cheap guards, temp=0 LLM, consistency repair, then fallback."""
+    raw = payload.get("last_answer")
+    text = "" if raw is None else str(raw).strip()
+    checks: list[str] = []
+
+    if not text:
+        return _guarded_none_evaluation(check="empty_answer")
+    if _IDK_RE.match(text):
+        return _guarded_none_evaluation(check="idk_answer")
+    min_chars = int(get_settings().eval_min_answer_chars)
+    if len(text) < min_chars:
+        return _guarded_none_evaluation(check="too_short_answer")
+
+    is_code = _looks_like_code_answer(payload, text)
     mode = payload.get("mode") or "strict"
     eval_payload = {
         "mode": mode,
         "brief": payload.get("brief"),
         "last_question": payload.get("last_question"),
-        "last_answer": payload.get("last_answer"),
+        "last_answer": text,
         "question_area": (payload.get("transcript") or [{}])[-1].get("area")
         if payload.get("transcript")
         else None,
+        "is_code_answer": is_code,
+        "rubric_version": RUBRIC_VERSION,
     }
+
+    system = EVALUATE_SYSTEM_PROMPT
+    if is_code:
+        system = f"{EVALUATE_SYSTEM_PROMPT}\n{CODING_STATIC_REVIEW_RULES}"
+
     async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        return await structured_completion(
+        ev = await structured_completion(
             client,
-            system=EVALUATE_SYSTEM_PROMPT,
+            system=system,
             user_payload=eval_payload,
             schema=AnswerEvaluation,
+            temperature=0,
         )
+        issues = evaluation_inconsistencies(ev, is_code=is_code)
+        if not issues:
+            return ev, checks
+
+        checks.extend(issues)
+        repair_payload = {
+            **eval_payload,
+            "repair_note": (
+                "Your previous evaluation was inconsistent: "
+                f"{', '.join(issues)}. Fix strengths/gaps to match the coverage "
+                "label. Return valid JSON only."
+            ),
+        }
+        try:
+            ev = await structured_completion(
+                client,
+                system=system,
+                user_payload=repair_payload,
+                schema=AnswerEvaluation,
+                temperature=0,
+            )
+        except Exception as exc:
+            log.warning("eval_repair_failed", error=str(exc)[:160])
+            checks.append("repair_failed")
+            return _safe_eval_fallback(ev, issues), checks
+
+        issues2 = evaluation_inconsistencies(ev, is_code=is_code)
+        if issues2:
+            checks.append("fallback_after_repair")
+            checks.extend(issues2)
+            return _safe_eval_fallback(ev, issues2), checks
+        checks.append("repaired")
+        return ev, checks
 
 
 async def generate_next_question(
@@ -555,8 +686,11 @@ async def run_interviewer_turn(*, payload: dict) -> TurnDecision:
     latency on answered turns versus the old single combined call; opening
     turns still skip the evaluator.
     """
-    evaluation = await evaluate_answer(payload)
-    return await generate_next_question(payload, evaluation)
+    evaluation, checks = await evaluate_answer_with_meta(payload)
+    decision = await generate_next_question(payload, evaluation)
+    return decision.model_copy(
+        update={"evaluator_checks": checks, "rubric_version": RUBRIC_VERSION}
+    )
 
 
 def build_interviewer_graph(turn_runner=run_interviewer_turn):

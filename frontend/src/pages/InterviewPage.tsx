@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import CodingWorkspace from "../components/CodingWorkspace";
@@ -145,9 +145,7 @@ export default function InterviewPage() {
   const awaitingAnswer =
     !interviewDone && !!focusTurn && focusTurn.answer === null;
   const openAssistanceLevel = focusTurn?.assistance_level ?? 0;
-  const focusKind = focusTurn
-    ? classifyQuestion(focusTurn.question_area, focusTurn.question)
-    : "text";
+  const focusKind = focusTurn ? resolveKind(focusTurn) : "text";
   const assistMaxLevel =
     reportedMaxLevel ?? (focusKind === "coding" ? 5 : 3);
   const canAssist =
@@ -425,6 +423,7 @@ export default function InterviewPage() {
               <EvaluationFeedback
                 evaluation={focusEvaluation}
                 questionIndex={focusTurn.turn_index}
+                coding={focusKind === "coding"}
               />
             )}
 

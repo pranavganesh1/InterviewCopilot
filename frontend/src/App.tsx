@@ -27,7 +27,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col overflow-x-hidden bg-[#f6f4fb] text-slate-900">
+    <div className="flex min-h-dvh flex-col overflow-x-clip bg-[#f6f4fb] text-slate-900">
       <AppHeader />
       <main
         className={

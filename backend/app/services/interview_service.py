@@ -143,12 +143,18 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
     last_turn.evaluation_coverage = decision.evaluation.coverage
     last_turn.evaluation_strengths = decision.evaluation.strengths
     last_turn.evaluation_gaps = decision.evaluation.gaps
-    last_turn.evaluation_detail = {
+    detail = {
         "expected_answer_explanation": decision.evaluation.expected_answer_explanation,
         "corrected_code": decision.evaluation.corrected_code,
         "time_complexity": decision.evaluation.time_complexity,
         "space_complexity": decision.evaluation.space_complexity,
+        "rubric_version": getattr(decision, "rubric_version", None) or "v1",
+        "evaluator_checks": list(getattr(decision, "evaluator_checks", None) or []),
     }
+    # Coding answers are reviewed statically — never executed in this product yet.
+    if (last_turn.question_type or "").lower() == "coding":
+        detail["executed"] = False
+    last_turn.evaluation_detail = detail
     last_turn.interviewer_notes = decision.notes_for_report
     await db.commit()
 
@@ -323,6 +329,7 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         ],
         "last_question": last_question,
         "last_answer": last_answer,
+        "open_question_type": getattr(turns[-1], "question_type", None) if turns else None,
         "turns_in_current_area": sum(1 for t in turns if t.question_area == current_area),
         "remaining_areas": remaining_areas,
         "covered_areas": covered_areas,
