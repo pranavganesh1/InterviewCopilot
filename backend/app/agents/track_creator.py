@@ -12,7 +12,11 @@ from app.gateway.structured import structured_completion
 log = get_logger(__name__)
 
 # Free-tier TPM windows: pipeline LLM calls are spaced out. Tests patch to 0.
+feat/m9-question-bank
+BANK_CALL_SPACING_S = 45
+=======
 BANK_CALL_SPACING_S = 5
+main
 
 SYSTEM_PROMPT = """You are InterviewCopilot's interview architect. Design an interview
 brief for a preparation track.

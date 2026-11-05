@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, type BriefContent, type Progression, type Track } from "../lib/api";
@@ -25,11 +26,13 @@ export default function TrackDetailPage() {
     queryFn: () => api<Progression>(`/tracks/${trackId}/progression`),
   });
 
+  const [duration, setDuration] = useState(60);
+
   const start = useMutation({
     mutationFn: ({ id, mode }: { id: string; mode: "strict" | "guided" }) =>
       api<{ session: { id: string } }>(`/tracks/${id}/sessions`, {
         method: "POST",
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, duration_minutes: duration }),
       }),
     onSuccess: (d, vars) =>
       navigate(`/tracks/${vars.id}/interview/${d.session.id}`),
@@ -170,6 +173,28 @@ export default function TrackDetailPage() {
       {start.error instanceof Error && (
         <p className="text-sm text-red-600">{start.error.message}</p>
       )}
+      <div className="rounded-2xl border border-stone-200 bg-white p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+          Interview duration
+        </p>
+        <div className="mt-2 flex gap-2">
+          {[30, 60, 90, 120].map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setDuration(m)}
+              className={`flex-1 rounded-xl border px-3 py-2 text-sm font-medium ${
+                duration === m
+                  ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                  : "border-stone-200 text-stone-600 hover:bg-stone-50"
+              }`}
+            >
+              {m >= 60 ? `${m / 60} hr${m > 60 ? "s" : ""}` : `${m} min`}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2">
         <button
           onClick={() => start.mutate({ id: trackId!, mode: "strict" })}
