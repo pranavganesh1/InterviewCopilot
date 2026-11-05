@@ -1,0 +1,11 @@
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+tests
+m9_track*.json
+m9c_track*.json
+m9e_track.json
+u3_*.json
+m9_perf.json
+*.log
