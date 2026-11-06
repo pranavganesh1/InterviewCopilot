@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import DeleteTrackDialog from "../components/DeleteTrackDialog";
@@ -100,7 +100,6 @@ type PendingDelete = {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
@@ -797,16 +796,6 @@ export default function DashboardPage() {
           reports={pendingDelete.reports}
           onCancel={closeDeleteDialog}
           onDeleted={() => onTrackDeleted(pendingDelete.track)}
-          onResume={(sessionId) => {
-            const trackId = pendingDelete.track.id;
-            setPendingDelete(null);
-            navigate(`/tracks/${trackId}/interview/${sessionId}`);
-          }}
-          onFinished={(sessionId) => {
-            const trackId = pendingDelete.track.id;
-            setPendingDelete(null);
-            navigate(`/tracks/${trackId}/report/${sessionId}`);
-          }}
         />
       )}
       {toast && (

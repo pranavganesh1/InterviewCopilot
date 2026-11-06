@@ -154,22 +154,20 @@ async def test_delete_is_owner_only_and_blocks_open_session(clean_users_table):
             f"/api/v1/tracks/{uuid.uuid4()}", cookies={"ic_access": owner_token}
         )
         assert unknown.status_code == 404
+        # M11: deleting a track with an unfinished interview now SUCCEEDS —
+        # the open session is auto-closed as aborted (user owns the call).
         blocked = await client.delete(
             f"/api/v1/tracks/{track.id}", cookies={"ic_access": owner_token}
         )
-        assert blocked.status_code == 409
-        detail = blocked.json()["detail"]
-        assert detail["code"] == "unfinished_interview"
-        assert detail["session_id"] == str(session_id)
-        assert "unfinished interview" in detail["message"]
+        assert blocked.status_code == 200
 
     async with SessionFactory() as session:
         saved = await session.get(Track, track.id)
         assert saved is not None
-        assert saved.archived_at is None
+        assert saved.archived_at is not None
         still_open = await session.get(InterviewSession, session_id)
         assert still_open is not None
-        assert still_open.status == "in_progress"
+        assert still_open.status == "aborted"
 
 
 @pytest.mark.asyncio

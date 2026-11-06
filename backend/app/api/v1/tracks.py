@@ -81,17 +81,7 @@ async def delete_track(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        result = await track_service.archive_track(db, user, track_id)
-    except track_service.UnfinishedInterviewError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "unfinished_interview",
-                "message": "Finish or close your unfinished interview first",
-                "session_id": str(exc.session_id),
-            },
-        ) from None
+    result = await track_service.archive_track(db, user, track_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Track not found")
     return result

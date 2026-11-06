@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.question_quality import subject_problem
@@ -139,18 +139,17 @@ async def archive_track(db: AsyncSession, user: User, track_id: uuid.UUID) -> di
     if track is None:
         return None
     if track.archived_at is None:
-        result = await db.execute(
-            select(InterviewSession)
+        # Close any unfinished interview: the user owns the call — deleting the
+        # track is an explicit decision, not something to gate behind a dialog.
+        await db.execute(
+            update(InterviewSession)
             .where(
                 InterviewSession.track_id == track.id,
                 InterviewSession.user_id == user.id,
                 InterviewSession.status == "in_progress",
             )
-            .order_by(InterviewSession.created_at.desc())
+            .values(status="aborted", completed_at=datetime.now(UTC))
         )
-        open_session = result.scalars().first()
-        if open_session is not None:
-            raise UnfinishedInterviewError(open_session.id)
         track.archived_at = datetime.now(UTC)
         await db.commit()
         await db.refresh(track)
