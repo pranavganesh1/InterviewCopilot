@@ -296,6 +296,7 @@ class TurnDecision(BaseModel):
 class InterviewerState(TypedDict, total=False):
     payload: dict
     decision: dict
+    mongo_db: object  # AsyncIOMotorDatabase | None — avoid hard motor dep in TypedDict
 
 
 # Kept for older imports/tests.
@@ -913,7 +914,12 @@ async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, li
         return ev, checks
 
 
-async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> TurnDecision:
+async def run_interviewer_turn(
+    *,
+    payload: dict,
+    meta: dict | None = None,
+    mongo_db: object = None,  # AsyncIOMotorDatabase | None
+) -> TurnDecision:
     """Evaluate candidate answer and generate next question in a single LLM call.
 
     Avoids sequential 2-call latency overhead while enforcing deterministic guards
@@ -971,6 +977,7 @@ async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> Tu
             user_payload=_prompt_payload(routed),
             schema=TurnDecision,
             meta=meta,
+            mongo_db=mongo_db,
         )
         decision = _apply_eval_guards(decision)
         decision = apply_local_policy(decision, routed)
@@ -994,6 +1001,7 @@ async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> Tu
                 system=system,
                 user_payload=_prompt_payload(repair_payload),
                 schema=TurnDecision,
+                mongo_db=mongo_db,
             )
             decision = _apply_eval_guards(decision)
             decision = apply_local_policy(decision, routed)
@@ -1020,7 +1028,10 @@ async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> Tu
 
 def build_interviewer_graph(turn_runner=run_interviewer_turn):
     async def evaluate(state: InterviewerState) -> dict:
-        decision = await turn_runner(payload=state["payload"])
+        decision = await turn_runner(
+            payload=state["payload"],
+            mongo_db=state.get("mongo_db"),
+        )
         dumped = decision.model_dump()
         # ContextVar set inside the gateway does not survive LangGraph's copy.
         # Carry the alias out on the decision payload instead.

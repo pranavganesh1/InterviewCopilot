@@ -212,7 +212,12 @@ def build_covered_so_far(
 
 
 async def start_session(
-    db: AsyncSession, user: User, track_id, mode: str = "strict", duration_minutes: int = 60
+    db: AsyncSession,
+    user: User,
+    track_id,
+    mode: str = "strict",
+    duration_minutes: int = 60,
+    mongo_db: object = None,
 ) -> dict:
     track_brief = await get_track_with_brief(db, user, track_id)
     if track_brief is None:
@@ -263,7 +268,7 @@ async def start_session(
     # session (in_progress with zero turns). Mark aborted, then re-raise —
     # the user retries cleanly and nothing is stuck on "Preparing…".
     try:
-        decision = await _decide(db, session, brief_content, last_answer=None)
+        decision = await _decide(db, session, brief_content, last_answer=None, mongo_db=mongo_db)
     except Exception:
         session.status = "aborted"
         await db.commit()
@@ -276,7 +281,9 @@ async def start_session(
     }
 
 
-async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, nc=None) -> dict:
+async def submit_answer(
+    db: AsyncSession, user: User, session_id, answer: str, nc=None, mongo_db: object = None
+) -> dict:
     session = await _owned_session(db, user, session_id)
     if session.status != "in_progress":
         raise LookupError("session_not_active")
@@ -303,7 +310,9 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
         raise LookupError("no_open_question")
 
     track_brief = await get_track_with_brief(db, user, session.track_id)
-    decision = await _decide(db, session, track_brief["brief"]["content"], last_answer=answer)
+    decision = await _decide(
+        db, session, track_brief["brief"]["content"], last_answer=answer, mongo_db=mongo_db
+    )
     if (last_turn.question_type or "") == "mcq":
         stored = (
             last_turn.evaluation_detail if isinstance(last_turn.evaluation_detail, dict) else {}
@@ -528,7 +537,14 @@ async def complete_session(db: AsyncSession, user: User, session_id, nc=None) ->
     return {"session": _session_dict(session)}
 
 
-async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer: str | None):
+async def _decide(
+    db: AsyncSession,
+    session,
+    brief_content: dict,
+    *,
+    last_answer: str | None,
+    mongo_db: object = None,
+) -> "TurnDecision":
     turns = await _turns(db, session.id)
     last_question = turns[-1].question if turns else None
     current_area = turns[-1].question_area if turns else None
@@ -666,7 +682,7 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         payload["diversity_instruction"] = (
             f"{diversity} Ask about this objective: {slot.get('objective', '')}."
         )
-    result = await _graph().ainvoke({"payload": payload})
+    result = await _graph().ainvoke({"payload": payload, "mongo_db": mongo_db})
     decision = TurnDecision.model_validate(result["decision"])
     # Defense in depth: never persist a duplicate even if the agent slipped through.
     from app.agents.interviewer import decision_violation, force_unique_decision

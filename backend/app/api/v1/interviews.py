@@ -42,6 +42,7 @@ async def open_session(
 @router.post("/tracks/{track_id}/sessions", status_code=201)
 async def start_session(
     track_id: uuid.UUID,
+    request: Request,
     body: CreateSession | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -53,6 +54,7 @@ async def start_session(
             track_id,
             mode=(body.mode if body else "strict"),
             duration_minutes=(body.duration_minutes if body else 60),
+            mongo_db=getattr(request.app.state, "mongo_db", None),
         )
     except LLMGatewayError as exc:
         raise HTTPException(
@@ -112,6 +114,7 @@ async def submit_turn(
             session_id,
             body.answer,
             nc=getattr(request.app.state, "nats", None),
+            mongo_db=getattr(request.app.state, "mongo_db", None),
         )
     except LLMGatewayError as exc:
         raise HTTPException(
