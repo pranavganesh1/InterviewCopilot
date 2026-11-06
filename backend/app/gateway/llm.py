@@ -48,10 +48,18 @@ async def chat_completion(
     """
     chain = [model, *MODEL_FALLBACKS.get(model, [])]
     last_error: Exception | None = None
-    for candidate in chain:
+    for idx, candidate in enumerate(chain):
+        # Primary gets the full timeout; fallbacks a tight one (a hanging
+        # provider must not stall past the caller's patience).
+        timeout_s = (
+            get_settings().llm_client_timeout
+            if idx == 0
+            else min(get_settings().llm_client_timeout, 30)
+        )
         try:
             content = await _chat_once(
                 client,
+                timeout_s=timeout_s,
                 model=candidate,
                 messages=messages,
                 mongo_db=mongo_db,
@@ -73,6 +81,7 @@ async def chat_completion(
 async def _chat_once(
     client: httpx.AsyncClient,
     *,
+    timeout_s: float,
     model: str,
     messages: list[dict],
     mongo_db: AsyncIOMotorDatabase | None,
@@ -90,9 +99,9 @@ async def _chat_once(
         payload["response_format"] = response_format
 
     started = time.monotonic()
-    # Free-tier providers (Groq etc.) rate-limit per minute. LiteLLM's instant
-    # retries all land inside the same window and fail, so the gateway waits
-    # the window out itself: 2 backoff attempts on 429 (20s, 45s).
+    # 429 strategy: one quick 5s retry on the same model (covers per-minute
+    # bursts), then the caller's fallback chain takes over immediately —
+    # waiting 90s+ on an exhausted DAILY quota helps nobody (M11 finding).
     last_error: Exception | None = None
     data: dict | None = None
     for attempt in range(max_attempts):
@@ -101,10 +110,11 @@ async def _chat_once(
                 f"{settings.litellm_url}/v1/chat/completions",
                 json=payload,
                 headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
+                timeout=timeout_s,
             )
             if resp.status_code == 429 and attempt < max_attempts - 1:
                 retry_after = resp.headers.get("retry-after")
-                delay = float(retry_after) if retry_after else (45 if attempt == 0 else 90)
+                delay = float(retry_after) if retry_after else 5
                 log.warning(
                     "llm_gateway_rate_limited",
                     model=model,
