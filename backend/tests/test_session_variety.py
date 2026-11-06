@@ -8,9 +8,10 @@ import httpx
 import pytest
 
 from app.agents.interviewer import TurnDecision, apply_local_policy, decision_violation
-from app.agents.question_plan import deterministic_question_plan
+from app.agents.question_dedupe import concept_fingerprint
+from app.agents.question_plan import deterministic_question_plan, opening_areas_to_avoid
 from app.agents.question_quality import prepare_served_question
-from app.agents.session_pool import needs_pool_topup, pick_pool_question
+from app.agents.session_pool import least_recent_text, needs_pool_topup, pick_pool_question
 from app.core.security import create_access_token
 from app.db.sqlalchemy import SessionFactory
 from app.main import create_app
@@ -141,6 +142,28 @@ def test_two_sessions_differ_and_a_session_is_stable():
     assert _sequence("session-a", [])[0] == first[0]
 
 
+def test_fallback_plan_changes_with_the_seed_and_a_single_area_still_works():
+    brief = {
+        "summary": "Field notes",
+        "question_areas": [{"topic": name, "guidance": "notes"} for name in AREAS],
+        "competencies": [],
+        "avoid_areas": ["Kestrels"],
+    }
+    seeded = deterministic_question_plan(brief, 6, seed="alpha")
+    other = deterministic_question_plan(brief, 6, seed="bravo")
+    assert seeded[0]["topic"] != "Kestrels"
+    assert other[0]["topic"] != "Kestrels"
+    assert [slot["topic"] for slot in seeded] != [slot["topic"] for slot in other]
+    assert [slot["difficulty"] for slot in seeded] == [slot["difficulty"] for slot in other]
+    single = deterministic_question_plan(
+        {"question_areas": [{"topic": "Kestrels"}], "avoid_areas": ["Kestrels"]},
+        3,
+        seed="alpha",
+    )
+    assert [slot["topic"] for slot in single] == ["Kestrels"] * 3
+    assert opening_areas_to_avoid(["Kestrels"], ["Kestrels"]) == []
+
+
 def test_plan_seed_rotates_areas_inside_the_same_arc():
     brief = {
         "summary": "Field notes",
@@ -199,6 +222,60 @@ def test_exhausted_pool_reuses_the_oldest_question_only():
             "questions_remaining": 15,
         },
     )
+
+
+def test_fresh_generation_wins_until_only_an_old_question_remains():
+    bank = _pool()[:3]
+    history = [row["question"] for row in bank]
+    payload = {
+        "mode": "strict",
+        "brief": {"pool": {"target": 45}},
+        "question_bank": bank,
+        "asked_questions": [],
+        "prior_track_questions": history,
+        "questions_remaining": 15,
+        "meta": {"session_id": "s"},
+        "question_plan_slot": _slot(0),
+    }
+    live = apply_local_policy(_decision("What is zephyr77 known for?"), payload)
+    assert live.next_question == "What is zephyr77 known for?"
+    assert least_recent_text(history, []) == history[0]
+
+
+def test_fingerprint_skips_a_bank_question_already_used_on_the_track():
+    seen = "Why does contiguous array memory make index access a constant time operation?"
+    other = _entry(5, "foundational", "conceptual", "Ledgers")
+    fingerprint = tuple(sorted(concept_fingerprint(seen)))
+    assert len(fingerprint) >= 4
+    picked = pick_pool_question(
+        [
+            {
+                "area": "Kestrels",
+                "difficulty": "foundational",
+                "type": "conceptual",
+                "question": seen,
+            },
+            other,
+        ],
+        seed="s",
+        slot=_slot(0),
+        asked=[],
+        history=[],
+        fingerprints=[fingerprint],
+        mode="strict",
+    )
+    assert picked is not None
+    assert picked["question"] == other["question"]
+
+
+def test_strict_strips_openers_from_bank_and_generated_questions():
+    for text in (
+        "Let's start with the basics. Why does a hash table use chaining?",
+        "Good start. Why does a hash table use chaining?",
+        "I see. Let's explore a bit further. Why does a hash table use chaining?",
+    ):
+        cleaned = prepare_served_question(text, mode="strict")
+        assert cleaned == "Why does a hash table use chaining?"
 
 
 def test_strict_strips_bank_openers_and_repairs_a_stacked_question():
@@ -395,3 +472,80 @@ async def test_history_covers_every_status_and_a_failed_topup_still_starts(
     assert body["id"] == sid
     assert body["question_index"] == 1
     assert body["mode"] == "strict"
+
+
+@pytest.mark.asyncio
+async def test_three_sessions_open_on_different_areas_and_a_refresh_is_stable(
+    monkeypatch, clean_users_table
+):
+    from app.agents import interviewer
+    from app.services import interview_service as svc
+
+    async def fake_structured(*_args, **_kwargs):
+        return TurnDecision(
+            evaluation={"coverage": "none", "strengths": [], "gaps": []},
+            decision="next_area",
+            next_question="What is zephyr77 known for?",
+            question_area="Array Basics and Memory Layout",
+        )
+
+    async def no_topup(**_kwargs):
+        return []
+
+    monkeypatch.setattr(interviewer, "structured_completion", fake_structured)
+    monkeypatch.setattr(svc, "extend_question_pool", no_topup)
+
+    bank = []
+    for area_index, area in enumerate(AREAS):
+        for copy in range(2):
+            bank.append(
+                _entry(area_index * 2 + copy, "foundational", "conceptual", area)
+            )
+
+    async with SessionFactory() as db:
+        user = User(google_sub=f"sub-{uuid.uuid4()}", email=f"variety-{uuid.uuid4()}@example.com")
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        track = Track(user_id=user.id, track_type="topic", subject="Field notes")
+        db.add(track)
+        await db.commit()
+        await db.refresh(track)
+        db.add(
+            InterviewBrief(
+                track_id=track.id,
+                version=1,
+                content={
+                    "summary": "Field notes",
+                    "question_areas": [{"topic": area, "guidance": "notes"} for area in AREAS],
+                    "question_bank": bank,
+                    "pool": {"target": 45},
+                },
+            )
+        )
+        await db.commit()
+        user_id = user.id
+        track_id = track.id
+
+    token = create_access_token(str(user_id))
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    openings: list[tuple[str, str]] = []
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        for _ in range(3):
+            started = await client.post(
+                f"/api/v1/tracks/{track_id}/sessions", cookies={"ic_access": token}
+            )
+            assert started.status_code == 201
+            turn = started.json()["turn"]
+            sid = started.json()["session"]["id"]
+            refreshed = await client.get(
+                f"/api/v1/sessions/{sid}", cookies={"ic_access": token}
+            )
+            assert refreshed.status_code == 200
+            assert refreshed.json()["turns"][0]["question"] == turn["question"]
+            assert refreshed.json()["turns"][0]["question_area"] == turn["question_area"]
+            openings.append((turn["question_area"], turn["question"]))
+    assert len({area for area, _ in openings}) == 3
+    assert len({question for _, question in openings}) == 3
+    assert "What is zephyr77 known for?" not in {question for _, question in openings}

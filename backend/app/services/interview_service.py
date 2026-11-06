@@ -14,8 +14,8 @@ from app.agents.assistance import (
     next_assistance_level,
 )
 from app.agents.interviewer import TurnDecision, build_interviewer_graph
-from app.agents.question_dedupe import is_duplicate_question
-from app.agents.question_plan import build_question_plan
+from app.agents.question_dedupe import concept_fingerprint, is_duplicate_question
+from app.agents.question_plan import build_question_plan, opening_areas_to_avoid
 from app.agents.question_quality import (
     active_profile,
     is_programming_brief,
@@ -49,11 +49,27 @@ def _unseen_bank_count(bank: list, history: list[str]) -> int:
     return count
 
 
+_HISTORY_CAP = 80
+
+
+def _fingerprint(text: str) -> list[str]:
+    return sorted(concept_fingerprint(text))
+
+
 async def _track_history(db, user_id, track_id, exclude_session_id=None) -> list[dict]:
-    """Questions already asked on this track, oldest first. Any session status counts."""
+    """Questions already asked on this track, oldest first. Any session status counts.
+
+    Every session's opening question is kept. Other turns are capped so a long
+    track does not send its whole history to the planner.
+    """
     try:
         stmt = (
-            select(SessionTurn.question, SessionTurn.question_area)
+            select(
+                InterviewSession.id,
+                SessionTurn.turn_index,
+                SessionTurn.question,
+                SessionTurn.question_area,
+            )
             .join(InterviewSession, SessionTurn.session_id == InterviewSession.id)
             .where(
                 InterviewSession.track_id == track_id,
@@ -66,22 +82,21 @@ async def _track_history(db, user_id, track_id, exclude_session_id=None) -> list
         result = await db.execute(stmt)
     except Exception:
         return []
-    return [
-        {"question": question, "area": area or ""}
-        for question, area in result.all()
+    rows = [
+        {
+            "session_id": str(session_id),
+            "turn_index": turn_index,
+            "question": question,
+            "area": area or "",
+            "fingerprint": _fingerprint(question),
+        }
+        for session_id, turn_index, question, area in result.all()
         if question
     ]
-
-
-async def _prior_question_texts(db, session) -> list[str]:
-    user_id = getattr(session, "user_id", None)
-    track_id = getattr(session, "track_id", None)
-    if not user_id or not track_id:
-        return []
-    history = await _track_history(
-        db, user_id, track_id, exclude_session_id=getattr(session, "id", None)
-    )
-    return [row["question"] for row in history]
+    openings = [row for row in rows if row["turn_index"] == 1]
+    others = [row for row in rows if row["turn_index"] != 1][-_HISTORY_CAP:]
+    kept = {id(row) for row in openings + others}
+    return [row for row in rows if id(row) in kept]
 
 
 def _maybe_topup(brief: dict, history: list[dict], track_id) -> None:
@@ -215,10 +230,19 @@ async def start_session(
     brief_content = track_brief["brief"]["content"]
     history = await _track_history(db, user.id, track_id)
     session_id = uuid.uuid4()
+    brief_areas = [
+        qa.get("topic")
+        for qa in (brief_content.get("question_areas") or [])
+        if isinstance(qa, dict) and qa.get("topic")
+    ]
     plan_brief = {
         **brief_content,
         "plan_seed": str(session_id),
         "prior_areas": list(dict.fromkeys(row["area"] for row in history if row.get("area"))),
+        "prior_questions": [row["question"][:160] for row in history][-40:],
+        "avoid_areas": opening_areas_to_avoid(
+            brief_areas, [row["area"] for row in history if row.get("turn_index") == 1]
+        ),
     }
     plan = await build_question_plan(plan_brief, get_settings().interview_max_turns)
     session = InterviewSession(
@@ -535,6 +559,27 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
     except Exception:
         minutes_remaining = float(duration)
         minutes_elapsed = 0.0
+    history: list[dict] = []
+    owner_id = getattr(session, "user_id", None)
+    owner_track = getattr(session, "track_id", None)
+    if owner_id and owner_track:
+        history = await _track_history(
+            db, owner_id, owner_track, exclude_session_id=getattr(session, "id", None)
+        )
+    prior_texts = [row["question"] for row in history]
+    prior_areas = list(dict.fromkeys(row["area"] for row in history if row.get("area")))
+    avoid_areas = (
+        []
+        if turns
+        else opening_areas_to_avoid(
+            brief_areas,
+            [row["area"] for row in history if row.get("turn_index") == 1 and row.get("area")],
+        )
+    )
+    if avoid_areas:
+        diversity += (
+            " The opening question must use an area other than: " + ", ".join(avoid_areas) + "."
+        )
     payload = {
         "mode": session.mode,
         "meta": {
@@ -569,7 +614,10 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         "difficulty_target": difficulty,
         # Persistent asked list (survives refresh because turns are in Postgres).
         "asked_questions": [t.question for t in turns],
-        "prior_track_questions": await _prior_question_texts(db, session),
+        "prior_track_questions": prior_texts,
+        "prior_areas": prior_areas,
+        "prior_fingerprints": [row["fingerprint"] for row in history],
+        "avoid_areas": avoid_areas,
         # M9: validated question bank — only UNUSED entries are exposed, so the
         # interviewer can use them verbatim without tripping duplicate checks.
         "question_bank": [
