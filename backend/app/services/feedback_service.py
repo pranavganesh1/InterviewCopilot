@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.feedback_agent import FeedbackReportContent, build_feedback_graph
+from app.agents.question_quality import practice_label_for
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.feedback import FeedbackReport, ProgressionState
@@ -161,6 +162,9 @@ async def process_session_feedback(db: AsyncSession, session_id) -> dict:
         )
 
     content = enrich_assessments_with_turns(content, answered)
+    label = practice_label_for(brief_content if isinstance(brief_content, dict) else {})
+    if label:
+        content["practice_label"] = label
     # Drop anything the agent invented for a question the candidate never answered.
     answered_indexes = {t.turn_index for t in answered}
     content["question_assessments"] = [

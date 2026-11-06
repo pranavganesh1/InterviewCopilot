@@ -1,7 +1,16 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, type BriefContent, type Progression, type Track } from "../lib/api";
+
+type OpenSession = {
+  id: string;
+  mode: string;
+  status: string;
+  question_index: number;
+  max_turns: number;
+  answered_count: number;
+};
 
 const IMPORTANCE_STYLE: Record<string, string> = {
   core: "bg-indigo-100 text-indigo-700",
@@ -28,6 +37,54 @@ export default function TrackDetailPage() {
 
   const [duration, setDuration] = useState(60);
   const [customDuration, setCustomDuration] = useState("");
+  const [hiddenSessionId, setHiddenSessionId] = useState<string | null>(null);
+  const [showNewOptions, setShowNewOptions] = useState(false);
+  const [choiceError, setChoiceError] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  const openSession = useQuery({
+    queryKey: ["open-session", trackId],
+    enabled: Boolean(trackId),
+    retry: false,
+    queryFn: () =>
+      api<{ session: OpenSession | null }>(`/tracks/${trackId}/open-session`),
+  });
+  const unfinished = openSession.data?.session ?? null;
+  const choiceOpen = Boolean(unfinished) && hiddenSessionId !== unfinished?.id;
+
+  useEffect(() => {
+    if (!choiceOpen) return;
+    const root = dialogRef.current;
+    if (!root) return;
+    const focusable = () =>
+      Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.hasAttribute("disabled"));
+    focusable()[0]?.focus();
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setHiddenSessionId(unfinished?.id ?? null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [choiceOpen, showNewOptions, unfinished?.id]);
 
   const start = useMutation({
     mutationFn: ({ id, mode }: { id: string; mode: "strict" | "guided" }) =>
@@ -40,6 +97,37 @@ export default function TrackDetailPage() {
   });
 
   const guidedUnlocked = progression.data?.guided_state === "UNLOCKED";
+
+  function begin(mode: "strict" | "guided") {
+    if (unfinished) {
+      setShowNewOptions(false);
+      setHiddenSessionId(null);
+      return;
+    }
+    start.mutate({ id: trackId!, mode });
+  }
+
+  async function finishUnfinished() {
+    if (!unfinished || !trackId) return;
+    try {
+      await api(`/sessions/${unfinished.id}/complete`, { method: "POST" });
+      navigate(`/tracks/${trackId}/report/${unfinished.id}`);
+    } catch (err) {
+      setChoiceError(err instanceof Error ? err.message : "Could not finish");
+    }
+  }
+
+  async function startFresh(mode: "strict" | "guided") {
+    if (!trackId) return;
+    try {
+      if (unfinished) {
+        await api(`/sessions/${unfinished.id}/complete`, { method: "POST" });
+      }
+      start.mutate({ id: trackId, mode });
+    } catch (err) {
+      setChoiceError(err instanceof Error ? err.message : "Could not start");
+    }
+  }
 
   if (data.isLoading) return <p className="text-stone-500">Loading…</p>;
   if (data.error instanceof Error)
@@ -83,6 +171,11 @@ export default function TrackDetailPage() {
             <h2 className="text-sm font-semibold text-stone-500">
               Interview Brief · v{brief!.version}
             </h2>
+            {content.clarification_message && (
+              <p className="mt-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">
+                {content.clarification_message}
+              </p>
+            )}
             <p className="mt-2 text-sm leading-relaxed">{content.summary}</p>
             {content.candidate_angle_notes && (
               <p className="mt-3 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-900">
@@ -218,7 +311,7 @@ export default function TrackDetailPage() {
 
       <div className="grid gap-3 sm:grid-cols-2">
         <button
-          onClick={() => start.mutate({ id: trackId!, mode: "strict" })}
+          onClick={() => begin("strict")}
           disabled={start.isPending}
           className="rounded-2xl bg-indigo-600 py-3 font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
@@ -227,7 +320,7 @@ export default function TrackDetailPage() {
             : "Start strict interview"}
         </button>
         <button
-          onClick={() => start.mutate({ id: trackId!, mode: "guided" })}
+          onClick={() => begin("guided")}
           disabled={start.isPending || !guidedUnlocked}
           title={
             guidedUnlocked
@@ -239,6 +332,102 @@ export default function TrackDetailPage() {
           {guidedUnlocked ? "Start guided interview" : "Guided locked"}
         </button>
       </div>
+      {unfinished && !choiceOpen && (
+        <button
+          type="button"
+          onClick={() => setHiddenSessionId(null)}
+          className="text-sm font-medium text-indigo-700 underline"
+        >
+          Unfinished interview: Q{unfinished.question_index}/{unfinished.max_turns} (
+          {unfinished.mode})
+        </button>
+      )}
+      {choiceOpen && unfinished && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-stone-900/40 p-4 sm:items-center">
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="start-choice-title"
+            className="w-full max-w-md rounded-2xl border border-indigo-100 bg-white p-5 shadow-xl"
+          >
+            <h2 id="start-choice-title" className="text-base font-semibold text-stone-900">
+              Unfinished interview: Q{unfinished.question_index}/{unfinished.max_turns} (
+              {unfinished.mode})
+            </h2>
+            {choiceError && <p className="mt-2 text-sm text-red-600">{choiceError}</p>}
+            <div className="mt-4 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  navigate(`/tracks/${trackId}/interview/${unfinished.id}`)
+                }
+                className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Resume
+              </button>
+              <button
+                type="button"
+                onClick={() => void finishUnfinished()}
+                className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-50"
+              >
+                Finish and get feedback
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowNewOptions(true)}
+                className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-800 hover:bg-stone-50"
+              >
+                Start a new interview
+              </button>
+            </div>
+            {showNewOptions && (
+              <div className="mt-4 space-y-3 border-t border-indigo-100 pt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                  Interview duration
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {[30, 45, 60, 90, 120, 180].map((m) => (
+                    <button
+                      key={`new-${m}`}
+                      type="button"
+                      onClick={() => {
+                        setDuration(m);
+                        setCustomDuration("");
+                      }}
+                      className={`rounded-xl border px-3 py-2 text-sm font-medium ${
+                        duration === m
+                          ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                          : "border-stone-200 text-stone-600"
+                      }`}
+                    >
+                      {m >= 60 ? `${m / 60} hr${m > 60 ? "s" : ""}` : `${m} min`}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void startFresh("strict")}
+                    disabled={start.isPending}
+                    className="rounded-xl bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    Start strict interview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void startFresh("guided")}
+                    disabled={start.isPending || !guidedUnlocked}
+                    className="rounded-xl border border-stone-300 py-2 text-sm font-medium text-stone-800 disabled:opacity-40"
+                  >
+                    {guidedUnlocked ? "Start guided interview" : "Guided locked"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

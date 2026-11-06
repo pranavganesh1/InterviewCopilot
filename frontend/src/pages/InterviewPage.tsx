@@ -221,6 +221,14 @@ export default function InterviewPage() {
           <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
             Interview session
           </h1>
+          {session.data?.session.practice_label && (
+            <p
+              className="mt-1 max-w-full text-xs font-medium text-amber-800"
+              data-testid="practice-label"
+            >
+              {session.data.session.practice_label}
+            </p>
+          )}
           <p className="mt-0.5 hidden text-sm text-stone-500 sm:block">
             {showCodingWorkspace
               ? "Write your own solution, then submit for evaluation."
@@ -470,11 +478,39 @@ export default function InterviewPage() {
               />
             )}
 
-            {awaitingAnswer && focusTurn.question_type !== "mcq" && (
+            {awaitingAnswer && focusTurn.question_type === "numeric" && (
+              <label className="flex min-w-0 items-center gap-2 rounded-2xl border border-indigo-200 bg-white p-3">
+                <input
+                  data-testid="numeric-answer"
+                  inputMode="decimal"
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  disabled={submit.isPending}
+                  className="min-w-0 flex-1 rounded-xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-indigo-400"
+                />
+                {focusTurn.unit && (
+                  <span data-testid="numeric-unit" className="shrink-0 text-sm text-stone-500">
+                    {focusTurn.unit}
+                  </span>
+                )}
+              </label>
+            )}
+
+            {awaitingAnswer &&
+              focusTurn.question_type !== "mcq" &&
+              focusTurn.question_type !== "numeric" && (
               <div
                 data-testid="answer-composer"
                 className="flex min-h-[40vh] flex-1 flex-col rounded-2xl border border-indigo-200 bg-white p-3 shadow-sm sm:min-h-0 sm:p-4"
               >
+                {focusTurn.scenario && (
+                  <p
+                    data-testid="case-scenario"
+                    className="mb-3 whitespace-pre-wrap rounded-xl bg-amber-50 p-3 text-sm leading-relaxed text-amber-950"
+                  >
+                    {focusTurn.scenario}
+                  </p>
+                )}
                 {focusTurn.code_snippet && (
                   <pre
                     data-testid="code-snippet"

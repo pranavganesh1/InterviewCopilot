@@ -13,6 +13,24 @@ from app.services import track_service
 
 router = APIRouter(prefix="/tracks", tags=["tracks"])
 
+_HIDDEN_BANK_FIELDS = {"correct_index", "expected_value", "tolerance", "key_points"}
+
+
+def _redact_track_payload(payload: dict) -> dict:
+    """Keep answer keys in the database. Do not send them with the brief."""
+    brief = payload.get("brief")
+    if not isinstance(brief, dict) or not isinstance(brief.get("content"), dict):
+        return payload
+    content = dict(brief["content"])
+    bank = []
+    for question in content.get("question_bank") or []:
+        if isinstance(question, dict):
+            bank.append({k: v for k, v in question.items() if k not in _HIDDEN_BANK_FIELDS})
+        else:
+            bank.append(question)
+    content["question_bank"] = bank
+    return {**payload, "brief": {**brief, "content": content}}
+
 
 class CreateTrack(BaseModel):
     track_type: Literal["topic", "role", "company_jd"]
@@ -30,14 +48,14 @@ async def create_track(
     if body.track_type == "company_jd" and not body.jd_text:
         raise HTTPException(status_code=422, detail="company_jd tracks require jd_text")
     try:
-        return await track_service.create_track_with_brief(
+        return _redact_track_payload(await track_service.create_track_with_brief(
             db,
             user,
             track_type=body.track_type,
             subject=body.subject,
             company=body.company,
             jd_text=body.jd_text,
-        )
+        ))
     except LLMGatewayError as exc:
         # Free-tier rate limits surface as 503 with a retry hint, not a raw 500.
         raise HTTPException(
@@ -60,7 +78,7 @@ async def get_track(
     result = await track_service.get_track_with_brief(db, user, track_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Track not found")
-    return result
+    return _redact_track_payload(result)
 
 
 @router.get("/{track_id}/brief")
@@ -72,4 +90,4 @@ async def get_brief(
     result = await track_service.get_track_with_brief(db, user, track_id)
     if result is None or result["brief"] is None:
         raise HTTPException(status_code=404, detail="Brief not found")
-    return result["brief"]
+    return _redact_track_payload(result)["brief"]

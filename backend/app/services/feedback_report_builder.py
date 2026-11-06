@@ -55,6 +55,11 @@ def _apply_question_meta(row: dict, turn: SessionTurn) -> None:
             row["explanation"] = meta["explanation"]
     if meta.get("code_snippet"):
         row["code_snippet"] = meta["code_snippet"]
+    if meta.get("scenario"):
+        row["scenario"] = meta["scenario"]
+    if meta.get("expected_value") is not None:
+        row["expected_value"] = meta["expected_value"]
+        row["unit"] = meta.get("unit") or ""
 
 
 def enrich_assessments_with_turns(content: dict, answered_turns: list[SessionTurn]) -> dict:

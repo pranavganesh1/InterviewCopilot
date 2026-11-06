@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.question_quality import subject_problem
 from app.agents.track_creator import build_track_creator_graph
 from app.models.track import InterviewBrief, Track
 from app.models.user import User
@@ -37,6 +38,17 @@ async def build_track_creator_brief(
     *, objective: dict, vault_summary: list[dict], meta: dict | None = None
 ) -> dict:
     """Author the brief + validated question bank (no DB). Testable in isolation."""
+    problem = subject_problem(str(objective.get("subject") or ""))
+    if problem:
+        return {
+            "summary": problem,
+            "clarification_message": problem,
+            "preparation_plan": [],
+            "competencies": [],
+            "question_areas": [],
+            "candidate_angle_notes": "",
+            "question_bank": [],
+        }
     graph = build_track_creator_graph(
         turn_runner=run_track_creator_turn,
         bank_runner=run_bank_builder_turn,
