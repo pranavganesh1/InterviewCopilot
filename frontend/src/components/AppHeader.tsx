@@ -98,6 +98,18 @@ export default function AppHeader() {
               Admin
             </NavLink>
           )}
+          {user?.is_admin && (
+            <NavLink
+              to="/admin"
+              className={({ isActive }) =>
+                `rounded-md px-3 py-1.5 text-sm ${
+                  isActive ? "bg-amber-100 font-medium text-amber-800" : "text-amber-700 hover:bg-amber-50"
+                }`
+              }
+            >
+              Admin
+            </NavLink>
+          )}
         </nav>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">

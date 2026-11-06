@@ -75,6 +75,9 @@ export default function App() {
             }
           />
           <Route path="/tracks/:trackId" element={<TrackDetailPage />} />
+          <Route path="/admin" element={<AdminOverviewPage />} />
+          <Route path="/admin/users" element={<AdminUsersPage />} />
+          <Route path="/admin/users/:userId" element={<AdminUserDetailPage />} />
           <Route
             path="/tracks/:trackId/interview/:sessionId"
             element={<InterviewPage />}

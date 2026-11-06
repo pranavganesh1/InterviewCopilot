@@ -161,6 +161,7 @@ export interface Track {
   subject: string;
   company: string | null;
   status: string;
+  brief_status?: "authoring" | "ready" | "failed";
   archived?: boolean;
   archived_at?: string | null;
   created_at: string;
