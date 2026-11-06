@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
@@ -7,6 +7,8 @@ import StartInterviewModal from "../components/StartInterviewModal";
 import TrackOptionsMenu from "../components/TrackOptionsMenu";
 import TrackTypePicker from "../components/TrackTypePicker";
 import UserAvatar from "../components/UserAvatar";
+import StatCard from "../components/ui/StatCard";
+import ProgressRing from "../components/ui/ProgressRing";
 import {
   api,
   type AssessmentSummary,
@@ -455,7 +457,6 @@ export default function DashboardPage() {
               <path d="M4 19h4V9H4v10Zm6 0h4V5h-4v14Zm6 0h4v-7h-4v7Z" />
             </svg>
           }
-          tone="indigo"
         />
         <StatCard
           label="Interviews Taken"
@@ -465,7 +466,6 @@ export default function DashboardPage() {
               <path d="M8 5v14l11-7L8 5Z" />
             </svg>
           }
-          tone="sky"
         />
         <StatCard
           label="Avg. Score"
@@ -481,7 +481,6 @@ export default function DashboardPage() {
               <path d="M12 2 9.5 8.5 2 9.3l5.5 4.7L5.8 21 12 17.3 18.2 21l-1.7-7 5.5-4.7-7.5-.8L12 2Z" />
             </svg>
           }
-          tone="amber"
         />
         <StatCard
           label="Progress"
@@ -493,7 +492,6 @@ export default function DashboardPage() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l5-5 4 4 7-8" />
             </svg>
           }
-          tone="emerald"
         />
       </div>
 
@@ -813,77 +811,6 @@ export default function DashboardPage() {
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  icon,
-  tone,
-}: {
-  label: string;
-  value: string;
-  icon: ReactNode;
-  tone: "indigo" | "sky" | "amber" | "emerald";
-}) {
-  const tones = {
-    indigo: "bg-indigo-50 text-indigo-600",
-    sky: "bg-sky-50 text-sky-600",
-    amber: "bg-amber-50 text-amber-600",
-    emerald: "bg-emerald-50 text-emerald-600",
-  };
-  return (
-    <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-200/40">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-            {label}
-          </p>
-          <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
-            {value}
-          </p>
-        </div>
-        <span className={`grid h-10 w-10 place-items-center rounded-xl ${tones[tone]}`}>
-          {icon}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function ProgressRing({ value }: { value: number | null }) {
-  const pct = value == null ? 0 : Math.max(0, Math.min(100, value));
-  const r = 34;
-  const c = 2 * Math.PI * r;
-  const offset = c - (pct / 100) * c;
-  return (
-    <div className="relative h-20 w-20 shrink-0">
-      <svg viewBox="0 0 80 80" className="h-20 w-20 -rotate-90">
-        <circle
-          cx="40"
-          cy="40"
-          r={r}
-          fill="none"
-          stroke="#eef2ff"
-          strokeWidth="8"
-        />
-        <circle
-          cx="40"
-          cy="40"
-          r={r}
-          fill="none"
-          stroke="#6366f1"
-          strokeWidth="8"
-          strokeLinecap="round"
-          strokeDasharray={c}
-          strokeDashoffset={value == null ? c : offset}
-        />
-      </svg>
-      <span className="absolute inset-0 grid place-items-center text-sm font-bold text-slate-900">
-        {value != null ? `${value}%` : "—"}
-      </span>
     </div>
   );
 }
