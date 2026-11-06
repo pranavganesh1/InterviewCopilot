@@ -50,7 +50,7 @@ async def test_callback_upserts_user_and_sets_cookies(monkeypatch, clean_users_t
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/auth/google/callback?code=abc&state=xyz")
     assert resp.status_code == 303
-    assert resp.headers["location"].endswith(":5173")
+    assert resp.headers["location"].endswith(":8080")
     assert "ic_access" in resp.cookies and "ic_refresh" in resp.cookies
 
     async with SessionFactory() as session:

@@ -45,17 +45,20 @@ async def test_create_track_generates_brief_v1(monkeypatch, clean_users_table):
 
     monkeypatch.setattr(tc, "BANK_CALL_SPACING_S", 0)
     monkeypatch.setattr(svc, "run_track_creator_turn", fake_turn)
-    # Bank generation is covered by test_question_bank.py; keep these tests
-    # fast and quota-free by shipping an empty bank.
-    monkeypatch.setattr(
-        svc, "run_bank_builder_turn", fake_turn
-    )  # returns InterviewBriefContent -> no .questions attr
 
-    async def fake_bank_empty(*args, **kwargs):
-        raise RuntimeError("no bank in this test")
+    # M11: async authoring — the API returns the track instantly with
+    # brief: None; the worker (mocked here) fills the brief afterwards.
+    async def fake_author(db, track_id):
+        from app.db.sqlalchemy import SessionFactory as SF
+        from app.models.track import InterviewBrief
 
-    monkeypatch.setattr(svc, "run_bank_builder_turn", fake_bank_empty)
-    monkeypatch.setattr(svc, "run_bank_judge_turn", fake_turn)
+        async with SF() as s:
+            brief = InterviewBrief(track_id=track_id, version=1, content=content.model_dump())
+            s.add(brief)
+            await s.commit()
+        return {"brief": {"version": 1, "content": content.model_dump()}}
+
+    monkeypatch.setattr(svc, "author_brief_for_track", fake_author)
 
     app = create_app()
     transport = httpx.ASGITransport(app=app)
@@ -68,8 +71,10 @@ async def test_create_track_generates_brief_v1(monkeypatch, clean_users_table):
     assert resp.status_code == 201
     body = resp.json()
     assert body["track"]["subject"] == "Data Structures & Algorithms"
-    assert body["brief"]["version"] == 1
-    assert body["brief"]["content"]["summary"].startswith("DSA interview")
+    # M11: async authoring — the API saves the track with brief_status
+    # "authoring" and returns brief: None; the worker fills the brief.
+    assert body["track"]["brief_status"] == "authoring"
+    assert body["brief"] is None
 
 
 @pytest.mark.asyncio

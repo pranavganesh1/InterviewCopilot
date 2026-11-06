@@ -73,36 +73,57 @@ async def create_track_with_brief(
     jd_text: str | None = None,
     request_id: str | None = None,
 ) -> dict:
-    # Author FIRST: if the LLM fails, nothing is saved — the user gets a clean
-    # 503 and can retry. (Saving the track first used to leave orphans with
-    # "no Interview Brief" on every quota failure — M11 finding.)
-    content = await build_track_creator_brief(
-        objective={
-            "track_type": track_type,
-            "subject": subject,
-            "company": company,
-            "jd_text": jd_text,
-        },
-        vault_summary=await vault_summary(db, user.id),
-        meta={"user_id": str(user.id)},
-    )
-
+    # M11: async authoring — the track saves instantly with brief_status
+    # "authoring"; the worker fills the brief (no browser timeouts, and
+    # free-tier TPM windows are respected by the worker's retry pacing).
     track = Track(
         user_id=user.id,
         track_type=track_type,
         subject=subject,
         company=company,
         jd_text=jd_text,
+        brief_status="authoring",
     )
     db.add(track)
     await db.commit()
     await db.refresh(track)
+    return {"track": _track_dict(track), "brief": None}
+
+
+async def author_brief_for_track(db: AsyncSession, track_id: uuid.UUID) -> dict | None:
+    """Worker path (M11): author the brief for an existing track.
+
+    Marks brief_status ready/failed. Returns {"brief": ...} or None if the
+    track vanished. Raises LLMGatewayError when authoring failed — the worker
+    decides whether to retry.
+    """
+    track = await db.get(Track, track_id)
+    if track is None:
+        return None
+
+    objective = {
+        "track_type": track.track_type,
+        "subject": track.subject,
+        "company": track.company,
+        "jd_text": track.jd_text,
+    }
+    try:
+        content = await build_track_creator_brief(
+            objective=objective,
+            vault_summary=await vault_summary(db, track.user_id),
+            meta={"user_id": str(track.user_id), "track_id": str(track.id)},
+        )
+    except Exception:
+        track.brief_status = "failed"
+        await db.commit()
+        raise
 
     brief = InterviewBrief(track_id=track.id, version=1, content=content)
     db.add(brief)
+    track.brief_status = "ready"
     await db.commit()
     await db.refresh(brief)
-    return {"track": _track_dict(track), "brief": _brief_dict(brief)}
+    return {"brief": _brief_dict(brief)}
 
 
 class UnfinishedInterviewError(Exception):
@@ -192,6 +213,7 @@ def _track_dict(t: Track) -> dict:
         "subject": t.subject,
         "company": t.company,
         "status": t.status,
+        "brief_status": t.brief_status,
         "archived": t.archived_at is not None,
         "archived_at": t.archived_at.isoformat() if t.archived_at else None,
         "created_at": t.created_at.isoformat(),
