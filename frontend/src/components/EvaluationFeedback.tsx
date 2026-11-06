@@ -1,5 +1,6 @@
 import { AI_REVIEWED_NOT_EXECUTED } from "../lib/codingReview";
-import { COVERAGE_STYLE } from "../lib/ui";
+import Badge from "./ui/Badge";
+import { COVERAGE_TONE } from "../lib/status";
 import type { TurnResult } from "../lib/api";
 
 type Evaluation = TurnResult["evaluation"];
@@ -35,13 +36,9 @@ export default function EvaluationFeedback({
         <p className="text-sm font-semibold text-stone-900">
           {questionIndex != null ? `Q${questionIndex} evaluation` : "Evaluation"}
         </p>
-        <span
-          className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${
-            COVERAGE_STYLE[evaluation.coverage] ?? "bg-stone-100"
-          }`}
-        >
+        <Badge tone={COVERAGE_TONE[evaluation.coverage] ?? "neutral"}>
           {evaluation.coverage}
-        </span>
+        </Badge>
         {showAiReviewed && (
           <span
             className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-700"
