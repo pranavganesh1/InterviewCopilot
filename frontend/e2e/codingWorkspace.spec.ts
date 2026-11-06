@@ -149,11 +149,11 @@ test("language tabs switch without leaving workspace", async ({ page }) => {
   const workspace = page.getByTestId("coding-workspace");
   await workspace.getByRole("button", { name: "Java" }).click();
   await expect(workspace.getByRole("button", { name: "Java" })).toHaveClass(
-    /bg-indigo-600/,
+    /bg-accent-soft/,
   );
   await workspace.getByRole("button", { name: "C" }).click();
   await expect(workspace.getByRole("button", { name: "C" })).toHaveClass(
-    /bg-indigo-600/,
+    /bg-accent-soft/,
   );
   await expect(
     page.getByText(/Strict mode: no solutions before you submit/i),
