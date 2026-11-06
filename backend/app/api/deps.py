@@ -26,7 +26,7 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:
     """403 unless the signed-in email is in ADMIN_EMAILS (M11 admin portal)."""
-    allowed = {e.strip().lower() for e in get_settings().admin_emails.split(",") if e.strip()}
+    allowed = get_settings().admin_email_set
     if user.email.lower() not in allowed:
         from fastapi import HTTPException
 

@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     s3_access_key: str = "local"
     s3_secret_key: str = "local"
 
+    @property
+    def admin_email_set(self) -> frozenset[str]:
+        """Parsed, normalised set of admin emails from the ADMIN_EMAILS env var."""
+        return frozenset(e.strip().lower() for e in self.admin_emails.split(",") if e.strip())
+
     @model_validator(mode="after")
     def _validate_secrets(self):
         """Refuse weak/default secrets outside local development (audit #1)."""
