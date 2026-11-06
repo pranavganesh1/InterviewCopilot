@@ -1,15 +1,20 @@
 router_settings:
-  # Free-tier resilience: when Groq 429s/exhausts its daily quota, LiteLLM
-  # falls back to Gemini automatically. Requires GEMINI_API_KEY in .env.
+  # Multi-tier resilience: when Groq 429s/exhausts rate limits, LiteLLM
+  # falls back to NVIDIA NIM (Llama 3.3 70B), then Gemini as tertiary.
   fallbacks:
-    - {"interview-chat": ["interview-chat-gemini"]}
-    - {"structured-json": ["structured-json-gemini"]}
+    - {"interview-chat": ["interview-chat-nim", "interview-chat-gemini"]}
+    - {"structured-json": ["structured-json-nim", "structured-json-gemini"]}
 
 model_list:
   - model_name: interview-chat
     litellm_params:
       model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
+  - model_name: interview-chat-nim
+    litellm_params:
+      model: openai/meta/llama-3.3-70b-instruct
+      api_base: https://integrate.api.nvidia.com/v1
+      api_key: os.environ/NVIDIA_NIM_API_KEY
   - model_name: interview-chat-gemini
     litellm_params:
       model: gemini/gemini-flash-latest
@@ -18,6 +23,12 @@ model_list:
     litellm_params:
       model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
+      response_format: {"type": "json_object"}
+  - model_name: structured-json-nim
+    litellm_params:
+      model: openai/meta/llama-3.3-70b-instruct
+      api_base: https://integrate.api.nvidia.com/v1
+      api_key: os.environ/NVIDIA_NIM_API_KEY
       response_format: {"type": "json_object"}
   - model_name: structured-json-gemini
     litellm_params:

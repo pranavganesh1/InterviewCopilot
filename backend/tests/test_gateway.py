@@ -84,8 +84,8 @@ async def test_primary_failure_uses_fallback_model():
         )
     assert isinstance(result, AnswerEvaluation)
     assert result.coverage == "partial"
-    assert seen == ["structured-json", "structured-json-gemini"]
-    assert llm_model_used.get() == "structured-json-gemini"
+    assert seen == ["structured-json", "structured-json-nim"]
+    assert llm_model_used.get() == "structured-json-nim"
 
 
 @pytest.mark.asyncio

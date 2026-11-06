@@ -16,8 +16,8 @@ log = get_logger(__name__)
 # Mirrors infra/litellm/config.yaml so a failed primary is visible to tests
 # and the model that actually answered can be stored on the evaluation.
 MODEL_FALLBACKS: dict[str, list[str]] = {
-    "interview-chat": ["interview-chat-gemini"],
-    "structured-json": ["structured-json-gemini"],
+    "interview-chat": ["interview-chat-nim", "interview-chat-gemini"],
+    "structured-json": ["structured-json-nim", "structured-json-gemini"],
 }
 
 # Set on each successful chat_completion. Interview turns copy this onto
