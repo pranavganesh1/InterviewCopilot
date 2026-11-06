@@ -45,7 +45,9 @@ export function resolveKind(turn: {
     turn.question_type === "conceptual" ||
     turn.question_type === "behavioral" ||
     turn.question_type === "mcq" ||
-    turn.question_type === "code_read"
+    turn.question_type === "code_read" ||
+    turn.question_type === "case_study" ||
+    turn.question_type === "numeric"
   ) {
     return "text";
   }

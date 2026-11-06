@@ -10,11 +10,15 @@ from app.agents.question_dedupe import duplicate_of, is_duplicate_question, norm
 from app.agents.question_quality import (
     SINGLE_FOCUS_RULE,
     mcq_violation,
+    numeric_violation,
+    prepare_served_question,
     question_focus_violation,
+    question_type_allowed,
     repair_single_focus,
     strict_praise_violation,
     strip_strict_praise,
 )
+from app.agents.session_pool import pick_pool_question
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.gateway.llm import llm_model_used
@@ -30,11 +34,14 @@ Persona (human interviewer):
 - next_question is ONLY the question. Do not store a reaction in that field.
 - Ask exactly ONE concise question (max two short sentences). No lists of sub-questions.
 - Use covered_so_far / memory_instruction when present.
+- prior_track_questions lists questions this candidate already saw on this track.
+  Do not repeat them.
 """
 STRICT_REACTION_RULE = """
 Strict reactions:
-- Never evaluate the previous answer. Forbidden openers include "Good start", "Nice",
-  "That's right", "Not quite", and "let's dive deeper".
+- Never evaluate the previous answer. Forbidden openers include "I see", "Let's explore",
+  "Let's dive deeper", "Good", "Great", "Nice", "Interesting", "Right", "Okay so",
+  "Exactly", "Good start", "That's right", and "Not quite".
 - A neutral lead-in is optional and must NOT be part of next_question. Allowed spoken
   lead-ins, kept out of the stored question: "Thanks. Next topic:" / "Understood. Moving on."
   / "Let's continue with <area>."
@@ -60,7 +67,10 @@ Do not write the next interview question — evaluation only.
 
 {COVERAGE_RUBRIC}
 Rules:
-- Judge ONLY what the candidate actually wrote. Never invent mistakes.
+- Judge ONLY what the candidate actually wrote. Never invent mistakes or facts.
+- Judge against the stored key_points when they are present, and against
+  well-established knowledge. If you are not sure a statement is wrong, put
+  "uncertain" in gaps instead of inventing an error.
 - Every gap must refer to something the candidate said or clearly omitted.
 - Do not reward length or confident tone. Do not penalise wording differences.
 - Always fill strengths, gaps, and expected_answer_explanation.
@@ -122,12 +132,13 @@ Rules:
 - When last_answer is null (opening question), leave evaluation lists empty and
   expected_answer_explanation / corrected_code / complexities empty.
 - If questions_remaining is 0, decision MUST be complete.
-- question_type is one of conceptual, behavioral, mcq, code_read, coding.
-  coding ONLY when the candidate must write code. code_read shows a short snippet
-  and asks one question about it (put the snippet in code_snippet). mcq has exactly
-  4 options and one correct_index; do not put the key in next_question.
-  Use preferred_format when it is set. If programming_track is false, never use
-  coding or code_read.
+- question_type is one of conceptual, behavioral, mcq, case_study, numeric,
+  code_read, coding. Use preferred_format and allowed_types when they are set.
+  coding ONLY when the candidate must write code. code_read puts the snippet in
+  code_snippet. case_study puts a short scenario in scenario and asks one question.
+  numeric asks for one number (unit and tolerance stay out of next_question).
+  mcq has exactly 4 options and one correct_index; do not put the key in next_question.
+  If allowed_types is absent and programming_track is false, never use coding or code_read.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent.
 """
 )
@@ -178,12 +189,13 @@ Rules:
 - When last_answer is null (opening question), leave evaluation lists empty and
   expected_answer_explanation / corrected_code / complexities empty.
 - If questions_remaining is 0, decision MUST be complete.
-- question_type is one of conceptual, behavioral, mcq, code_read, coding.
-  coding ONLY when the candidate must write code. code_read shows a short snippet
-  and asks one question about it (put the snippet in code_snippet). mcq has exactly
-  4 options and one correct_index; do not put the key in next_question.
-  Use preferred_format when it is set. If programming_track is false, never use
-  coding or code_read.
+- question_type is one of conceptual, behavioral, mcq, case_study, numeric,
+  code_read, coding. Use preferred_format and allowed_types when they are set.
+  coding ONLY when the candidate must write code. code_read puts the snippet in
+  code_snippet. case_study puts a short scenario in scenario and asks one question.
+  numeric asks for one number (unit and tolerance stay out of next_question).
+  mcq has exactly 4 options and one correct_index; do not put the key in next_question.
+  If allowed_types is absent and programming_track is false, never use coding or code_read.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent. Note if the
   candidate appeared to need coaching.
 """
@@ -217,15 +229,20 @@ class QuestionMove(BaseModel):
     decision: Literal["follow_up", "next_area", "complete"]
     next_question: str
     question_area: str
-    question_type: Literal["coding", "conceptual", "behavioral", "mcq", "code_read"] = (
-        "conceptual"
-    )
+    question_type: Literal[
+        "coding", "conceptual", "behavioral", "mcq", "code_read", "case_study", "numeric"
+    ] = "conceptual"
     notes_for_report: str = ""
     options: list[str] = Field(default_factory=list)
     correct_index: int | None = None
     option_explanation: str = ""
     code_snippet: str = ""
     objective: str = ""
+    scenario: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    expected_value: float | None = None
+    unit: str = ""
+    tolerance: float | None = None
 
     @model_validator(mode="after")
     def _question_required_unless_complete(self) -> "QuestionMove":
@@ -243,15 +260,20 @@ class TurnDecision(BaseModel):
     decision: Literal["follow_up", "next_area", "complete"]
     next_question: str
     question_area: str
-    question_type: Literal["coding", "conceptual", "behavioral", "mcq", "code_read"] = (
-        "conceptual"
-    )
+    question_type: Literal[
+        "coding", "conceptual", "behavioral", "mcq", "code_read", "case_study", "numeric"
+    ] = "conceptual"
     notes_for_report: str = ""
     options: list[str] = Field(default_factory=list)
     correct_index: int | None = None
     option_explanation: str = ""
     code_snippet: str = ""
     objective: str = ""
+    scenario: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    expected_value: float | None = None
+    unit: str = ""
+    tolerance: float | None = None
     # Persistence-only metadata (excluded from LLM schema / default dumps).
     evaluator_checks: list[str] = Field(default_factory=list, exclude=True)
     rubric_version: str = Field(default=RUBRIC_VERSION, exclude=True)
@@ -333,7 +355,7 @@ def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
         return "must complete when questions_remaining is 0"
 
     if decision.decision != "complete":
-        asked = [q for q in payload.get("asked_questions", []) if q]
+        asked = _known_questions(payload)
         collide = duplicate_of(decision.next_question, asked)
         if collide is not None:
             return (
@@ -353,11 +375,14 @@ def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
                 return problem
         if decision.question_type == "code_read" and not (decision.code_snippet or "").strip():
             return "code_read question is missing its snippet"
-        if not payload.get("programming_track", True) and decision.question_type in (
-            "coding",
-            "code_read",
-        ):
-            return "code questions are only for programming tracks"
+        if decision.question_type == "case_study" and len(decision.scenario.strip()) < 20:
+            return "case_study question is missing its scenario"
+        if decision.question_type == "numeric":
+            problem = numeric_violation(decision.expected_value, decision.tolerance, decision.unit)
+            if problem:
+                return problem
+        if not question_type_allowed(decision.question_type, payload):
+            return "question type is not allowed for this subject"
     return None
 
 
@@ -409,12 +434,18 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
             }
         )
     decision = _prefer_unused_bank(decision, payload)
-    if not payload.get("programming_track", True) and decision.question_type in (
-        "coding",
-        "code_read",
-    ):
+    if decision.decision != "complete" and decision.next_question:
+        served = prepare_served_question(decision.next_question, mode=mode)
+        if served and served != decision.next_question:
+            decision = decision.model_copy(update={"next_question": served})
+    if not question_type_allowed(decision.question_type, payload):
         decision = decision.model_copy(
-            update={"question_type": "conceptual", "code_snippet": "", "options": []}
+            update={
+                "question_type": "conceptual",
+                "code_snippet": "",
+                "options": [],
+                "scenario": "",
+            }
         )
     return decision
 
@@ -426,8 +457,20 @@ def _plan_still_open(payload: dict, remaining_slots) -> bool:
     return bool(planned) and remaining_slots is not None and int(remaining_slots) > 0
 
 
-def _unused_bank_entries(payload: dict) -> list[dict]:
+def _known_questions(payload: dict) -> list[str]:
     asked = [q for q in payload.get("asked_questions") or [] if q]
+    prior = [q for q in payload.get("prior_track_questions") or [] if q]
+    return asked + [q for q in prior if q not in asked]
+
+
+def _prompt_payload(payload: dict) -> dict:
+    """Cap track history before it is sent to the model. Selection still sees it all."""
+    history = [str(q) for q in payload.get("prior_track_questions") or [] if q]
+    return {**payload, "prior_track_questions": [q[:160] for q in history[-40:]]}
+
+
+def _unused_bank_entries(payload: dict) -> list[dict]:
+    asked = _known_questions(payload)
     unused: list[dict] = []
     for entry in payload.get("question_bank") or []:
         if not isinstance(entry, dict):
@@ -438,7 +481,15 @@ def _unused_bank_entries(payload: dict) -> list[dict]:
     return unused
 
 
-_BANK_TYPES = ("coding", "conceptual", "behavioral", "mcq", "code_read")
+_BANK_TYPES = (
+    "coding",
+    "conceptual",
+    "behavioral",
+    "mcq",
+    "code_read",
+    "case_study",
+    "numeric",
+)
 
 
 def _fields_from_bank(entry: dict, decision: TurnDecision) -> dict:
@@ -454,23 +505,60 @@ def _fields_from_bank(entry: dict, decision: TurnDecision) -> dict:
         or entry.get("expected_answer_sketch")
         or "",
         "code_snippet": entry.get("code_snippet") or "",
+        "scenario": entry.get("scenario") or "",
+        "key_points": list(entry.get("key_points") or []),
+        "expected_value": entry.get("expected_value"),
+        "unit": entry.get("unit") or "",
+        "tolerance": entry.get("tolerance"),
     }
+
+
+def _servable_fields(entry: dict, decision: TurnDecision, mode: str) -> dict | None:
+    cleaned = prepare_served_question(entry.get("question") or "", mode=mode)
+    if not cleaned:
+        return None
+    fields = _fields_from_bank(entry, decision)
+    fields["next_question"] = cleaned
+    return fields
 
 
 def _prefer_unused_bank(decision: TurnDecision, payload: dict) -> TurnDecision:
     """Use a validated bank question before a generated one. Dedupe still applies."""
     if decision.decision == "complete":
         return decision
+    mode = (payload.get("mode") or "strict").lower()
+    brief = payload.get("brief") if isinstance(payload.get("brief"), dict) else {}
+    if brief.get("pool"):
+        chosen = pick_pool_question(
+            [entry for entry in payload.get("question_bank") or [] if isinstance(entry, dict)],
+            seed=str((payload.get("meta") or {}).get("session_id") or "session"),
+            slot=payload.get("question_plan_slot")
+            if isinstance(payload.get("question_plan_slot"), dict)
+            else None,
+            asked=[q for q in payload.get("asked_questions") or [] if q],
+            history=[q for q in payload.get("prior_track_questions") or [] if q],
+            covered_areas=list(payload.get("covered_areas") or []),
+            mode=mode,
+        )
+        if chosen:
+            return decision.model_copy(update=_fields_from_bank(chosen, decision))
+        return decision
     unused = _unused_bank_entries(payload)
     if not unused:
         return decision
     current = (decision.next_question or "").strip()
+    if current:
+        for entry in unused:
+            question = (entry.get("question") or "").strip()
+            if question and is_duplicate_question(current, [question]):
+                fields = _servable_fields(entry, decision, mode)
+                if fields:
+                    return decision.model_copy(update=fields)
     for entry in unused:
-        question = (entry.get("question") or "").strip()
-        if current and is_duplicate_question(current, [question]):
-            return decision.model_copy(update=_fields_from_bank(entry, decision))
-    entry = unused[0]
-    return decision.model_copy(update=_fields_from_bank(entry, decision))
+        fields = _servable_fields(entry, decision, mode)
+        if fields:
+            return decision.model_copy(update=fields)
+    return decision
 
 
 _FALLBACK_STEMS = (
@@ -560,7 +648,7 @@ def _fallback_unique_question(
     payload: dict, preferred_area: str | None = None
 ) -> tuple[str, str] | None:
     """Build a non-duplicate question without another LLM call, or None if exhausted."""
-    asked = [q for q in payload.get("asked_questions", []) if q]
+    asked = _known_questions(payload)
     remaining = list(payload.get("remaining_areas") or [])
     covered = list(payload.get("covered_areas") or [])
     area = (
@@ -735,6 +823,7 @@ async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, li
         else None,
         "is_code_answer": is_code,
         "rubric_version": RUBRIC_VERSION,
+        "key_points": payload.get("key_points") or [],
     }
 
     system = EVALUATE_SYSTEM_PROMPT
@@ -840,7 +929,7 @@ async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> Tu
         decision = await structured_completion(
             client,
             system=system,
-            user_payload=routed,
+            user_payload=_prompt_payload(routed),
             schema=TurnDecision,
             meta=meta,
         )
@@ -864,7 +953,7 @@ async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> Tu
             decision = await structured_completion(
                 client,
                 system=system,
-                user_payload=repair_payload,
+                user_payload=_prompt_payload(repair_payload),
                 schema=TurnDecision,
             )
             decision = _apply_eval_guards(decision)

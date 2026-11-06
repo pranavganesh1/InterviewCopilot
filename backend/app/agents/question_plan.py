@@ -6,12 +6,13 @@ plan from the brief when the LLM call fails or returns invalid output.
 
 from __future__ import annotations
 
+import random
 from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field
 
-from app.agents.question_quality import format_for_slot, is_programming_brief
+from app.agents.question_quality import active_profile, format_for_slot, is_programming_brief
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.gateway.structured import structured_completion
@@ -29,6 +30,7 @@ Rules:
 - Difficulty arc: early foundational, middle intermediate, late advanced.
 - topic: short area label; objective: one concrete thing the question should probe.
 - Stay inside the track subject. Do not invent unrelated domains.
+- When prior_areas is present, prefer areas that are not in that list.
 """
 
 
@@ -36,7 +38,9 @@ class PlanSlot(BaseModel):
     topic: str = Field(min_length=1, max_length=255)
     objective: str = Field(min_length=1, max_length=500)
     difficulty: Difficulty = "intermediate"
-    format: Literal["conceptual", "behavioral", "mcq", "code_read", "coding"] = "conceptual"
+    format: Literal[
+        "conceptual", "behavioral", "mcq", "code_read", "coding", "case_study", "numeric"
+    ] = "conceptual"
 
 
 class _PlanResponse(BaseModel):
@@ -69,10 +73,20 @@ def _topics_from_brief(brief_content: dict) -> list[str]:
     return topics
 
 
-def deterministic_question_plan(brief_content: dict, n: int) -> list[dict]:
-    """Build n slots from brief topics/competencies without an LLM call."""
+def deterministic_question_plan(
+    brief_content: dict, n: int, seed: str | None = None
+) -> list[dict]:
+    """Build n slots from brief topics/competencies without an LLM call.
+
+    A seed rotates which area is emphasized. No seed keeps the brief's own order.
+    """
     n = max(0, int(n))
     topics = _topics_from_brief(brief_content)
+    plan_seed = seed or (brief_content or {}).get("plan_seed")
+    if plan_seed and len(topics) > 1:
+        shift = random.Random(str(plan_seed)).randrange(len(topics))
+        topics = topics[shift:] + topics[:shift]
+    profile = active_profile(brief_content)
     programming = is_programming_brief(brief_content)
     slots: list[dict] = []
     for i in range(n):
@@ -86,7 +100,7 @@ def deterministic_question_plan(brief_content: dict, n: int) -> list[dict]:
                     f"(slot {i + 1}/{n}; distinct from other slots)."
                 ),
                 "difficulty": difficulty,
-                "format": format_for_slot(i, programming=programming),
+                "format": format_for_slot(i, programming=programming, profile=profile),
             }
         )
     return slots
@@ -136,6 +150,7 @@ async def build_question_plan(brief_content: dict, n: int) -> list[dict]:
                         "candidate_angle_notes": (brief_content or {}).get(
                             "candidate_angle_notes", ""
                         ),
+                        "prior_areas": (brief_content or {}).get("prior_areas") or [],
                     },
                 },
                 schema=_PlanResponse,
@@ -147,4 +162,6 @@ async def build_question_plan(brief_content: dict, n: int) -> list[dict]:
     except Exception as exc:
         log.warning("question_plan_llm_failed", error=str(exc))
 
-    return deterministic_question_plan(brief_content or {}, n)
+    return deterministic_question_plan(
+        brief_content or {}, n, seed=(brief_content or {}).get("plan_seed")
+    )

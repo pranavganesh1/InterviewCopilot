@@ -110,6 +110,70 @@ test("coding opens the workspace with the review label", async ({ page }) => {
   await expect(page.getByTestId("ai-reviewed-badge")).toBeVisible();
 });
 
+test("numeric and case questions fit a narrow screen", async ({ page }) => {
+  await mockSession(
+    page,
+    {
+      turn_index: 1,
+      question_area: "Circuits",
+      question: "What is the voltage drop?",
+      question_type: "numeric",
+      unit: "V",
+      answer: null,
+      evaluation: null,
+    },
+    "guided",
+  );
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.goto("/tracks/t1/interview/s1");
+  await expect(page.getByTestId("numeric-answer")).toBeVisible();
+  await expect(page.getByTestId("numeric-unit")).toHaveText("V");
+  await page.getByTestId("numeric-answer").fill("5");
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(true);
+});
+
+test("a high-risk session shows the practice label and the case", async ({ page }) => {
+  await page.route("**/api/v1/auth/me", (r) => r.fulfill({ json: USER }));
+  await page.route("**/api/v1/auth/logout", (r) => r.fulfill({ json: { status: "ok" } }));
+  await page.route("**/api/v1/sessions/s1", (r) =>
+    r.fulfill({
+      json: {
+        session: {
+          id: "s1",
+          track_id: "t1",
+          mode: "strict",
+          status: "in_progress",
+          max_turns: 15,
+          practice_label: "Exam-practice only, not professional advice",
+        },
+        turns: [
+          {
+            turn_index: 1,
+            question_area: "Pharmacy",
+            question: "What is the main counselling point?",
+            question_type: "case_study",
+            scenario: "A generic adult collects a new medicine and asks about drowsiness.",
+            answer: null,
+            evaluation: null,
+          },
+        ],
+      },
+    }),
+  );
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.goto("/tracks/t1/interview/s1");
+  await expect(page.getByTestId("practice-label")).toContainText("not professional advice");
+  await expect(page.getByTestId("case-scenario")).toContainText("generic adult");
+  await expect(page.getByText("Good start")).toHaveCount(0);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(true);
+});
+
 test("strict shows no evaluation before submit", async ({ page }) => {
   await mockSession(page, {
     turn_index: 1,

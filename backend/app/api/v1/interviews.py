@@ -23,6 +23,22 @@ class CreateSession(BaseModel):
     duration_minutes: int = Field(default=60, ge=15, le=240)
 
 
+@router.get("/tracks/{track_id}/open-session")
+async def open_session(
+    track_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The unfinished session on this track, if one exists.
+
+    Nothing else can discover it: the track payload does not include sessions.
+    """
+    result = await interview_service.get_open_session(db, user, track_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+    return result
+
+
 @router.post("/tracks/{track_id}/sessions", status_code=201)
 async def start_session(
     track_id: uuid.UUID,

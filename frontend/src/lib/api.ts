@@ -162,6 +162,7 @@ export interface BriefContent {
   competencies: { name: string; description: string; importance: string }[];
   question_areas: { topic: string; guidance: string }[];
   candidate_angle_notes: string;
+  clarification_message?: string;
 }
 
 export interface Progression {
@@ -178,6 +179,7 @@ export interface SessionInfo {
   max_turns?: number;
   duration_minutes: number;
   created_at: string;
+  practice_label?: string;
 }
 
 export interface TurnEvaluation {
@@ -194,9 +196,19 @@ export interface Turn {
   turn_index: number;
   question_area: string;
   question: string;
-  question_type?: "coding" | "conceptual" | "behavioral" | "mcq" | "code_read" | null;
+  question_type?:
+    | "coding"
+    | "conceptual"
+    | "behavioral"
+    | "mcq"
+    | "code_read"
+    | "case_study"
+    | "numeric"
+    | null;
   options?: string[];
   code_snippet?: string;
+  scenario?: string;
+  unit?: string;
   objective?: string;
   correct_index?: number;
   explanation?: string;
@@ -253,6 +265,9 @@ export interface QuestionAssessment {
   correct_option?: string;
   explanation?: string;
   code_snippet?: string;
+  scenario?: string;
+  expected_value?: number;
+  unit?: string;
 }
 
 export interface ReportContent {
@@ -260,6 +275,7 @@ export interface ReportContent {
   session_mode: string;
   summary_overview: string;
   coverage_status: string;
+  practice_label?: string;
   question_assessments: QuestionAssessment[];
   competency_assessments: {
     competency_name: string;

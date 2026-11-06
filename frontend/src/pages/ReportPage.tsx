@@ -225,6 +225,14 @@ export default function ReportPage() {
             {c.coverage_status}
           </span>
           <span className="text-stone-400">{c.session_mode} interview</span>
+          {c.practice_label && (
+            <span
+              className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900"
+              data-testid="practice-label"
+            >
+              {c.practice_label}
+            </span>
+          )}
           {(c.coding_review_note ||
             c.question_assessments.some((q) => q.executed === false)) && (
             <span
@@ -365,6 +373,17 @@ export default function ReportPage() {
                       {qa.question}
                     </p>
                   </div>
+                )}
+                {qa.scenario && (
+                  <p className="whitespace-pre-wrap rounded-xl bg-amber-50 px-3 py-2 text-amber-950">
+                    {qa.scenario}
+                  </p>
+                )}
+                {qa.expected_value != null && (
+                  <p data-testid="numeric-expected">
+                    Expected: {qa.expected_value}
+                    {qa.unit ? ` ${qa.unit}` : ""}
+                  </p>
                 )}
                 {qa.code_snippet && (
                   <pre className="overflow-x-auto rounded-xl bg-stone-900 p-3 font-mono text-xs text-stone-100">

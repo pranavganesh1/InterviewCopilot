@@ -1,8 +1,10 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.agents.assistance import (
     generate_assistance,
@@ -12,19 +14,119 @@ from app.agents.assistance import (
     next_assistance_level,
 )
 from app.agents.interviewer import TurnDecision, build_interviewer_graph
+from app.agents.question_dedupe import is_duplicate_question
 from app.agents.question_plan import build_question_plan
 from app.agents.question_quality import (
+    active_profile,
     is_programming_brief,
+    practice_label_for,
     public_question_meta,
     score_mcq,
+    score_numeric,
 )
+from app.agents.session_pool import needs_pool_topup
+from app.agents.track_creator import extend_question_pool
 from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.db.sqlalchemy import SessionFactory
 from app.gateway.llm import llm_model_used
 from app.models.interview import InterviewSession, SessionTurn
+from app.models.track import InterviewBrief, Track
 from app.models.user import User
 from app.services.events import publish_feedback_job
 from app.services.progression_policy import VALID_MODES, guided_unlocked
 from app.services.track_service import get_track_with_brief
+
+log = get_logger(__name__)
+
+
+def _unseen_bank_count(bank: list, history: list[str]) -> int:
+    count = 0
+    for entry in bank:
+        text = entry.get("question") if isinstance(entry, dict) else ""
+        if text and not is_duplicate_question(text, history):
+            count += 1
+    return count
+
+
+async def _track_history(db, user_id, track_id, exclude_session_id=None) -> list[dict]:
+    """Questions already asked on this track, oldest first. Any session status counts."""
+    try:
+        stmt = (
+            select(SessionTurn.question, SessionTurn.question_area)
+            .join(InterviewSession, SessionTurn.session_id == InterviewSession.id)
+            .where(
+                InterviewSession.track_id == track_id,
+                InterviewSession.user_id == user_id,
+            )
+            .order_by(SessionTurn.asked_at.asc(), SessionTurn.turn_index.asc())
+        )
+        if exclude_session_id is not None:
+            stmt = stmt.where(InterviewSession.id != exclude_session_id)
+        result = await db.execute(stmt)
+    except Exception:
+        return []
+    return [
+        {"question": question, "area": area or ""}
+        for question, area in result.all()
+        if question
+    ]
+
+
+async def _prior_question_texts(db, session) -> list[str]:
+    user_id = getattr(session, "user_id", None)
+    track_id = getattr(session, "track_id", None)
+    if not user_id or not track_id:
+        return []
+    history = await _track_history(
+        db, user_id, track_id, exclude_session_id=getattr(session, "id", None)
+    )
+    return [row["question"] for row in history]
+
+
+def _maybe_topup(brief: dict, history: list[dict], track_id) -> None:
+    if not isinstance(brief, dict) or not brief.get("pool"):
+        return
+    unseen = _unseen_bank_count(
+        brief.get("question_bank") or [], [row["question"] for row in history]
+    )
+    if not needs_pool_topup(unseen, get_settings().interview_max_turns):
+        return
+    try:
+        asyncio.get_running_loop().create_task(_run_pool_topup(track_id))
+    except RuntimeError:
+        return
+
+
+async def _run_pool_topup(track_id) -> None:
+    try:
+        async with SessionFactory() as db:
+            track = await db.get(Track, track_id)
+            if track is None:
+                return
+            result = await db.execute(
+                select(InterviewBrief)
+                .where(InterviewBrief.track_id == track_id)
+                .order_by(InterviewBrief.version.desc())
+                .limit(1)
+            )
+            brief = result.scalar_one_or_none()
+            content = brief.content if brief is not None else None
+            if not isinstance(content, dict) or not content.get("pool"):
+                return
+            rows = await extend_question_pool(
+                brief=content,
+                objective={"subject": track.subject, "track_type": track.track_type},
+            )
+            if not rows:
+                return
+            updated = dict(content)
+            updated["question_bank"] = list(content.get("question_bank") or []) + rows
+            brief.content = updated
+            flag_modified(brief, "content")
+            await db.commit()
+    except Exception as exc:
+        log.warning("pool_topup_failed", error=str(exc))
 
 
 async def run_interviewer_turn(**kwargs):
@@ -111,8 +213,16 @@ async def start_session(
         raise PermissionError("guided_locked")
 
     brief_content = track_brief["brief"]["content"]
-    plan = await build_question_plan(brief_content, get_settings().interview_max_turns)
+    history = await _track_history(db, user.id, track_id)
+    session_id = uuid.uuid4()
+    plan_brief = {
+        **brief_content,
+        "plan_seed": str(session_id),
+        "prior_areas": list(dict.fromkeys(row["area"] for row in history if row.get("area"))),
+    }
+    plan = await build_question_plan(plan_brief, get_settings().interview_max_turns)
     session = InterviewSession(
+        id=session_id,
         track_id=track_id,
         user_id=user.id,
         mode=mode,
@@ -125,7 +235,11 @@ async def start_session(
 
     decision = await _decide(db, session, brief_content, last_answer=None)
     turn = await _append_turn(db, session, decision)
-    return {"session": _session_dict(session), "turn": _turn_dict(turn)}
+    _maybe_topup(brief_content, history, track_id)
+    return {
+        "session": _session_dict(session, practice_label=practice_label_for(brief_content)),
+        "turn": _turn_dict(turn),
+    }
 
 
 async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, nc=None) -> dict:
@@ -164,6 +278,30 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
         question_meta = stored.get("question_meta") if isinstance(stored, dict) else {}
         correct = question_meta.get("correct_index") if isinstance(question_meta, dict) else None
         coverage, strengths, gaps = score_mcq(answer, correct)
+        decision = decision.model_copy(
+            update={
+                "evaluation": decision.evaluation.model_copy(
+                    update={
+                        "coverage": coverage,
+                        "strengths": strengths,
+                        "gaps": gaps,
+                        "expected_answer_explanation": "",
+                    }
+                )
+            }
+        )
+    elif (last_turn.question_type or "") == "numeric":
+        stored = (
+            last_turn.evaluation_detail if isinstance(last_turn.evaluation_detail, dict) else {}
+        )
+        question_meta = stored.get("question_meta") if isinstance(stored, dict) else {}
+        question_meta = question_meta if isinstance(question_meta, dict) else {}
+        coverage, strengths, gaps = score_numeric(
+            answer,
+            question_meta.get("expected_value"),
+            question_meta.get("tolerance"),
+            str(question_meta.get("unit") or ""),
+        )
         decision = decision.model_copy(
             update={
                 "evaluation": decision.evaluation.model_copy(
@@ -231,14 +369,49 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
     }
 
 
+async def get_open_session(db: AsyncSession, user: User, track_id) -> dict | None:
+    track_brief = await get_track_with_brief(db, user, track_id)
+    if track_brief is None:
+        return None
+    result = await db.execute(
+        select(InterviewSession)
+        .where(
+            InterviewSession.track_id == track_id,
+            InterviewSession.user_id == user.id,
+            InterviewSession.status == "in_progress",
+        )
+        .order_by(InterviewSession.created_at.desc())
+    )
+    session = result.scalars().first()
+    if session is None:
+        return {"session": None}
+    turns = await _turns(db, session.id)
+    answered = sum(1 for turn in turns if turn.answer is not None)
+    question_index = (
+        turns[-1].turn_index if turns and turns[-1].answer is None else answered + 1
+    )
+    return {
+        "session": {
+            "id": str(session.id),
+            "mode": session.mode,
+            "status": session.status,
+            "question_index": question_index,
+            "max_turns": get_settings().interview_max_turns,
+            "answered_count": answered,
+        }
+    }
+
+
 async def get_session(db: AsyncSession, user: User, session_id) -> dict | None:
     try:
         session = await _owned_session(db, user, session_id)
     except LookupError:
         return None
     turns = await _turns(db, session.id)
+    track_brief = await get_track_with_brief(db, user, session.track_id)
+    brief_content = ((track_brief or {}).get("brief") or {}).get("content") or {}
     return {
-        "session": _session_dict(session),
+        "session": _session_dict(session, practice_label=practice_label_for(brief_content)),
         "turns": [
             _turn_dict_full(t, reveal=session.mode == "guided" and t.answer is not None)
             for t in turns
@@ -393,6 +566,7 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         "difficulty_target": difficulty,
         # Persistent asked list (survives refresh because turns are in Postgres).
         "asked_questions": [t.question for t in turns],
+        "prior_track_questions": await _prior_question_texts(db, session),
         # M9: validated question bank — only UNUSED entries are exposed, so the
         # interviewer can use them verbatim without tripping duplicate checks.
         "question_bank": [
@@ -409,6 +583,24 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
         "diversity_instruction": diversity,
         "programming_track": is_programming_brief(brief_content),
     }
+    profile = active_profile(brief_content)
+    if profile:
+        payload["domain_profile"] = {
+            "category": profile["category"],
+            "uses_code": profile["uses_code"],
+            "uses_math": profile["uses_math"],
+            "risk_level": profile["risk_level"],
+            "style_hint": profile["style_hint"],
+            "allowed_types": profile["allowed_types"],
+        }
+        payload["allowed_types"] = profile["allowed_types"]
+        payload["programming_track"] = profile["uses_code"]
+    if turns:
+        stored = turns[-1].evaluation_detail
+        detail = stored if isinstance(stored, dict) else {}
+        question_meta = detail.get("question_meta") if isinstance(detail, dict) else {}
+        if isinstance(question_meta, dict) and question_meta.get("key_points"):
+            payload["key_points"] = list(question_meta["key_points"])
     if covered_so_far.get("next_planned_objective"):
         slot = covered_so_far["next_planned_objective"]
         payload["question_plan_slot"] = slot
@@ -437,6 +629,16 @@ async def _append_turn(db: AsyncSession, session, decision: TurnDecision) -> Ses
         meta["explanation"] = decision.option_explanation
     if decision.question_type == "code_read" and decision.code_snippet:
         meta["code_snippet"] = decision.code_snippet
+    if decision.question_type == "case_study" and decision.scenario:
+        meta["scenario"] = decision.scenario
+    if decision.key_points:
+        meta["key_points"] = list(decision.key_points)
+    if decision.question_type == "numeric":
+        meta["expected_value"] = decision.expected_value
+        meta["unit"] = decision.unit
+        meta["tolerance"] = decision.tolerance
+        if decision.option_explanation:
+            meta["explanation"] = decision.option_explanation
     turn = SessionTurn(
         session_id=session.id,
         turn_index=index,
@@ -539,8 +741,8 @@ async def _dispatch_feedback(session: InterviewSession, nc=None) -> None:
     await publish_feedback_job(session_id, track_id, user_id, nc=nc)
 
 
-def _session_dict(s: InterviewSession) -> dict:
-    return {
+def _session_dict(s: InterviewSession, *, practice_label: str = "") -> dict:
+    body = {
         "id": str(s.id),
         "track_id": str(s.track_id),
         "mode": s.mode,
@@ -549,6 +751,9 @@ def _session_dict(s: InterviewSession) -> dict:
         "duration_minutes": s.duration_minutes,
         "created_at": s.created_at.isoformat(),
     }
+    if practice_label:
+        body["practice_label"] = practice_label
+    return body
 
 
 def _turn_dict(t: SessionTurn, *, reveal: bool = False) -> dict:
