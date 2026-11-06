@@ -136,7 +136,12 @@ test("menu opens and closes, delete updates counts, and undo restores", async ({
   await expect(page.getByText("Total Tracks").locator("xpath=..")).toContainText("1");
 });
 
-test("open-session conflict offers resume and finish", async ({ page }) => {
+test("deleting a track with an unfinished interview succeeds and aborts it", async ({
+  page,
+}) => {
+  // M11: deletion is always allowed now — the backend auto-aborts any
+  // unfinished interview instead of blocking with 409.
+  let deleted = false;
   await page.route("**/api/v1/me/assessments", (route) =>
     route.fulfill({
       json: {
@@ -154,53 +159,34 @@ test("open-session conflict offers resume and finish", async ({ page }) => {
   );
   await page.route("**/api/v1/tracks**", async (route) => {
     if (route.request().method() === "DELETE") {
-      await route.fulfill({
-        status: 409,
-        json: {
-          detail: {
-            code: "unfinished_interview",
-            message: "Finish or close your unfinished interview first",
-            session_id: "sess-open",
-          },
-        },
-      });
+      deleted = true;
+      await route.fulfill({ status: 200, json: { track: { id: "t1", status: "active" } } });
       return;
     }
     await route.fulfill({
-      json: [
-        {
-          id: "t1",
-          track_type: "topic",
-          subject: "Graphs",
-          company: null,
-          status: "active",
-          archived: false,
-          created_at: "2026-11-01T00:00:00Z",
-        },
-      ],
+      json: deleted
+        ? []
+        : [
+            {
+              id: "t1",
+              track_type: "topic",
+              subject: "Graphs",
+              company: null,
+              status: "active",
+              archived: false,
+              created_at: "2026-11-01T00:00:00Z",
+            },
+          ],
     });
   });
-  await page.route("**/api/v1/sessions/sess-open/complete", (route) =>
-    route.fulfill({ json: { session: { id: "sess-open", status: "completed" } } }),
-  );
-  await page.route("**/api/v1/sessions/sess-open**", (route) =>
-    route.fulfill({ json: { session: { id: "sess-open", status: "in_progress" } } }),
-  );
-  await page.route("**/api/v1/sessions/sess-open/report", (route) =>
-    route.fulfill({ json: { id: "r1", content: {} } }),
-  );
 
   await page.goto("/");
   await page.getByRole("button", { name: "Track options" }).click();
   await page.getByRole("menuitem", { name: "Delete track" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete track" }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(
-    dialog.getByRole("heading", { name: "You have an unfinished interview on this track" }),
-  ).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Resume interview" })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Finish and get feedback" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Graphs" })).toBeVisible();
+
+  // Track disappears (aborted server-side, nothing blocks the delete).
+  await expect(page.getByRole("link", { name: "Graphs" })).toHaveCount(0);
 });
 
 test("delete failure stays in the dialog and focus returns to the menu button", async ({

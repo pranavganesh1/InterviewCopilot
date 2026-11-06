@@ -259,7 +259,15 @@ async def start_session(
     await db.commit()
     await db.refresh(session)
 
-    decision = await _decide(db, session, brief_content, last_answer=None)
+    # M11 fix: if the first question fails, don't leave a stuck orphan
+    # session (in_progress with zero turns). Mark aborted, then re-raise —
+    # the user retries cleanly and nothing is stuck on "Preparing…".
+    try:
+        decision = await _decide(db, session, brief_content, last_answer=None)
+    except Exception:
+        session.status = "aborted"
+        await db.commit()
+        raise
     turn = await _append_turn(db, session, decision)
     _maybe_topup(brief_content, history, track_id)
     return {

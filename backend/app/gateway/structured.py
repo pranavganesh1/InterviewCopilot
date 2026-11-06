@@ -18,12 +18,15 @@ async def structured_completion(
     request_id: str | None = None,
     temperature: float | None = None,
     meta: dict | None = None,
+    max_attempts: int = 3,
 ) -> BaseModel:
     """Ask for JSON, validate against schema, repair once, then give up.
 
     Agents use this for every structured decision (extraction, question
     planning, evidence scoring). Raises LLMGatewayError if the model cannot
-    produce schema-valid JSON within two attempts.
+    produce schema-valid JSON within two attempts. max_attempts is forwarded
+    to chat_completion (per-model 429 attempts) — callers with a cheap
+    deterministic fallback (question planning) pass 1 to fail fast.
     """
     schema_json = json.dumps(schema.model_json_schema(), indent=2)
     messages: list[dict] = [
@@ -47,6 +50,7 @@ async def structured_completion(
             temperature=temperature,
             response_format={"type": "json_object"},
             meta=meta,
+            max_attempts=max_attempts,
         )
         try:
             data = json.loads(raw)
