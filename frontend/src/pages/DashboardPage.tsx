@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import StartInterviewModal from "../components/StartInterviewModal";
+import TrackTypePicker from "../components/TrackTypePicker";
 import UserAvatar from "../components/UserAvatar";
 import {
   api,
@@ -18,6 +19,31 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const DEFAULT_MAX_QUESTIONS = 15;
+const SUBJECT_MAX = 255;
+const COMPANY_MAX = 255;
+const JD_MAX = 20000;
+
+const TOPIC_CHIPS = [
+  "Data Structures & Algorithms",
+  "DBMS",
+  "Operating Systems",
+  "Computer Networks",
+  "Python",
+  "Java",
+  "SQL",
+  "Electronics",
+  "Pharmacology",
+  "World History",
+];
+
+const ROLE_CHIPS = [
+  "Backend Intern",
+  "Frontend Developer",
+  "Data Analyst",
+  "DevOps Engineer",
+  "Software Engineer",
+  "QA Engineer",
+];
 
 type SortKey = "newest" | "oldest" | "highest_score";
 
@@ -78,6 +104,7 @@ export default function DashboardPage() {
     company: "",
     jd_text: "",
   });
+  const [touched, setTouched] = useState({ subject: false, company: false, jd: false });
 
   const tracks = useQuery({
     queryKey: ["tracks"],
@@ -103,9 +130,33 @@ export default function DashboardPage() {
     onSuccess: () => {
       setShowForm(false);
       setForm({ track_type: "topic", subject: "", company: "", jd_text: "" });
+      setTouched({ subject: false, company: false, jd: false });
       qc.invalidateQueries({ queryKey: ["tracks"] });
     },
   });
+
+  const subjectError =
+    form.subject.length > SUBJECT_MAX
+      ? `Use ${SUBJECT_MAX} characters or fewer.`
+      : touched.subject && !form.subject.trim()
+        ? form.track_type === "role" || form.track_type === "company_jd"
+          ? "Enter a role."
+          : "Enter a subject."
+        : "";
+  const companyError =
+    form.company.length > COMPANY_MAX ? `Use ${COMPANY_MAX} characters or fewer.` : "";
+  const jdError =
+    form.jd_text.length > JD_MAX
+      ? "Job description must be 20,000 characters or fewer."
+      : touched.jd && form.track_type === "company_jd" && !form.jd_text.trim()
+        ? "Paste a job description."
+        : "";
+  const formReady =
+    form.subject.trim().length > 0 &&
+    form.subject.length <= SUBJECT_MAX &&
+    form.company.length <= COMPANY_MAX &&
+    (form.track_type !== "company_jd" ||
+      (form.jd_text.trim().length > 0 && form.jd_text.length <= JD_MAX));
 
   const trackList = tracks.data ?? [];
   const assessmentList = assessments.data?.assessments ?? [];
@@ -208,69 +259,132 @@ export default function DashboardPage() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
+            setTouched({ subject: true, company: true, jd: true });
+            if (!formReady || create.isPending) return;
             create.mutate();
           }}
-          className="space-y-3 rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm"
+          className="min-w-0 space-y-5 rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm shadow-indigo-100/80 sm:p-6"
         >
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="text-sm">
-              <span className="text-slate-500">Type</span>
-              <select
-                value={form.track_type}
-                onChange={(e) => setForm({ ...form, track_type: e.target.value })}
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
-              >
-                <option value="topic">Topic (e.g. DSA)</option>
-                <option value="role">Role (e.g. Backend Intern)</option>
-                <option value="company_jd">Company + JD</option>
-              </select>
-            </label>
-            <label className="text-sm sm:col-span-2">
-              <span className="text-slate-500">Subject / role</span>
-              <input
-                required
-                value={form.subject}
-                onChange={(e) => setForm({ ...form, subject: e.target.value })}
-                placeholder="Data Structures & Algorithms"
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
-              />
-            </label>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Create a new track</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Choose a type, then name what you want to practice. Suggestions only fill the box.
+            </p>
           </div>
-          {form.track_type === "company_jd" && (
-            <>
+          <TrackTypePicker
+            value={form.track_type}
+            onChange={(track_type) => setForm({ ...form, track_type })}
+          />
+          <div key={form.track_type} className="track-fields space-y-4">
+            {form.track_type === "company_jd" && (
               <label className="block text-sm">
-                <span className="text-slate-500">Company</span>
+                <span className="font-medium text-slate-700">Company</span>
                 <input
                   value={form.company}
+                  maxLength={COMPANY_MAX}
+                  onBlur={() => setTouched((current) => ({ ...current, company: true }))}
                   onChange={(e) => setForm({ ...form, company: e.target.value })}
                   placeholder="Acme Corp"
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+                  aria-invalid={companyError ? true : undefined}
+                  className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-indigo-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                />
+                {companyError && <p className="mt-1 text-sm text-red-600">{companyError}</p>}
+              </label>
+            )}
+            <div>
+              <label className="block text-sm" htmlFor="track-subject">
+                <span className="font-medium text-slate-700">
+                  {form.track_type === "topic" ? "Subject" : "Role"}
+                </span>
+                <input
+                  id="track-subject"
+                  value={form.subject}
+                  maxLength={SUBJECT_MAX}
+                  onBlur={() => setTouched((current) => ({ ...current, subject: true }))}
+                  onChange={(e) => setForm({ ...form, subject: e.target.value })}
+                  placeholder={
+                    form.track_type === "topic"
+                      ? "Data Structures & Algorithms"
+                      : "Backend Intern"
+                  }
+                  aria-invalid={subjectError ? true : undefined}
+                  aria-describedby={subjectError ? "track-subject-error" : undefined}
+                  className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-indigo-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
                 />
               </label>
+              {subjectError && (
+                <p id="track-subject-error" className="mt-1 text-sm text-red-600">
+                  {subjectError}
+                </p>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(form.track_type === "role" ? ROLE_CHIPS : form.track_type === "topic" ? TOPIC_CHIPS : []).map(
+                  (chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => setForm({ ...form, subject: chip })}
+                      className="min-h-11 rounded-full border border-indigo-100 bg-indigo-50 px-3 text-sm font-medium text-indigo-800 hover:border-indigo-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                    >
+                      {chip}
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
+            {form.track_type === "company_jd" && (
               <label className="block text-sm">
-                <span className="text-slate-500">Job description</span>
+                <span className="font-medium text-slate-700">Job description</span>
                 <textarea
                   required
                   value={form.jd_text}
+                  maxLength={JD_MAX}
+                  rows={6}
+                  onBlur={() => setTouched((current) => ({ ...current, jd: true }))}
                   onChange={(e) => setForm({ ...form, jd_text: e.target.value })}
-                  rows={4}
-                  placeholder="Paste the JD here — the architect derives requirements only from this text."
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+                  placeholder="Paste the job description here."
+                  aria-invalid={jdError ? true : undefined}
+                  aria-describedby={jdError ? "track-jd-error" : "track-jd-count"}
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-indigo-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
                 />
+                <span id="track-jd-count" className="mt-1 block text-right text-xs text-slate-500">
+                  {form.jd_text.length.toLocaleString()} / {JD_MAX.toLocaleString()}
+                </span>
+                {jdError && (
+                  <p id="track-jd-error" className="mt-1 text-sm text-red-600">
+                    {jdError}
+                  </p>
+                )}
               </label>
-            </>
-          )}
+            )}
+          </div>
           {create.error instanceof Error && (
-            <p className="text-sm text-red-600">{create.error.message}</p>
+            <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {create.error.message}
+            </p>
           )}
-          <button
-            disabled={create.isPending}
-            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {create.isPending
-              ? "Interview Architect is designing your brief and question bank… (1–2 minutes on the free tier)"
-              : "Create track"}
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 sm:w-auto"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!formReady || create.isPending}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 sm:w-auto"
+            >
+              {create.isPending && (
+                <svg viewBox="0 0 24 24" className="h-4 w-4 motion-reduce:animate-none animate-spin" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+                  <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              )}
+              Create track
+            </button>
+          </div>
         </form>
       )}
 
