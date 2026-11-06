@@ -10,7 +10,7 @@ import {
 import { useAuth } from "../context/AuthContext";
 
 const CATEGORY_STYLES: Record<string, string> = {
-  project: "bg-accent-soft text-accent-strong",
+  project: "bg-sky-100 text-sky-700",
   internship: "bg-sky-100 text-sky-700",
   skill: "bg-emerald-100 text-emerald-700",
   achievement: "bg-amber-100 text-amber-700",
@@ -176,7 +176,7 @@ export default function OnboardingPage() {
                 key={i}
                 className={`max-w-[min(100%,36rem)] rounded-lg px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
                   m.role === "user"
-                    ? "ml-auto bg-accent text-white"
+                    ? "ml-auto bg-accent-soft text-ink"
                     : m.role === "pending"
                       ? "bg-stone-100 italic text-stone-400"
                       : "bg-stone-100 text-stone-800"
@@ -220,7 +220,7 @@ export default function OnboardingPage() {
           <div className="rounded-lg border border-stone-200 bg-white p-4">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-stone-800">Your vault</h2>
-              <span className="rounded-md bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent-strong">
+              <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-600">
                 {vaultItems.length} items
               </span>
             </div>
@@ -258,8 +258,8 @@ export default function OnboardingPage() {
             <p className="mt-1 text-xs text-stone-500">
               Optional — PDF up to 10 MB.
             </p>
-            <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-line bg-accent-soft/40 px-4 py-5 text-center transition hover:border-accent hover:bg-accent-soft">
-              <span className="text-sm font-medium text-accent-strong">
+            <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-line bg-page px-4 py-5 text-center transition hover:border-accent hover:bg-surface">
+              <span className="text-sm font-medium text-ink">
                 {upload.isPending
                   ? "Extracting your experience…"
                   : "Upload resume PDF"}
