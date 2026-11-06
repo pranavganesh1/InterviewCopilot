@@ -30,12 +30,12 @@ Thumbs.db
 
 # Live-test output artifacts
 backend/m9_track*.json
-
-# Live-test output artifacts
-backend/m9_track*.json
 backend/u3_*.json
 backend/*_track.json
 test-results/
 
 # Git worktrees
 .worktrees/
+
+# Superpowers SDD scratch workspace
+.superpowers/
