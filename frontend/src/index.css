@@ -1,7 +1,23 @@
 @import "tailwindcss";
 
+/* Editorial design system — the single source of truth for color, shadow.
+   Radius + type scales are enforced by usage: rounded-md (controls),
+   rounded-lg (cards/panels), rounded-full (pills); text-xs/sm/base/xl/3xl. */
+@theme {
+  --color-page: #fafaf9;
+  --color-surface: #ffffff;
+  --color-ink: #1c1917;
+  --color-ink-soft: #57534e;
+  --color-ink-faint: #a8a29e;
+  --color-line: #e7e5e4;
+  --color-accent: #1d4ed8;
+  --color-accent-strong: #1e40af;
+  --color-accent-soft: #eff6ff;
+  --shadow-card: 0 1px 2px 0 rgb(28 25 23 / 0.05);
+}
+
 body {
-  @apply bg-[#f6f4fb] text-slate-900 antialiased;
+  @apply bg-page text-ink antialiased;
 }
 
 @keyframes start-modal-in {
