@@ -26,7 +26,7 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="grid min-h-screen place-items-center bg-[#f6f4fb] text-slate-500">
+      <div className="grid min-h-screen place-items-center bg-page text-ink-soft">
         Loading…
       </div>
     );
@@ -37,7 +37,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col overflow-x-clip bg-[#f6f4fb] text-slate-900">
+    <div className="flex min-h-dvh flex-col overflow-x-clip bg-page text-ink">
       <AppHeader />
       <main
         className={
@@ -88,7 +88,7 @@ export default function App() {
             element={
               <div className="py-20 text-center">
                 <p className="text-lg font-medium">Page not found</p>
-                <Link to="/" className="text-sm text-indigo-600 hover:underline">
+                <Link to="/" className="text-sm text-accent hover:underline">
                   ← Back to your tracks
                 </Link>
               </div>
