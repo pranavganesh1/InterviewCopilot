@@ -34,7 +34,7 @@ export default function UserAvatar({
     return (
       <span className={`relative inline-grid shrink-0 ${dim} ${className}`}>
         <span
-          className={`absolute inset-0 grid place-items-center rounded-full bg-indigo-600 font-semibold text-white ${dim}`}
+          className={`absolute inset-0 grid place-items-center rounded-full bg-accent font-semibold text-white ${dim}`}
           aria-hidden
         >
           {label}
@@ -53,7 +53,7 @@ export default function UserAvatar({
 
   return (
     <span
-      className={`inline-grid shrink-0 place-items-center rounded-full bg-indigo-600 font-semibold text-white ${dim} ${className}`}
+      className={`inline-grid shrink-0 place-items-center rounded-full bg-accent font-semibold text-white ${dim} ${className}`}
       aria-hidden
     >
       {label}

@@ -26,21 +26,21 @@ function StatusShell({
     tone === "danger"
       ? "border-rose-200 from-rose-50 to-white"
       : tone === "progress"
-        ? "border-indigo-200 from-indigo-50 to-white"
+        ? "border-line bg-surface"
         : "border-stone-200 from-stone-50 to-white";
 
   return (
     <div
-      className={`mx-auto max-w-lg rounded-2xl border bg-gradient-to-br p-8 text-center shadow-sm ${toneClass}`}
+      className={`mx-auto max-w-lg rounded-lg border border-line bg-surface p-8 text-center ${toneClass}`}
       data-testid="report-status"
       data-state={state}
     >
       {tone === "progress" && (
         <div
-          className="mx-auto mb-4 h-1.5 w-24 overflow-hidden rounded-full bg-indigo-100"
+          className="mx-auto mb-4 h-1.5 w-24 overflow-hidden rounded-full bg-accent-soft"
           aria-hidden
         >
-          <div className="h-full w-1/2 animate-pulse rounded-full bg-indigo-500" />
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-accent-soft0" />
         </div>
       )}
       <p className="text-base font-semibold text-stone-900">{title}</p>
@@ -105,7 +105,7 @@ export default function ReportPage() {
       <StatusShell state={view} title={title} detail={detail} tone="progress">
         <Link
           to={`/tracks/${trackId}`}
-          className="mt-5 inline-block text-sm font-medium text-indigo-600 hover:underline"
+          className="mt-5 inline-block text-sm font-medium text-accent hover:underline"
         >
           ← Back to track
         </Link>
@@ -132,13 +132,13 @@ export default function ReportPage() {
               setPollsSoFar(0);
               report.refetch();
             }}
-            className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-800"
+            className="rounded-md bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-800"
           >
             Retry
           </button>
           <Link
             to={`/tracks/${trackId}`}
-            className="text-sm font-medium text-indigo-600 hover:underline"
+            className="text-sm font-medium text-accent hover:underline"
           >
             ← Back to track
           </Link>
@@ -159,7 +159,7 @@ export default function ReportPage() {
     <div className="space-y-5" data-testid="report-status" data-state="ready">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-indigo-600">
+          <p className="text-xs font-medium uppercase tracking-wide text-accent">
             Feedback ready
           </p>
           <h1 className="text-xl font-semibold tracking-tight">Feedback report</h1>
@@ -167,13 +167,13 @@ export default function ReportPage() {
         <div className="flex flex-wrap gap-2">
           <Link
             to="/profile"
-            className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-100"
+            className="rounded-md border border-line bg-accent-soft px-3 py-2 text-sm font-medium text-accent-strong hover:bg-accent-soft"
           >
             Profile dashboard
           </Link>
           <Link
             to={`/tracks/${trackId}`}
-            className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+            className="rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
           >
             ← Back to track
           </Link>
@@ -181,15 +181,15 @@ export default function ReportPage() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-center shadow-sm">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-indigo-600">
+        <div className="rounded-lg border border-line bg-accent-soft p-4 text-center">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-accent">
             Overall score
           </p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-indigo-950">
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-accent-strong">
             {score != null ? `${score}%` : "—"}
           </p>
         </div>
-        <div className="rounded-2xl border border-stone-200 bg-white p-4 text-center shadow-sm">
+        <div className="rounded-lg border border-stone-200 bg-white p-4 text-center">
           <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500">
             Questions answered
           </p>
@@ -198,13 +198,13 @@ export default function ReportPage() {
             <span className="text-sm font-medium text-stone-400">/{maxTurns}</span>
           </p>
         </div>
-        <div className="rounded-2xl border border-stone-200 bg-white p-4 text-center shadow-sm">
+        <div className="rounded-lg border border-stone-200 bg-white p-4 text-center">
           <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500">
             Performance level
           </p>
           <p className="mt-1 text-lg font-semibold text-stone-900">{level}</p>
         </div>
-        <div className="rounded-2xl border border-stone-200 bg-white p-4 text-center shadow-sm">
+        <div className="rounded-lg border border-stone-200 bg-white p-4 text-center">
           <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500">
             Coverage
           </p>
@@ -214,7 +214,7 @@ export default function ReportPage() {
         </div>
       </div>
 
-      <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-stone-200 bg-white p-5">
         <h2 className="text-sm font-semibold text-stone-600">AI assessment summary</h2>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
           <span
@@ -236,7 +236,7 @@ export default function ReportPage() {
           {(c.coding_review_note ||
             c.question_assessments.some((q) => q.executed === false)) && (
             <span
-              className="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800"
+              className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-700"
               data-testid="ai-reviewed-badge"
             >
               {c.coding_review_note || AI_REVIEWED_NOT_EXECUTED}
@@ -256,7 +256,7 @@ export default function ReportPage() {
           {c.competency_assessments.map((comp) => (
             <div
               key={comp.competency_name}
-              className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm"
+              className="rounded-lg border border-stone-200 bg-white p-4"
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium text-stone-900">
@@ -287,7 +287,7 @@ export default function ReportPage() {
       </section>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+        <section className="rounded-lg border border-stone-200 bg-white p-5">
           <h2 className="text-sm font-semibold text-stone-600">
             Technical strengths
           </h2>
@@ -300,7 +300,7 @@ export default function ReportPage() {
             ))}
           </ul>
         </section>
-        <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+        <section className="rounded-lg border border-stone-200 bg-white p-5">
           <h2 className="text-sm font-semibold text-stone-600">
             Areas for improvement
           </h2>
@@ -315,18 +315,18 @@ export default function ReportPage() {
         </section>
       </div>
 
-      <section className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
-        <h2 className="text-sm font-semibold text-indigo-900">
+      <section className="rounded-lg border border-line bg-accent-soft p-5">
+        <h2 className="text-sm font-semibold text-ink">
           Personalized improvement plan
         </h2>
-        <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-indigo-950">
+        <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-accent-strong">
           {c.recommendations.map((s) => (
             <li key={s}>{s}</li>
           ))}
         </ol>
       </section>
 
-      <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-stone-200 bg-white p-5">
         <h2 className="text-sm font-semibold text-stone-600">
           Question-by-question evidence
         </h2>
@@ -338,7 +338,7 @@ export default function ReportPage() {
           {c.question_assessments.map((qa) => (
             <details
               key={qa.turn_index}
-              className="rounded-xl border border-stone-100 bg-stone-50/60 p-4 open:bg-white open:shadow-sm"
+              className="rounded-md border border-stone-100 bg-stone-50/60 p-4 open:bg-white open:shadow-sm"
               data-testid={`report-qa-${qa.turn_index}`}
             >
               <summary className="cursor-pointer text-sm text-stone-800">
@@ -351,7 +351,7 @@ export default function ReportPage() {
                   {qa.score != null ? ` · ${qa.score}%` : ""}
                 </span>
                 {(qa.executed === false || qa.review_label) && (
-                  <span className="mr-2 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800">
+                  <span className="mr-2 rounded-md bg-stone-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-700">
                     {qa.review_label || AI_REVIEWED_NOT_EXECUTED}
                   </span>
                 )}
@@ -375,7 +375,7 @@ export default function ReportPage() {
                   </div>
                 )}
                 {qa.scenario && (
-                  <p className="whitespace-pre-wrap rounded-xl bg-amber-50 px-3 py-2 text-amber-950">
+                  <p className="whitespace-pre-wrap rounded-md bg-amber-50 px-3 py-2 text-amber-950">
                     {qa.scenario}
                   </p>
                 )}
@@ -386,7 +386,7 @@ export default function ReportPage() {
                   </p>
                 )}
                 {qa.code_snippet && (
-                  <pre className="overflow-x-auto rounded-xl bg-stone-900 p-3 font-mono text-xs text-stone-100">
+                  <pre className="overflow-x-auto rounded-md bg-stone-900 p-3 font-mono text-xs text-stone-100">
                     {qa.code_snippet}
                   </pre>
                 )}
@@ -398,10 +398,10 @@ export default function ReportPage() {
                 )}
                 {qa.answer && (
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-accent-strong">
                       Your answer
                     </p>
-                    <p className="mt-1 whitespace-pre-wrap rounded-xl bg-indigo-50 px-3 py-2 text-indigo-950">
+                    <p className="mt-1 whitespace-pre-wrap rounded-md bg-accent-soft px-3 py-2 text-accent-strong">
                       {qa.chosen_option || qa.answer}
                     </p>
                   </div>
@@ -431,11 +431,11 @@ export default function ReportPage() {
                   </div>
                 )}
                 {qa.expected_answer_explanation?.trim() && (
-                  <div className="rounded-xl bg-indigo-50/80 px-3 py-2.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
+                  <div className="rounded-md bg-accent-soft/80 px-3 py-2.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-accent-strong">
                       Expected answer / explanation
                     </p>
-                    <p className="mt-1 whitespace-pre-wrap text-indigo-950">
+                    <p className="mt-1 whitespace-pre-wrap text-accent-strong">
                       {qa.expected_answer_explanation}
                     </p>
                   </div>
@@ -456,10 +456,10 @@ export default function ReportPage() {
                 )}
                 {qa.corrected_code?.trim() && (
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-600">
                       Corrected code
                     </p>
-                    <pre className="mt-1 max-h-56 overflow-auto rounded-xl border border-violet-100 bg-stone-950 px-3 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-violet-100">
+                    <pre className="mt-1 max-h-56 overflow-auto rounded-md border border-line bg-stone-950 px-3 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-stone-200">
                       {qa.corrected_code}
                     </pre>
                   </div>

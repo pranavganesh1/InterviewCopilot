@@ -94,15 +94,15 @@ export default function CodingWorkspace({
 
   return (
     <div className="space-y-4" data-testid="coding-workspace">
-      <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
+      <section className="rounded-lg border border-stone-200 bg-white p-4 sm:p-5">
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-indigo-700 ring-1 ring-indigo-100">
+          <span className="rounded-md bg-accent-soft px-2 py-0.5 text-[11px] font-semibold tabular-nums text-accent-strong ring-1 ring-accent/20">
             Q{turnIndex}/{maxTurns}
           </span>
           <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-600">
             {questionArea}
           </span>
-          <span className="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+          <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-600">
             Coding
           </span>
         </div>
@@ -111,7 +111,7 @@ export default function CodingWorkspace({
           {sections.statement}
         </p>
         {sections.constraints && (
-          <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2">
+          <div className="mt-3 rounded-md border border-amber-100 bg-amber-50/70 px-3 py-2">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">
               Constraints
             </p>
@@ -121,7 +121,7 @@ export default function CodingWorkspace({
           </div>
         )}
         {sections.examples && (
-          <div className="mt-3 rounded-xl border border-stone-100 bg-stone-50 px-3 py-2">
+          <div className="mt-3 rounded-md border border-stone-100 bg-stone-50 px-3 py-2">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
               Examples
             </p>
@@ -133,7 +133,7 @@ export default function CodingWorkspace({
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)]">
-        <section className="flex min-h-[28rem] flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
+        <section className="flex min-h-[28rem] flex-col overflow-hidden rounded-lg border border-stone-200 bg-white">
           <div className="flex flex-wrap items-center gap-1 border-b border-stone-100 bg-stone-50 px-2 py-2">
             {LANGUAGE_TABS.map((tab) => (
               <button
@@ -142,7 +142,7 @@ export default function CodingWorkspace({
                 onClick={() => setLanguage(tab.id)}
                 className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
                   language === tab.id
-                    ? "bg-indigo-600 text-white"
+                    ? "bg-accent text-white"
                     : "text-stone-600 hover:bg-white"
                 }`}
               >
@@ -201,19 +201,19 @@ export default function CodingWorkspace({
               type="button"
               onClick={submit}
               disabled={submitPending || !code.trim()}
-              className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-40"
+              className="rounded-md bg-accent px-6 py-3 text-sm font-bold text-white hover:bg-accent-strong disabled:opacity-40"
             >
               {submitPending ? "Evaluating…" : "Submit Answer"}
             </button>
             <span
-              className="rounded-md bg-violet-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-violet-800"
+              className="rounded-md bg-stone-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-stone-700"
               data-testid="ai-reviewed-badge"
               title={CODE_EXECUTION_UNAVAILABLE_NOTE}
             >
               {AI_REVIEWED_NOT_EXECUTED}
             </span>
             {submitPending && (
-              <span className="text-xs text-indigo-700">
+              <span className="text-xs text-accent-strong">
                 Waiting for AI evaluation…
               </span>
             )}
@@ -223,7 +223,7 @@ export default function CodingWorkspace({
             <button
               type="button"
               onClick={(event) => onLeave(event.currentTarget)}
-              className="ml-auto text-sm text-stone-500 hover:text-indigo-600 hover:underline"
+              className="ml-auto text-sm text-stone-500 hover:text-accent hover:underline"
             >
               Leave session
             </button>
@@ -231,7 +231,7 @@ export default function CodingWorkspace({
         </section>
 
         <div className="flex min-h-[28rem] flex-col gap-4">
-          <section className="flex min-h-[12rem] flex-1 flex-col overflow-hidden rounded-2xl border border-stone-800 bg-stone-950 shadow-sm">
+          <section className="flex min-h-[12rem] flex-1 flex-col overflow-hidden rounded-lg border border-stone-800 bg-stone-950">
             <div className="flex items-center justify-between border-b border-stone-800 px-3 py-2">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-400">
                 Output
@@ -246,23 +246,23 @@ export default function CodingWorkspace({
           </section>
 
           <section
-            className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 shadow-sm"
+            className="rounded-lg border border-line bg-accent-soft/60 p-4"
             data-testid="assistance-panel"
           >
-            <h3 className="text-sm font-semibold text-indigo-950">Need Help?</h3>
-            <p className="mt-1 text-xs leading-relaxed text-indigo-900/80">
+            <h3 className="text-sm font-semibold text-accent-strong">Need Help?</h3>
+            <p className="mt-1 text-xs leading-relaxed text-ink-soft">
               Progressive coaching for this problem. Full solutions are only
               revealed at the last step when you ask.
             </p>
 
             {!isGuided ? (
-              <p className="mt-3 rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600">
+              <p className="mt-3 rounded-md border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600">
                 Strict mode: no solutions before you submit. After Submit Answer,
                 evaluation may include corrected code and complexity.
               </p>
             ) : (
               <>
-                <ol className="mt-3 space-y-1 text-[11px] text-indigo-900/70">
+                <ol className="mt-3 space-y-1 text-[11px] text-ink-soft">
                   <li>1 · Hint</li>
                   <li>2 · Approach</li>
                   <li>3 · Pseudocode</li>
@@ -273,7 +273,7 @@ export default function CodingWorkspace({
                   type="button"
                   onClick={onAssist}
                   disabled={!canAssist || assistPending}
-                  className="mt-3 w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
+                  className="mt-3 w-full rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-40"
                 >
                   {assistPending
                     ? "Getting help…"
@@ -281,7 +281,7 @@ export default function CodingWorkspace({
                       ? "All help levels used for this question"
                       : CODING_HELP_LABELS[assistanceLevel] ?? "Need Help?"}
                 </button>
-                <p className="mt-2 text-center text-[11px] text-indigo-700">
+                <p className="mt-2 text-center text-[11px] text-accent-strong">
                   Level {assistanceLevel}/{maxAssistanceLevel}
                 </p>
               </>
@@ -292,8 +292,8 @@ export default function CodingWorkspace({
             )}
 
             {latestHelp && (
-              <div className="mt-3 max-h-56 overflow-auto rounded-xl border border-indigo-100 bg-white p-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
+              <div className="mt-3 max-h-56 overflow-auto rounded-md border border-line bg-white p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-accent">
                   {latestHelp.assistance_type} · level {latestHelp.level}
                 </p>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-stone-800">

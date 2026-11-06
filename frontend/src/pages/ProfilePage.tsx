@@ -60,8 +60,8 @@ export default function ProfilePage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
-        <div className="bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-8 sm:px-8">
+      <section className="overflow-hidden rounded-lg border border-stone-200 bg-white">
+        <div className="border-b border-line bg-surface px-5 py-8 sm:px-8">
           <div className="flex flex-wrap items-center gap-4">
             {user.picture_url ? (
               <img
@@ -78,16 +78,16 @@ export default function ProfilePage() {
               <h1 className="truncate text-2xl font-semibold tracking-tight">
                 {user.name || "Your profile"}
               </h1>
-              <p className="mt-0.5 text-sm text-indigo-100">
+              <p className="mt-0.5 text-sm text-ink-soft">
                 {user.professional_title || "Add a professional title"}
               </p>
-              <p className="mt-1 text-xs text-indigo-200">{user.email}</p>
+              <p className="mt-1 text-xs text-ink-faint">{user.email}</p>
             </div>
             {!editing && (
               <button
                 type="button"
                 onClick={startEdit}
-                className="ml-auto rounded-xl bg-white px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
+                className="ml-auto rounded-md bg-white px-4 py-2 text-sm font-semibold text-accent-strong hover:bg-accent-soft"
               >
                 Edit profile
               </button>
@@ -120,7 +120,7 @@ export default function ProfilePage() {
                 <input
                   value={form.name ?? ""}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                  className="mt-1 w-full rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                 />
               </label>
               <label className="block text-xs font-medium text-stone-500">
@@ -131,7 +131,7 @@ export default function ProfilePage() {
                     setForm({ ...form, professional_title: e.target.value })
                   }
                   placeholder="e.g. Backend Developer"
-                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                  className="mt-1 w-full rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                 />
               </label>
               <label className="block text-xs font-medium text-stone-500">
@@ -142,7 +142,7 @@ export default function ProfilePage() {
                     setForm({ ...form, introduction: e.target.value })
                   }
                   rows={3}
-                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                  className="mt-1 w-full rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                 />
               </label>
               <label className="block text-xs font-medium text-stone-500">
@@ -156,7 +156,7 @@ export default function ProfilePage() {
                     })
                   }
                   placeholder="Python, SQL, System Design"
-                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                  className="mt-1 w-full rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                 />
               </label>
               <label className="block text-xs font-medium text-stone-500">
@@ -167,7 +167,7 @@ export default function ProfilePage() {
                     setForm({ ...form, education: e.target.value })
                   }
                   rows={2}
-                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                  className="mt-1 w-full rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                 />
               </label>
               <label className="block text-xs font-medium text-stone-500">
@@ -178,7 +178,7 @@ export default function ProfilePage() {
                     setForm({ ...form, picture_url: e.target.value })
                   }
                   placeholder="https://…"
-                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                  className="mt-1 w-full rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                 />
               </label>
               {save.isError && (
@@ -192,14 +192,14 @@ export default function ProfilePage() {
                 <button
                   type="submit"
                   disabled={save.isPending}
-                  className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
+                  className="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-40"
                 >
                   {save.isPending ? "Saving…" : "Save profile"}
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditing(false)}
-                  className="rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-50"
+                  className="rounded-md border border-stone-200 px-4 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-50"
                 >
                   Cancel
                 </button>
@@ -227,7 +227,7 @@ export default function ProfilePage() {
                   {(user.skills ?? []).map((s) => (
                     <span
                       key={s}
-                      className="rounded-md bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-800"
+                      className="rounded-md bg-accent-soft px-2 py-1 text-xs font-medium text-accent-strong"
                     >
                       {s}
                     </span>
@@ -258,7 +258,7 @@ export default function ProfilePage() {
             Could not load assessment history.
           </p>
         ) : !dash || dash.completed_interviews === 0 ? (
-          <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-5 py-8 text-center">
+          <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-5 py-8 text-center">
             <p className="text-sm font-medium text-stone-700">
               No completed assessments yet
             </p>
@@ -267,7 +267,7 @@ export default function ProfilePage() {
             </p>
             <Link
               to="/"
-              className="mt-3 inline-block text-sm font-medium text-indigo-600 hover:underline"
+              className="mt-3 inline-block text-sm font-medium text-accent hover:underline"
             >
               Go to tracks →
             </Link>
@@ -275,34 +275,34 @@ export default function ProfilePage() {
         ) : (
           <>
             <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-stone-200 bg-white p-4">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500">
                   Completed interviews
                 </p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-indigo-950">
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-accent-strong">
                   {dash.completed_interviews}
                 </p>
               </div>
-              <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-stone-200 bg-white p-4">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500">
                   Average score
                 </p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-indigo-950">
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-accent-strong">
                   {dash.average_score != null ? `${dash.average_score}%` : "—"}
                 </p>
               </div>
-              <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-stone-200 bg-white p-4">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500">
                   Questions attempted
                 </p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-indigo-950">
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-accent-strong">
                   {dash.total_questions_attempted}
                 </p>
               </div>
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-stone-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-stone-800">
                   Technical strengths
                 </h3>
@@ -317,7 +317,7 @@ export default function ProfilePage() {
                   ))}
                 </ul>
               </div>
-              <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-stone-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-stone-800">
                   Areas to improve
                 </h3>
@@ -335,15 +335,15 @@ export default function ProfilePage() {
             </div>
 
             {dash.recommended_topics.length > 0 && (
-              <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-                <h3 className="text-sm font-semibold text-indigo-950">
+              <div className="rounded-lg border border-line bg-accent-soft p-4">
+                <h3 className="text-sm font-semibold text-accent-strong">
                   Recommended next learning topics
                 </h3>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {dash.recommended_topics.map((t) => (
                     <span
                       key={t}
-                      className="rounded-md bg-white px-2 py-1 text-xs font-medium text-indigo-800 ring-1 ring-indigo-100"
+                      className="rounded-md bg-white px-2 py-1 text-xs font-medium text-accent-strong ring-1 ring-accent/20"
                     >
                       {t}
                     </span>
@@ -360,7 +360,7 @@ export default function ProfilePage() {
                 {history.map((a) => (
                   <div
                     key={a.report_id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-stone-200 bg-white px-4 py-3"
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-stone-900">
@@ -377,7 +377,7 @@ export default function ProfilePage() {
                     </div>
                     <Link
                       to={`/tracks/${a.track_id}/report/${a.session_id}`}
-                      className="shrink-0 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
+                      className="shrink-0 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-strong"
                     >
                       View Full Feedback
                     </Link>

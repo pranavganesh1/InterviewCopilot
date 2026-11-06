@@ -66,11 +66,20 @@ export default function InterviewPage() {
   });
 
   // Ticking clock for the timed-interview display (M9.2).
-  const [, setTick] = useState(0);
+  const [now, setTick] = useState(() => Date.now());
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 30000);
+    const t = setInterval(() => setTick(Date.now()), 30000);
     return () => clearInterval(t);
   }, []);
+
+  // Quiet time-remaining display (presentation only — the backend enforces
+    // the actual deadline). Final 5 minutes turn the text red.
+  const minutesLeft = (() => {
+    const sess = session.data?.session;
+    if (!sess || !sess.created_at || !sess.duration_minutes) return null;
+    const end = new Date(sess.created_at).getTime() + sess.duration_minutes * 60_000;
+    return Math.max(0, Math.round((end - now) / 60_000));
+  })();
 
   const submit = useMutation({
     mutationFn: (payload: { answer: string; turnIndex: number }) =>
@@ -240,7 +249,7 @@ export default function InterviewPage() {
       {/* Top bar: title + progress + exit */}
       <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-wide text-indigo-600">
+          <p className="text-xs font-medium uppercase tracking-wide text-accent">
             {session.data?.session.mode} interview
           </p>
           <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
@@ -264,21 +273,30 @@ export default function InterviewPage() {
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <div
-            className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-right sm:min-w-[9rem] sm:py-2"
+            className="rounded-md border border-line bg-page px-3 py-1.5 text-right sm:min-w-[9rem] sm:py-2"
             aria-label={`Question progress ${progressNum} of ${maxTurns}`}
           >
-            <p className="text-[10px] font-medium uppercase tracking-wide text-indigo-500">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-ink-soft">
               Progress
             </p>
-            <p className="text-base font-semibold tabular-nums text-indigo-950 sm:text-lg">
+            <p className="text-base font-semibold tabular-nums text-ink sm:text-lg">
               {progressNum}
-              <span className="text-sm font-medium text-indigo-400">
+              <span className="text-sm font-medium text-ink-faint">
                 /{maxTurns}
               </span>
             </p>
-            <p className="text-[11px] font-medium text-indigo-700">
-              Status: {statusLabel}
+            <p className="text-[11px] font-medium text-ink-soft">
+              {statusLabel}
             </p>
+            {minutesLeft != null && (
+              <p
+                className={`text-[11px] font-medium tabular-nums ${
+                  minutesLeft <= 5 ? "text-red-600" : "text-ink-faint"
+                }`}
+              >
+                {minutesLeft} min left
+              </p>
+            )}
           </div>
           {!interviewDone && (
             <button
@@ -286,13 +304,29 @@ export default function InterviewPage() {
               data-testid="finish-assessment-exit"
               onClick={() => setConfirmExit(true)}
               disabled={submit.isPending || finishEarly.isPending}
-              className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 shadow-sm hover:bg-rose-50 disabled:opacity-40"
+              className="rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-40"
             >
               <span className="sm:hidden">Finish & Exit</span>
               <span className="hidden sm:inline">Finish Assessment & Exit</span>
             </button>
           )}
         </div>
+      </div>
+
+      <div
+        className="h-1 shrink-0 overflow-hidden rounded-full bg-line"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={maxTurns}
+        aria-valuenow={answeredCount}
+        aria-label="Answered questions"
+      >
+        <div
+          className="h-full rounded-full bg-accent transition-all"
+          style={{
+            width: `${Math.round((answeredCount / Math.max(1, maxTurns)) * 100)}%`,
+          }}
+        />
       </div>
 
       {/* Question stepper */}
@@ -315,9 +349,9 @@ export default function InterviewPage() {
               aria-current={isCurrent ? "step" : undefined}
               className={`h-7 w-7 shrink-0 rounded-lg text-[11px] font-semibold tabular-nums transition sm:h-8 sm:w-8 sm:text-xs ${
                 isCurrent
-                  ? "bg-indigo-600 text-white"
+                  ? "bg-accent text-white"
                   : answered
-                    ? "bg-indigo-100 text-indigo-800 hover:bg-indigo-200"
+                    ? "bg-accent-soft text-accent-strong hover:bg-accent-soft"
                     : "bg-stone-100 text-stone-400"
               } disabled:cursor-default disabled:opacity-50`}
             >
@@ -329,7 +363,7 @@ export default function InterviewPage() {
 
       {confirmExit && !interviewDone && (
         <div
-          className="mt-3 shrink-0 rounded-2xl border border-rose-200 bg-rose-50 p-4 shadow-sm sm:p-5"
+          className="mt-3 shrink-0 rounded-lg border border-rose-200 bg-rose-50 p-4 sm:p-5"
           role="dialog"
           aria-labelledby="finish-exit-title"
           data-testid="finish-exit-confirm"
@@ -361,7 +395,7 @@ export default function InterviewPage() {
               data-testid="confirm-finish-exit"
               disabled={submit.isPending || finishEarly.isPending}
               onClick={() => finishEarly.mutate()}
-              className="rounded-xl bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-40"
+              className="rounded-md bg-rose-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-40"
             >
               {finishEarly.isPending
                 ? "Finishing…"
@@ -373,7 +407,7 @@ export default function InterviewPage() {
               type="button"
               onClick={() => setConfirmExit(false)}
               disabled={finishEarly.isPending}
-              className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-50"
+              className="rounded-md border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-50"
             >
               Keep answering
             </button>
@@ -414,33 +448,33 @@ export default function InterviewPage() {
           />
         ) : focusTurn ? (
           <>
-            <section className="shrink-0 rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm sm:p-5">
+            <section className="shrink-0 rounded-lg border border-line bg-white p-4 sm:p-5">
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-indigo-700 ring-1 ring-indigo-100">
+                <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-stone-600">
                   Q{focusTurn.turn_index}/{maxTurns}
                 </span>
                 <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-600">
                   {focusTurn.question_area}
                 </span>
                 {focusKind === "coding" && (
-                  <span className="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-violet-700">
+                  <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-stone-600">
                     Coding
                   </span>
                 )}
                 {awaitingAnswer && (
-                  <span className="rounded-md bg-indigo-600 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
+                  <span className="rounded-md bg-accent-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-strong">
                     Current
                   </span>
                 )}
               </div>
-              <p className="text-sm leading-relaxed text-stone-900 sm:text-[15px]">
+              <p className="text-lg font-medium leading-relaxed text-ink sm:text-xl">
                 {focusTurn.question}
               </p>
             </section>
 
             {focusTurn.answer !== null && (
-              <section className="shrink-0 rounded-2xl bg-indigo-600 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-white sm:px-5">
-                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-200">
+              <section className="shrink-0 rounded-lg border border-line bg-page px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-ink sm:px-5">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
                   Your answer
                 </p>
                 {focusTurn.answer}
@@ -448,7 +482,7 @@ export default function InterviewPage() {
             )}
 
             {submit.isPending && (
-              <div className="rounded-2xl border border-dashed border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+              <div className="rounded-lg border border-dashed border-line bg-page px-4 py-3 text-sm text-ink-soft">
                 Evaluating your answer… please wait.
               </div>
             )}
@@ -461,20 +495,20 @@ export default function InterviewPage() {
               />
             )}
             {isGuided && showFeedback && focusTurn.explanation && (
-              <p className="rounded-xl bg-indigo-50 px-3 py-2 text-sm text-indigo-950" data-testid="mcq-explanation">
+              <p className="rounded-md border border-line bg-page px-3 py-2 text-sm text-ink" data-testid="mcq-explanation">
                 {focusTurn.explanation}
               </p>
             )}
 
             {interviewDone && showFeedback && (
               <div
-                className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-4 shadow-sm"
+                className="rounded-lg border border-line p-4"
                 data-testid="interview-complete"
               >
-                <p className="text-base font-semibold text-indigo-950">
+                <p className="text-base font-semibold text-ink">
                   Interview completed.
                 </p>
-                <p className="mt-1 text-sm text-indigo-900/80">
+                <p className="mt-1 text-sm text-ink-soft">
                   You finished the question set ({answeredCount}/{maxTurns}).
                   Feedback is pending — the report is generated asynchronously.
                 </p>
@@ -483,10 +517,10 @@ export default function InterviewPage() {
 
             {!showCodingWorkspace && latestHint && awaitingAnswer && (
               <div
-                className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950"
+                className="rounded-lg border border-line bg-surface p-4 text-sm text-ink"
                 data-testid="assistance-panel"
               >
-                <p className="text-xs font-medium uppercase tracking-wide text-sky-700">
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
                   {latestHint.assistance_type} · level {latestHint.level}
                 </p>
                 <p className="mt-2 whitespace-pre-wrap leading-relaxed">
@@ -505,14 +539,14 @@ export default function InterviewPage() {
             )}
 
             {awaitingAnswer && focusTurn.question_type === "numeric" && (
-              <label className="flex min-w-0 items-center gap-2 rounded-2xl border border-indigo-200 bg-white p-3">
+              <label className="flex min-w-0 items-center gap-2 rounded-lg border border-line bg-white p-3">
                 <input
                   data-testid="numeric-answer"
                   inputMode="decimal"
                   value={answer}
                   onChange={(e) => setAnswer(e.target.value)}
                   disabled={submit.isPending}
-                  className="min-w-0 flex-1 rounded-xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-indigo-400"
+                  className="min-w-0 flex-1 rounded-md border border-stone-200 px-4 py-3 text-sm outline-none focus:border-accent"
                 />
                 {focusTurn.unit && (
                   <span data-testid="numeric-unit" className="shrink-0 text-sm text-stone-500">
@@ -527,12 +561,12 @@ export default function InterviewPage() {
               focusTurn.question_type !== "numeric" && (
               <div
                 data-testid="answer-composer"
-                className="flex min-h-[40vh] flex-1 flex-col rounded-2xl border border-indigo-200 bg-white p-3 shadow-sm sm:min-h-0 sm:p-4"
+                className="flex min-h-[40vh] flex-1 flex-col rounded-lg border border-line bg-white p-3 sm:min-h-0 sm:p-4"
               >
                 {focusTurn.scenario && (
                   <p
                     data-testid="case-scenario"
-                    className="mb-3 whitespace-pre-wrap rounded-xl bg-amber-50 p-3 text-sm leading-relaxed text-amber-950"
+                    className="mb-3 whitespace-pre-wrap rounded-md bg-amber-50 p-3 text-sm leading-relaxed text-amber-950"
                   >
                     {focusTurn.scenario}
                   </p>
@@ -540,7 +574,7 @@ export default function InterviewPage() {
                 {focusTurn.code_snippet && (
                   <pre
                     data-testid="code-snippet"
-                    className="mb-3 max-w-full overflow-x-auto rounded-xl bg-stone-900 p-3 font-mono text-xs leading-relaxed text-stone-100"
+                    className="mb-3 max-w-full overflow-x-auto rounded-md bg-stone-900 p-3 font-mono text-xs leading-relaxed text-stone-100"
                   >
                     {focusTurn.code_snippet}
                   </pre>
@@ -580,7 +614,7 @@ export default function InterviewPage() {
                       ? "Type your answer… (optional hints available)"
                       : "Type your answer… (no hints in strict mode!)"
                   }
-                  className={`min-h-[40vh] w-full flex-1 resize-none rounded-xl border border-stone-200 px-4 py-3 text-sm leading-relaxed outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 sm:min-h-[12rem] ${
+                  className={`min-h-[40vh] w-full flex-1 resize-none rounded-md border border-line bg-surface px-4 py-3 text-base leading-relaxed outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20 sm:min-h-[12rem] ${
                     isCodeFriendly(focusTurn.question_type) ? "font-mono" : ""
                   }`}
                   disabled={submit.isPending}
@@ -600,11 +634,11 @@ export default function InterviewPage() {
             )}
           </>
         ) : (
-          <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center text-sm text-stone-500">
+          <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center text-sm text-stone-500">
             Preparing the next question…
             <button
               type="button"
-              className="mt-2 block w-full text-indigo-600 hover:underline"
+              className="mt-2 block w-full text-accent hover:underline"
               onClick={() => void session.refetch()}
             >
               Refresh
@@ -615,7 +649,7 @@ export default function InterviewPage() {
 
       {/* Sticky action bar */}
       {!showCodingWorkspace && (
-        <div className="mt-3 flex shrink-0 flex-col gap-2 border-t border-stone-200/80 bg-[#f6f4fb] pt-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="mt-3 flex shrink-0 flex-col gap-2 border-t border-stone-200/80 bg-page pt-3 sm:flex-row sm:flex-wrap sm:items-center">
           {awaitingAnswer && (
             <>
               <button
@@ -623,7 +657,7 @@ export default function InterviewPage() {
                 onClick={sendText}
                 disabled={submit.isPending || !answer.trim()}
                 data-testid="submit-answer"
-                className="w-full rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-40 sm:w-auto"
+                className="w-full rounded-md bg-accent px-6 py-3 text-sm font-bold text-white hover:bg-accent-strong disabled:opacity-40 sm:w-auto"
               >
                 {submit.isPending ? "Evaluating…" : "Submit Answer"}
               </button>
@@ -632,7 +666,7 @@ export default function InterviewPage() {
                   type="button"
                   onClick={() => assist.mutate()}
                   disabled={!canAssist || assist.isPending || submit.isPending}
-                  className="w-full rounded-xl border border-sky-300 bg-white px-4 py-2.5 text-sm font-medium text-sky-800 hover:bg-sky-50 disabled:opacity-40 sm:w-auto"
+                  className="w-full rounded-md border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink hover:bg-page disabled:opacity-40 sm:w-auto"
                 >
                   {assist.isPending
                     ? "Getting help…"
@@ -653,7 +687,7 @@ export default function InterviewPage() {
               type="button"
               data-testid={interviewDone ? "finish-interview" : "next-question"}
               onClick={goNext}
-              className="w-full rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 sm:w-auto"
+              className="w-full rounded-md bg-accent px-6 py-3 text-sm font-bold text-white hover:bg-accent-strong sm:w-auto"
             >
               {interviewDone ? "View report" : "Next question"}
             </button>
@@ -663,7 +697,7 @@ export default function InterviewPage() {
             <Link
               to={`/tracks/${trackId}/report/${sessionId}`}
               data-testid="finish-interview"
-              className="inline-flex w-full justify-center rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white hover:bg-indigo-700 sm:w-auto"
+              className="inline-flex w-full justify-center rounded-md bg-accent px-6 py-3 text-sm font-bold text-white hover:bg-accent-strong sm:w-auto"
             >
               View report
             </Link>
@@ -672,7 +706,7 @@ export default function InterviewPage() {
           <button
             type="button"
             onClick={(event) => leaveSession(event.currentTarget)}
-            className="text-center text-sm text-stone-500 hover:text-indigo-600 hover:underline sm:ml-auto"
+            className="text-center text-sm text-stone-500 hover:text-accent hover:underline sm:ml-auto"
           >
             Leave session
           </button>
@@ -725,8 +759,8 @@ function McqOptions({
           <label
             key={option}
             data-testid={`mcq-option-${index}`}
-            className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-4 py-3 text-sm ${
-              checked ? "border-indigo-400 bg-indigo-50" : "border-stone-200 bg-white"
+            className={`flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 text-sm ${
+              checked ? "border-accent bg-accent-soft" : "border-stone-200 bg-white"
             }`}
           >
             <input

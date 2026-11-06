@@ -4,7 +4,7 @@ import { api, type AdminOverview } from "../lib/api";
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-4">
+    <div className="rounded-lg border border-stone-200 bg-white p-4">
       <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
         {label}
       </p>
@@ -44,7 +44,7 @@ export default function AdminOverviewPage() {
         <Stat label="Est. cost" value={`$${d.estimated_cost_usd.toFixed(4)}`} />
       </div>
 
-      <section className="rounded-2xl border border-stone-200 bg-white p-5">
+      <section className="rounded-lg border border-stone-200 bg-white p-5">
         <h2 className="text-sm font-semibold text-stone-500">By day (last 30)</h2>
         {d.by_day.length === 0 ? (
           <p className="mt-2 text-sm text-stone-400">No LLM calls recorded yet.</p>
@@ -72,7 +72,7 @@ export default function AdminOverviewPage() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-stone-200 bg-white p-5">
+      <section className="rounded-lg border border-stone-200 bg-white p-5">
         <h2 className="text-sm font-semibold text-stone-500">By model</h2>
         <table className="mt-3 w-full text-sm">
           <thead>
@@ -96,7 +96,7 @@ export default function AdminOverviewPage() {
         </table>
       </section>
 
-      <Link to="/admin/users" className="inline-block text-sm text-indigo-600 hover:underline">
+      <Link to="/admin/users" className="inline-block text-sm text-accent hover:underline">
         Users →
       </Link>
     </div>

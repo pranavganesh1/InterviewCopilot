@@ -82,7 +82,7 @@ export default function DeleteTrackDialog({
   return (
     <div
       data-testid="delete-track-backdrop"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-stone-900/40 p-0 sm:items-center sm:p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onCancel();
       }}
@@ -92,21 +92,21 @@ export default function DeleteTrackDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-track-title"
-        className="start-modal-panel w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl"
+        className="start-modal-panel w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-lg"
       >
-        <h2 id="delete-track-title" className="text-lg font-semibold text-slate-900">
+        <h2 id="delete-track-title" className="text-lg font-semibold text-ink">
           Delete this track?
         </h2>
-        <p className="mt-1 text-sm font-medium text-slate-800">{track.subject}</p>
-        <p className="mt-2 text-sm text-slate-500">
+        <p className="mt-1 text-sm font-medium text-ink">{track.subject}</p>
+        <p className="mt-2 text-sm text-ink-soft">
           {plural(attempts, "attempt", "attempts")}, {plural(reports, "report", "reports")}
         </p>
-        <p className="mt-2 text-sm text-slate-600">
+        <p className="mt-2 text-sm text-ink-soft">
           The track will be removed from your list. Any unfinished interview is closed.
           Your interview history and reports are kept.
         </p>
         {error && (
-          <p role="alert" className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+          <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </p>
         )}
@@ -116,7 +116,7 @@ export default function DeleteTrackDialog({
             data-autofocus
             disabled={busy !== null}
             onClick={onCancel}
-            className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            className="rounded-md border border-line px-4 py-2 text-sm font-semibold text-ink-soft hover:bg-page disabled:opacity-60"
           >
             Cancel
           </button>
@@ -125,7 +125,7 @@ export default function DeleteTrackDialog({
               type="button"
               disabled={busy !== null}
               onClick={() => void confirmDelete()}
-              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              className="rounded-md border border-line px-4 py-2 text-sm font-semibold text-ink-soft hover:bg-page"
             >
               Try again
             </button>
@@ -134,7 +134,7 @@ export default function DeleteTrackDialog({
             type="button"
             disabled={busy !== null}
             onClick={() => void confirmDelete()}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
           >
             {busy === "delete" && (
               <svg viewBox="0 0 24 24" className="h-4 w-4 animate-spin" fill="none" aria-hidden="true">

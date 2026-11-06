@@ -10,11 +10,11 @@ import {
 import { useAuth } from "../context/AuthContext";
 
 const CATEGORY_STYLES: Record<string, string> = {
-  project: "bg-indigo-100 text-indigo-700",
+  project: "bg-accent-soft text-accent-strong",
   internship: "bg-sky-100 text-sky-700",
   skill: "bg-emerald-100 text-emerald-700",
   achievement: "bg-amber-100 text-amber-700",
-  education: "bg-violet-100 text-violet-700",
+  education: "bg-stone-100 text-stone-600",
   other: "bg-stone-100 text-stone-600",
 };
 
@@ -114,7 +114,7 @@ export default function OnboardingPage() {
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-indigo-600">
+        <p className="text-xs font-medium uppercase tracking-wide text-accent">
           Profile setup
         </p>
         <h1 className="text-xl font-semibold tracking-tight">Onboarding</h1>
@@ -128,7 +128,7 @@ export default function OnboardingPage() {
       {finished && (
         <div
           data-testid="onboarding-finished-banner"
-          className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
         >
           Onboarding completed
           {state.data?.onboarding_completed_at
@@ -139,8 +139,8 @@ export default function OnboardingPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <section className="flex min-h-[28rem] flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm md:min-h-[calc(100vh-11rem)]">
-          <div className="flex items-center justify-between gap-3 border-b border-stone-100 bg-gradient-to-r from-indigo-50/80 to-white px-4 py-3 sm:px-5">
+        <section className="flex min-h-[28rem] flex-col overflow-hidden rounded-lg border border-stone-200 bg-white md:min-h-[calc(100vh-11rem)]">
+          <div className="flex items-center justify-between gap-3 border-b border-stone-100 bg-page px-4 py-3 sm:px-5">
             <div>
               <h2 className="text-sm font-semibold text-stone-800">
                 Conversation
@@ -158,7 +158,7 @@ export default function OnboardingPage() {
 
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5">
             {messages.length === 0 && (
-              <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center">
+              <div className="rounded-md border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center">
                 <p className="text-sm font-medium text-stone-700">
                   {finished
                     ? "Tell us what you’d like to update"
@@ -174,9 +174,9 @@ export default function OnboardingPage() {
             {messages.map((m, i) => (
               <div
                 key={i}
-                className={`max-w-[min(100%,36rem)] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+                className={`max-w-[min(100%,36rem)] rounded-lg px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
                   m.role === "user"
-                    ? "ml-auto bg-indigo-600 text-white"
+                    ? "ml-auto bg-accent text-white"
                     : m.role === "pending"
                       ? "bg-stone-100 italic text-stone-400"
                       : "bg-stone-100 text-stone-800"
@@ -202,13 +202,13 @@ export default function OnboardingPage() {
                     ? "Add or correct a project, skill, or education detail…"
                     : "Describe a project, internship, or skill…"
                 }
-                className="min-w-0 flex-1 rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                className="min-w-0 flex-1 rounded-md border border-stone-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
                 disabled={chat.isPending}
               />
               <button
                 onClick={send}
                 disabled={chat.isPending || !input.trim()}
-                className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40 sm:self-auto"
+                className="rounded-md bg-accent px-5 py-2.5 text-sm font-medium text-white hover:bg-accent-strong disabled:opacity-40 sm:self-auto"
               >
                 Send
               </button>
@@ -217,10 +217,10 @@ export default function OnboardingPage() {
         </section>
 
         <aside className="flex flex-col gap-4">
-          <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+          <div className="rounded-lg border border-stone-200 bg-white p-4">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-stone-800">Your vault</h2>
-              <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+              <span className="rounded-md bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent-strong">
                 {vaultItems.length} items
               </span>
             </div>
@@ -229,14 +229,14 @@ export default function OnboardingPage() {
             </p>
             <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-0.5">
               {vaultItems.length === 0 && (
-                <p className="rounded-xl bg-stone-50 px-3 py-4 text-center text-xs text-stone-400">
+                <p className="rounded-md bg-stone-50 px-3 py-4 text-center text-xs text-stone-400">
                   Empty so far — chat or upload a resume.
                 </p>
               )}
               {vaultItems.map((item: VaultItem) => (
                 <div
                   key={item.id}
-                  className="rounded-xl border border-stone-100 bg-stone-50/80 px-3 py-2.5"
+                  className="rounded-md border border-stone-100 bg-stone-50/80 px-3 py-2.5"
                 >
                   <span
                     className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
@@ -253,13 +253,13 @@ export default function OnboardingPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+          <div className="rounded-lg border border-stone-200 bg-white p-4">
             <h2 className="text-sm font-semibold text-stone-800">Resume</h2>
             <p className="mt-1 text-xs text-stone-500">
               Optional — PDF up to 10 MB.
             </p>
-            <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-indigo-200 bg-indigo-50/40 px-4 py-5 text-center transition hover:border-indigo-400 hover:bg-indigo-50">
-              <span className="text-sm font-medium text-indigo-700">
+            <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-line bg-accent-soft/40 px-4 py-5 text-center transition hover:border-accent hover:bg-accent-soft">
+              <span className="text-sm font-medium text-accent-strong">
                 {upload.isPending
                   ? "Extracting your experience…"
                   : "Upload resume PDF"}
@@ -294,7 +294,7 @@ export default function OnboardingPage() {
               type="button"
               data-testid="go-to-tracks"
               onClick={() => navigate("/", { replace: true })}
-              className="rounded-2xl bg-indigo-600 px-4 py-3.5 text-center text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+              className="rounded-lg bg-accent px-4 py-3.5 text-center text-sm font-semibold text-white hover:bg-accent-strong"
             >
               Go to Tracks
             </button>
@@ -305,7 +305,7 @@ export default function OnboardingPage() {
                 data-testid="finish-onboarding"
                 onClick={() => finish.mutate()}
                 disabled={finish.isPending}
-                className="w-full rounded-2xl bg-indigo-600 px-4 py-3.5 text-center text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                className="w-full rounded-lg bg-accent px-4 py-3.5 text-center text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
               >
                 {finish.isPending ? "Saving…" : "Finish Onboarding"}
               </button>
@@ -316,7 +316,7 @@ export default function OnboardingPage() {
               )}
             </div>
           ) : (
-            <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-xs text-amber-900">
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-center text-xs text-amber-900">
               Still needed:{" "}
               {missing.map((c) => REQUIRED_LABELS[c] ?? c).join(", ") ||
                 "keep chatting with your coach"}

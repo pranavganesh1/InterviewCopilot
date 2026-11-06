@@ -68,7 +68,7 @@ export default function LeaveInterviewModal({
   return (
     <div
       data-testid="leave-backdrop"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-stone-900/40 p-0 sm:items-center sm:p-4"
       onMouseDown={(event) => {
         event.stopPropagation();
         if (event.target === event.currentTarget && !busy) onStay();
@@ -83,7 +83,7 @@ export default function LeaveInterviewModal({
           confirming ? "leave-interview-desc leave-interview-confirm" : "leave-interview-desc"
         }
         data-testid="leave-interview-modal"
-        className="start-modal-panel max-h-[92dvh] w-full max-w-[480px] overflow-x-hidden overflow-y-auto rounded-t-2xl bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-xl sm:rounded-2xl"
+        className="start-modal-panel max-h-[92dvh] w-full max-w-[480px] overflow-x-hidden overflow-y-auto rounded-t-2xl bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-xl sm:rounded-lg"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-start gap-3">
@@ -92,16 +92,16 @@ export default function LeaveInterviewModal({
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.3 4.6 2.7 18a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 4.6a2 2 0 0 0-3.4 0Z" />
             </svg>
           </span>
-          <h2 id="leave-interview-title" className="pt-1.5 text-lg font-semibold text-slate-900">
+          <h2 id="leave-interview-title" className="pt-1.5 text-lg font-semibold text-ink">
             Leave this interview?
           </h2>
         </div>
-        <div id="leave-interview-desc" className="mt-4 space-y-2 text-sm leading-relaxed text-slate-600">
+        <div id="leave-interview-desc" className="mt-4 space-y-2 text-sm leading-relaxed text-ink-soft">
           <p>Your submitted answers are saved. Anything you have typed but not submitted on this question will be lost.</p>
           {timed && <p>The timer keeps running while you are away.</p>}
         </div>
         {confirming && (
-          <p id="leave-interview-confirm" className="mt-3 text-sm text-slate-700">
+          <p id="leave-interview-confirm" className="mt-3 text-sm text-ink-soft">
             Your answered questions will be scored. Unanswered ones will not count against you.
           </p>
         )}
@@ -112,7 +112,7 @@ export default function LeaveInterviewModal({
               type="button"
               onClick={onRetry}
               disabled={busy}
-              className="font-semibold text-indigo-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-40"
+              className="font-semibold text-accent-strong underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
             >
               Try again
             </button>
@@ -124,7 +124,7 @@ export default function LeaveInterviewModal({
             data-autofocus
             onClick={onStay}
             disabled={busy}
-            className="w-full rounded-xl bg-indigo-600 py-3 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-40"
+            className="w-full rounded-md bg-accent py-3 text-sm font-semibold text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
           >
             Stay in interview
           </button>
@@ -132,7 +132,7 @@ export default function LeaveInterviewModal({
             type="button"
             onClick={onLeave}
             disabled={busy}
-            className="w-full rounded-xl border border-indigo-200 bg-white py-3 text-sm font-semibold text-indigo-800 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-40"
+            className="w-full rounded-md border border-line bg-white py-3 text-sm font-semibold text-accent-strong hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
           >
             Leave and resume later
           </button>
@@ -140,7 +140,7 @@ export default function LeaveInterviewModal({
             type="button"
             onClick={onFinish}
             disabled={busy}
-            className="w-full py-2 text-sm font-semibold text-indigo-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-40"
+            className="w-full py-2 text-sm font-semibold text-accent-strong underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
           >
             Finish and get feedback
           </button>

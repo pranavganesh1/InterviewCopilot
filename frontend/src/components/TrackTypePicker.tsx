@@ -78,22 +78,22 @@ export default function TrackTypePicker({ value, onChange }: Props) {
                 onChange(type.value);
               }
             }}
-            className={`relative flex min-h-11 min-w-0 flex-col items-start gap-2 rounded-2xl border p-4 text-left transition hover:border-indigo-300 hover:bg-indigo-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${
+            className={`relative flex min-h-11 min-w-0 flex-col items-start gap-2 rounded-lg border p-4 text-left transition hover:border-accent/40 hover:bg-accent-soft/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
               selected
-                ? "border-indigo-600 bg-indigo-50"
-                : "border-slate-200 bg-white"
+                ? "border-accent bg-accent-soft"
+                : "border-line bg-white"
             }`}
           >
-            <span className="flex w-full items-center gap-2 text-indigo-700">
+            <span className="flex w-full items-center gap-2 text-accent-strong">
               {type.icon}
-              <span className="min-w-0 flex-1 text-sm font-semibold text-slate-900">{type.title}</span>
+              <span className="min-w-0 flex-1 text-sm font-semibold text-ink">{type.title}</span>
               {selected && (
-                <svg viewBox="0 0 20 20" className="h-5 w-5 shrink-0 text-indigo-600" fill="currentColor" aria-hidden="true">
+                <svg viewBox="0 0 20 20" className="h-5 w-5 shrink-0 text-accent" fill="currentColor" aria-hidden="true">
                   <path fillRule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7.2 7.2a1 1 0 0 1-1.4 0L3.3 9.1a1 1 0 1 1 1.4-1.4l4.1 4.1 6.5-6.5a1 1 0 0 1 1.4 0Z" clipRule="evenodd" />
                 </svg>
               )}
             </span>
-            <span className="text-sm leading-snug text-slate-500">{type.hint}</span>
+            <span className="text-sm leading-snug text-ink-soft">{type.hint}</span>
           </button>
         );
       })}

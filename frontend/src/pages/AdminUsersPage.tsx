@@ -24,7 +24,7 @@ export default function AdminUsersPage() {
       {users.data!.length === 0 ? (
         <p className="text-sm text-stone-400">No users yet.</p>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-stone-200 bg-white">
+        <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-stone-200 text-left text-xs text-stone-400">
@@ -43,7 +43,7 @@ export default function AdminUsersPage() {
                   <td className="px-4 py-2.5">
                     <Link
                       to={`/admin/users/${u.id}`}
-                      className="font-medium text-indigo-600 hover:underline"
+                      className="font-medium text-accent hover:underline"
                     >
                       {u.name || u.email}
                     </Link>

@@ -5,7 +5,7 @@ import StartInterviewModal from "../components/StartInterviewModal";
 import { api, type BriefContent, type Progression, type Track } from "../lib/api";
 
 const IMPORTANCE_STYLE: Record<string, string> = {
-  core: "bg-indigo-100 text-indigo-700",
+  core: "bg-accent-soft text-accent-strong",
   important: "bg-sky-100 text-sky-700",
   nice_to_have: "bg-stone-100 text-stone-600",
 };
@@ -45,7 +45,7 @@ export default function TrackDetailPage() {
       </div>
 
       {progression.data && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-stone-200 bg-white px-5 py-3 text-sm">
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 bg-white px-5 py-3 text-sm">
           <span className="text-stone-500">Progression:</span>
           <span>
             {progression.data.strict_completed} strict
@@ -65,18 +65,18 @@ export default function TrackDetailPage() {
 
       {content ? (
         <div className="space-y-5">
-          <section className="rounded-2xl border border-stone-200 bg-white p-5">
+          <section className="rounded-lg border border-stone-200 bg-white p-5">
             <h2 className="text-sm font-semibold text-stone-500">
               Interview Brief · v{brief!.version}
             </h2>
             {content.clarification_message && (
-              <p className="mt-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">
+              <p className="mt-2 rounded-md bg-amber-50 p-3 text-sm text-amber-950">
                 {content.clarification_message}
               </p>
             )}
             <p className="mt-2 text-sm leading-relaxed">{content.summary}</p>
             {content.candidate_angle_notes && (
-              <p className="mt-3 rounded-xl bg-indigo-50 p-3 text-sm text-indigo-900">
+              <p className="mt-3 rounded-md bg-accent-soft p-3 text-sm text-ink">
                 <span className="font-medium">Your angle: </span>
                 {content.candidate_angle_notes}
               </p>
@@ -84,7 +84,7 @@ export default function TrackDetailPage() {
           </section>
 
           <div className="grid gap-5 md:grid-cols-2">
-            <section className="rounded-2xl border border-stone-200 bg-white p-5">
+            <section className="rounded-lg border border-stone-200 bg-white p-5">
               <h2 className="text-sm font-semibold text-stone-500">Competencies</h2>
               <div className="mt-3 space-y-2">
                 {content.competencies.map((c) => (
@@ -102,7 +102,7 @@ export default function TrackDetailPage() {
                 ))}
               </div>
             </section>
-            <section className="rounded-2xl border border-stone-200 bg-white p-5">
+            <section className="rounded-lg border border-stone-200 bg-white p-5">
               <h2 className="text-sm font-semibold text-stone-500">Question areas</h2>
               <ul className="mt-3 space-y-2 text-sm">
                 {content.question_areas.map((qa) => (
@@ -116,13 +116,13 @@ export default function TrackDetailPage() {
           </div>
 
           {content.question_bank?.length > 0 && (
-            <details className="rounded-2xl border border-stone-200 bg-white p-5">
+            <details className="rounded-lg border border-stone-200 bg-white p-5">
               <summary className="cursor-pointer text-sm font-semibold text-stone-700">
                 Question bank ({content.question_bank.length} pre-validated questions)
               </summary>
               <div className="mt-3 space-y-3">
                 {content.question_bank.map((q, i) => (
-                  <div key={i} className="rounded-xl border border-stone-100 p-3">
+                  <div key={i} className="rounded-md border border-stone-100 p-3">
                     <div className="flex flex-wrap items-center gap-2 text-[11px]">
                       <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-medium text-stone-600">
                         {q.area}
@@ -138,7 +138,7 @@ export default function TrackDetailPage() {
                       >
                         {q.difficulty}
                       </span>
-                      <span className="rounded-md bg-violet-100 px-1.5 py-0.5 font-medium text-violet-700">
+                      <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-medium text-stone-600">
                         {q.type}
                       </span>
                     </div>
@@ -149,7 +149,7 @@ export default function TrackDetailPage() {
             </details>
           )}
 
-          <section className="rounded-2xl border border-stone-200 bg-white p-5">
+          <section className="rounded-lg border border-stone-200 bg-white p-5">
             <h2 className="text-sm font-semibold text-stone-500">Preparation plan</h2>
             <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm">
               {content.preparation_plan.map((p) => (
@@ -165,7 +165,7 @@ export default function TrackDetailPage() {
       <button
         type="button"
         onClick={() => setStartOpen(true)}
-        className="w-full rounded-2xl bg-indigo-600 py-3 font-medium text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 sm:w-auto sm:px-6"
+        className="w-full rounded-lg bg-accent py-3 font-medium text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-auto sm:px-6"
       >
         Start interview
       </button>

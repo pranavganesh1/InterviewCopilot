@@ -81,7 +81,7 @@ export default function TrackOptionsMenu({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         onClick={toggle}
-        className="grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+        className="grid h-9 w-9 place-items-center rounded-md text-ink-faint hover:bg-page hover:text-ink-soft"
       >
         <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
           <circle cx="12" cy="5" r="1.5" />
@@ -95,7 +95,7 @@ export default function TrackOptionsMenu({
           id={menuId}
           role="menu"
           data-placement={dropUp ? "up" : "down"}
-          className={`absolute right-0 z-30 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg ${
+          className={`absolute right-0 z-30 w-44 overflow-hidden rounded-md border border-line bg-white py-1 shadow-lg ${
             dropUp ? "bottom-full mb-1" : "top-full mt-1"
           }`}
         >
@@ -103,7 +103,7 @@ export default function TrackOptionsMenu({
             role="menuitem"
             to={`/tracks/${trackId}`}
             onClick={onClose}
-            className="block px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none"
+            className="block px-3 py-2 text-sm text-ink-soft hover:bg-accent-soft focus:bg-accent-soft focus:outline-none"
           >
             Open track
           </Link>
@@ -112,12 +112,12 @@ export default function TrackOptionsMenu({
               role="menuitem"
               to={latestReportTo}
               onClick={onClose}
-              className="block px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none"
+              className="block px-3 py-2 text-sm text-ink-soft hover:bg-accent-soft focus:bg-accent-soft focus:outline-none"
             >
               Latest report
             </Link>
           )}
-          {showDelete && <div role="separator" className="my-1 border-t border-slate-100" />}
+          {showDelete && <div role="separator" className="my-1 border-t border-line" />}
           {showDelete && (
             <button
               type="button"

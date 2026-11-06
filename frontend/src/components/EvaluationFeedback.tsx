@@ -26,7 +26,7 @@ export default function EvaluationFeedback({
 
   return (
     <div
-      className={`rounded-2xl border border-indigo-100 bg-white shadow-sm ${
+      className={`rounded-lg border border-line bg-surface shadow-card ${
         compact ? "p-3" : "p-4 sm:p-5"
       }`}
       data-testid="evaluation-feedback"
@@ -44,7 +44,7 @@ export default function EvaluationFeedback({
         </span>
         {showAiReviewed && (
           <span
-            className="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800"
+            className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-700"
             data-testid="ai-reviewed-badge"
           >
             {AI_REVIEWED_NOT_EXECUTED}
@@ -68,7 +68,7 @@ export default function EvaluationFeedback({
       {evaluation.gaps.length > 0 && (
         <div className="mt-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-            Mistakes / missing concepts
+            To improve
           </p>
           <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-stone-800">
             {evaluation.gaps.map((g) => (
@@ -79,11 +79,11 @@ export default function EvaluationFeedback({
       )}
 
       {hasExplanation && (
-        <div className="mt-3 rounded-xl bg-indigo-50/80 px-3 py-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
+        <div className="mt-3 rounded-md border border-line bg-page px-3 py-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft">
             Expected answer
           </p>
-          <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-indigo-950">
+          <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink">
             {evaluation.expected_answer_explanation}
           </p>
         </div>
@@ -92,12 +92,12 @@ export default function EvaluationFeedback({
       {hasComplexity && (
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
           {evaluation.time_complexity?.trim() && (
-            <span className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1 font-medium text-stone-700">
+            <span className="rounded-md border border-line bg-page px-2.5 py-1 font-medium text-ink-soft">
               Time: {evaluation.time_complexity}
             </span>
           )}
           {evaluation.space_complexity?.trim() && (
-            <span className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1 font-medium text-stone-700">
+            <span className="rounded-md border border-line bg-page px-2.5 py-1 font-medium text-ink-soft">
               Space: {evaluation.space_complexity}
             </span>
           )}
@@ -106,10 +106,10 @@ export default function EvaluationFeedback({
 
       {hasCode && (
         <div className="mt-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-600">
             Corrected code
           </p>
-          <pre className="mt-1 max-h-64 overflow-auto rounded-xl border border-violet-100 bg-stone-950 px-3 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-violet-100">
+          <pre className="mt-1 max-h-64 overflow-auto rounded-md border border-line bg-stone-950 px-3 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-stone-200">
             {evaluation.corrected_code}
           </pre>
         </div>
