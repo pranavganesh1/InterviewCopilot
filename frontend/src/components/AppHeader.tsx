@@ -31,7 +31,7 @@ export default function AppHeader() {
   if (!user) return null;
 
   return (
-    <header className="sticky top-0 z-40 overflow-x-clip border-b border-indigo-100/80 bg-white/95 backdrop-blur">
+    <header className="sticky top-0 z-40 overflow-x-clip border-b border-line bg-surface">
       <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center gap-2 px-3 py-3 sm:gap-6 sm:px-4">
         <Link
           to="/"
@@ -40,9 +40,9 @@ export default function AppHeader() {
               event.preventDefault();
             }
           }}
-          className="shrink-0 text-sm font-bold tracking-tight text-slate-900 sm:text-base"
+          className="shrink-0 text-sm font-bold tracking-tight text-ink sm:text-base"
         >
-          Interview<span className="text-indigo-600">Copilot</span>
+          Interview<span className="text-accent">Copilot</span>
         </Link>
 
         <nav className="flex min-w-0 gap-0.5 text-sm sm:gap-1">
@@ -57,8 +57,8 @@ export default function AppHeader() {
             className={({ isActive }) =>
               `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
                 isActive
-                  ? "bg-indigo-100 text-indigo-800"
-                  : "text-slate-600 hover:bg-slate-50"
+                  ? "bg-accent-soft text-accent-strong"
+                  : "text-ink-soft hover:bg-page"
               }`
             }
           >
@@ -74,8 +74,8 @@ export default function AppHeader() {
             className={({ isActive }) =>
               `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
                 isActive
-                  ? "bg-indigo-100 text-indigo-800"
-                  : "text-slate-600 hover:bg-slate-50"
+                  ? "bg-accent-soft text-accent-strong"
+                  : "text-ink-soft hover:bg-page"
               }`
             }
           >
@@ -90,20 +90,8 @@ export default function AppHeader() {
                 }
               }}
               className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm ${
-                  isActive ? "bg-amber-100 font-medium text-amber-800" : "text-amber-700 hover:bg-amber-50"
-                }`
-              }
-            >
-              Admin
-            </NavLink>
-          )}
-          {user?.is_admin && (
-            <NavLink
-              to="/admin"
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm ${
-                  isActive ? "bg-amber-100 font-medium text-amber-800" : "text-amber-700 hover:bg-amber-50"
+                `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
+                  isActive ? "bg-accent-soft text-accent-strong" : "text-ink-soft hover:bg-page"
                 }`
               }
             >
@@ -113,13 +101,13 @@ export default function AppHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
-          <span className="hidden max-w-[14rem] truncate text-sm text-slate-500 md:inline">
+          <span className="hidden max-w-[14rem] truncate text-sm text-ink-soft md:inline">
             {user.email}
           </span>
 
           <button
             type="button"
-            className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100"
+            className="grid h-9 w-9 place-items-center rounded-full text-ink-soft hover:bg-page"
             aria-label="Notifications"
             title="Notifications"
           >
@@ -145,7 +133,7 @@ export default function AppHeader() {
               aria-expanded={open}
               aria-haspopup="menu"
               onClick={() => setMenuPath(open ? null : pathname)}
-              className="flex items-center gap-1 rounded-full p-0.5 ring-2 ring-transparent transition hover:ring-indigo-200 focus-visible:outline-none focus-visible:ring-indigo-400"
+              className="flex items-center gap-1 rounded-full p-0.5 ring-2 ring-transparent transition hover:ring-line focus-visible:outline-none focus-visible:ring-accent"
             >
               <UserAvatar
                 name={user.name}
@@ -154,7 +142,7 @@ export default function AppHeader() {
               />
               <svg
                 viewBox="0 0 20 20"
-                className="hidden h-4 w-4 text-slate-400 sm:block"
+                className="hidden h-4 w-4 text-ink-faint sm:block"
                 fill="currentColor"
               >
                 <path
@@ -168,7 +156,7 @@ export default function AppHeader() {
             {open && (
               <div
                 role="menu"
-                className="absolute right-0 mt-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1.5 shadow-lg shadow-slate-200/60"
+                className="absolute right-0 mt-2 w-56 overflow-hidden rounded-lg border border-line bg-surface py-1.5 shadow-card"
               >
                 <Link
                   role="menuitem"
@@ -180,9 +168,9 @@ export default function AppHeader() {
                     }
                     setMenuPath(null);
                   }}
-                  className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-slate-700 hover:bg-indigo-50"
+                  className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-page"
                 >
-                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-indigo-50 text-indigo-600">
+                  <span className="grid h-7 w-7 place-items-center rounded-md bg-page text-ink-soft">
                     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
                       <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4 0-7 2-7 4v1h14v-1c0-2-3-4-7-4Z" />
                     </svg>
@@ -199,9 +187,9 @@ export default function AppHeader() {
                     }
                     setMenuPath(null);
                   }}
-                  className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-slate-700 hover:bg-indigo-50"
+                  className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-page"
                 >
-                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-violet-50 text-violet-600">
+                  <span className="grid h-7 w-7 place-items-center rounded-md bg-page text-ink-soft">
                     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
                       <path d="M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z" />
                     </svg>
@@ -218,16 +206,16 @@ export default function AppHeader() {
                     }
                     setMenuPath(null);
                   }}
-                  className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-slate-700 hover:bg-indigo-50"
+                  className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-page"
                 >
-                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-slate-100 text-slate-600">
+                  <span className="grid h-7 w-7 place-items-center rounded-md bg-page text-ink-soft">
                     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
                       <path d="M19.1 12.9a7.5 7.5 0 0 0 .1-1.8l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.6-.9L14.8 3h-4l-.4 2.7a7.6 7.6 0 0 0-1.6.9l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0-.1 1.8l-2 1.6 2 3.4 2.4-1c.5.4 1 .7 1.6.9L10.8 21h4l.4-2.7c.6-.2 1.1-.5 1.6-.9l2.4 1 2-3.4-2-1.6ZM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5Z" />
                     </svg>
                   </span>
                   Settings
                 </Link>
-                <div className="my-1 border-t border-slate-100" />
+                <div className="my-1 border-t border-line" />
                 <button
                   role="menuitem"
                   type="button"

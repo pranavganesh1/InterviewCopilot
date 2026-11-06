@@ -1,4 +1,6 @@
 import { AUTH_ORIGIN } from "../lib/apiBase";
+import Button from "../components/ui/Button";
+import Card from "../components/ui/Card";
 
 export default function SignInPage() {
   const authError =
@@ -12,29 +14,26 @@ export default function SignInPage() {
   };
 
   return (
-    <div className="grid min-h-screen place-items-center bg-stone-50">
-      <div className="w-full max-w-sm rounded-2xl border border-stone-200 bg-white p-8 text-center shadow-sm">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Interview<span className="text-indigo-600">Copilot</span>
+    <div className="grid min-h-screen place-items-center bg-page">
+      <Card className="w-full max-w-sm p-8 text-center">
+        <h1 className="text-3xl font-semibold tracking-tight text-ink">
+          Interview<span className="text-accent">Copilot</span>
         </h1>
-        <p className="mt-2 text-sm text-stone-500">
+        <p className="mt-2 text-sm text-ink-soft">
           Know your story. Face your interview. Close your gaps.
         </p>
         {authError && (
-          <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <p className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             Sign-in was interrupted. Please try Continue with Google again.
           </p>
         )}
-        <button
-          onClick={start}
-          className="mt-6 w-full rounded-xl bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700"
-        >
+        <Button onClick={start} className="mt-6 w-full" size="lg">
           Continue with Google
-        </button>
-        <p className="mt-4 text-xs text-stone-400">
+        </Button>
+        <p className="mt-4 text-xs text-ink-faint">
           Mock interviews, evidence-based feedback, and a plan to improve.
         </p>
-      </div>
+      </Card>
     </div>
   );
 }
