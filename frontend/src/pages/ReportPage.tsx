@@ -366,13 +366,24 @@ export default function ReportPage() {
                     </p>
                   </div>
                 )}
+                {qa.code_snippet && (
+                  <pre className="overflow-x-auto rounded-xl bg-stone-900 p-3 font-mono text-xs text-stone-100">
+                    {qa.code_snippet}
+                  </pre>
+                )}
+                {qa.chosen_option && (
+                  <p className="text-stone-800" data-testid="mcq-chosen">
+                    Chosen: {qa.chosen_option}
+                    {qa.correct_option ? ` · Correct: ${qa.correct_option}` : ""}
+                  </p>
+                )}
                 {qa.answer && (
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
                       Your answer
                     </p>
                     <p className="mt-1 whitespace-pre-wrap rounded-xl bg-indigo-50 px-3 py-2 text-indigo-950">
-                      {qa.answer}
+                      {qa.chosen_option || qa.answer}
                     </p>
                   </div>
                 )}

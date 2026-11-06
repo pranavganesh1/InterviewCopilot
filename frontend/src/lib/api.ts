@@ -194,7 +194,12 @@ export interface Turn {
   turn_index: number;
   question_area: string;
   question: string;
-  question_type?: "coding" | "conceptual" | "behavioral" | null;
+  question_type?: "coding" | "conceptual" | "behavioral" | "mcq" | "code_read" | null;
+  options?: string[];
+  code_snippet?: string;
+  objective?: string;
+  correct_index?: number;
+  explanation?: string;
   answer: string | null;
   assisted?: boolean;
   assistance_level?: number;
@@ -244,6 +249,10 @@ export interface QuestionAssessment {
   /** false when coding answer was reviewed statically (never run). */
   executed?: boolean | null;
   review_label?: string;
+  chosen_option?: string;
+  correct_option?: string;
+  explanation?: string;
+  code_snippet?: string;
 }
 
 export interface ReportContent {

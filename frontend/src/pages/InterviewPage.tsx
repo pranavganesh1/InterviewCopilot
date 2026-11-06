@@ -11,7 +11,7 @@ import {
   type TurnEvaluation,
   type TurnResult,
 } from "../lib/api";
-import { resolveKind } from "../lib/questionKind";
+import { isCodeFriendly, resolveKind } from "../lib/questionKind";
 
 const DEFAULT_MAX_TURNS = 15;
 
@@ -426,6 +426,11 @@ export default function InterviewPage() {
                 coding={focusKind === "coding"}
               />
             )}
+            {isGuided && showFeedback && focusTurn.explanation && (
+              <p className="rounded-xl bg-indigo-50 px-3 py-2 text-sm text-indigo-950" data-testid="mcq-explanation">
+                {focusTurn.explanation}
+              </p>
+            )}
 
             {interviewDone && showFeedback && (
               <div
@@ -456,23 +461,66 @@ export default function InterviewPage() {
               </div>
             )}
 
-            {awaitingAnswer && (
+            {awaitingAnswer && focusTurn.question_type === "mcq" && (
+              <McqOptions
+                options={focusTurn.options ?? []}
+                selected={answer}
+                onSelect={setAnswer}
+                disabled={submit.isPending}
+              />
+            )}
+
+            {awaitingAnswer && focusTurn.question_type !== "mcq" && (
               <div
                 data-testid="answer-composer"
                 className="flex min-h-[40vh] flex-1 flex-col rounded-2xl border border-indigo-200 bg-white p-3 shadow-sm sm:min-h-0 sm:p-4"
               >
+                {focusTurn.code_snippet && (
+                  <pre
+                    data-testid="code-snippet"
+                    className="mb-3 max-w-full overflow-x-auto rounded-xl bg-stone-900 p-3 font-mono text-xs leading-relaxed text-stone-100"
+                  >
+                    {focusTurn.code_snippet}
+                  </pre>
+                )}
                 <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-stone-500">
                   Your answer · Q{focusTurn.turn_index}/{maxTurns}
                 </label>
+                {isCodeFriendly(focusTurn.question_type) && (
+                  <label className="mb-2 flex items-center gap-2 text-xs text-stone-500">
+                    Language
+                    <select
+                      data-testid="answer-language"
+                      className="rounded-lg border border-stone-200 bg-white px-2 py-1"
+                      defaultValue="python"
+                    >
+                      <option value="python">Python</option>
+                      <option value="java">Java</option>
+                      <option value="c">C</option>
+                    </select>
+                  </label>
+                )}
                 <textarea
                   value={answer}
                   onChange={(e) => setAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (!isCodeFriendly(focusTurn.question_type)) return;
+                    if (e.key === "Tab") {
+                      e.preventDefault();
+                      const el = e.currentTarget;
+                      const start = el.selectionStart ?? answer.length;
+                      const next = `${answer.slice(0, start)}  ${answer.slice(el.selectionEnd ?? start)}`;
+                      setAnswer(next);
+                    }
+                  }}
                   placeholder={
                     isGuided
                       ? "Type your answer… (optional hints available)"
                       : "Type your answer… (no hints in strict mode!)"
                   }
-                  className="min-h-[40vh] w-full flex-1 resize-none rounded-xl border border-stone-200 px-4 py-3 text-sm leading-relaxed outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 sm:min-h-[12rem]"
+                  className={`min-h-[40vh] w-full flex-1 resize-none rounded-xl border border-stone-200 px-4 py-3 text-sm leading-relaxed outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 sm:min-h-[12rem] ${
+                    isCodeFriendly(focusTurn.question_type) ? "font-mono" : ""
+                  }`}
                   disabled={submit.isPending}
                 />
               </div>
@@ -567,6 +615,70 @@ export default function InterviewPage() {
           </Link>
         </div>
       )}
+    </div>
+  );
+}
+
+function McqOptions({
+  options,
+  selected,
+  onSelect,
+  disabled,
+}: {
+  options: string[];
+  selected: string;
+  onSelect: (value: string) => void;
+  disabled: boolean;
+}) {
+  const move = (delta: number, from: number) => {
+    const current = selected === "" ? from : Number(selected);
+    const next = (current + delta + options.length) % options.length;
+    onSelect(String(next));
+  };
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Answer options"
+      data-testid="mcq-options"
+      tabIndex={0}
+      className="grid gap-2 outline-none"
+      onKeyDown={(e) => {
+        if (disabled || options.length === 0) return;
+        const raw = (e.target as HTMLInputElement).value;
+        const from = raw === undefined || raw === "" ? -1 : Number(raw);
+        if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+          e.preventDefault();
+          move(1, Number.isNaN(from) ? -1 : from);
+        } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+          e.preventDefault();
+          move(-1, Number.isNaN(from) ? 0 : from);
+        }
+      }}
+    >
+      {options.map((option, index) => {
+        const value = String(index);
+        const checked = selected === value;
+        return (
+          <label
+            key={option}
+            data-testid={`mcq-option-${index}`}
+            className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-4 py-3 text-sm ${
+              checked ? "border-indigo-400 bg-indigo-50" : "border-stone-200 bg-white"
+            }`}
+          >
+            <input
+              type="radio"
+              name="mcq"
+              value={value}
+              checked={checked}
+              disabled={disabled}
+              onChange={() => onSelect(value)}
+              className="mt-1"
+            />
+            <span>{option}</span>
+          </label>
+        );
+      })}
     </div>
   );
 }

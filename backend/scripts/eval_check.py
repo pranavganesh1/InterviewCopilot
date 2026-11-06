@@ -47,18 +47,19 @@ async def _dry_run(samples: list[dict], runs: int) -> None:
             )
 
 
-async def _live_run(samples: list[dict], runs: int) -> None:
+async def _live_run(samples: list[dict], runs: int, model: str | None = None) -> None:
     for sample in samples:
         expected = sample["expected"]
         for i in range(runs):
-            ev = await evaluate_answer(
-                {
-                    "mode": "strict",
-                    "brief": {"summary": sample.get("topic", "")},
-                    "last_question": sample["question"],
-                    "last_answer": sample["answer"],
-                }
-            )
+            payload = {
+                "mode": "strict",
+                "brief": {"summary": sample.get("topic", "")},
+                "last_question": sample["question"],
+                "last_answer": sample["answer"],
+            }
+            if model:
+                payload["model"] = model
+            ev = await evaluate_answer(payload)
             print(
                 f"run={i + 1} expected={expected:10} got={ev.coverage:10} "
                 f"strengths={len(ev.strengths)} gaps={len(ev.gaps)} "
@@ -79,10 +80,17 @@ def main() -> None:
         default=1,
         help="Repeat each sample N times (default 1)",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="LiteLLM model alias for live runs (default structured-json)",
+    )
     args = parser.parse_args()
     samples = _load_samples()
     runs = max(1, int(args.runs))
-    asyncio.run(_dry_run(samples, runs) if args.dry else _live_run(samples, runs))
+    asyncio.run(
+        _dry_run(samples, runs) if args.dry else _live_run(samples, runs, model=args.model)
+    )
 
 
 if __name__ == "__main__":

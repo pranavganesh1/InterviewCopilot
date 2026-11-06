@@ -75,6 +75,8 @@ With the API running and signed in via the browser flow above (you have an `ic_a
 ### Feedback & progression (M6)
 
 1. Start the feedback worker in a second terminal: `cd backend && uv run python -m app.workers.feedback_worker`
+
+   Do not run that local worker while the Docker `backend-worker` container is up. Both use the same database (`interviewcopilot`) and the same NATS subject (`feedback.jobs`), so two workers will process the same jobs.
 2. Complete an interview — the worker generates the report asynchronously.
 3. Read it: `curl -s http://localhost:8000/api/v1/sessions/{session_id}/report --cookie "ic_access=<token>"`
 4. Track progression (Guided unlocks after 3 struggling strict attempts): `curl -s http://localhost:8000/api/v1/tracks/{track_id}/progression --cookie "ic_access=<token>"`

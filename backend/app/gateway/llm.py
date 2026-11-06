@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import time
+from contextvars import ContextVar
 from datetime import UTC, datetime
 
 import httpx
@@ -11,6 +12,17 @@ from app.core.logging import get_logger
 from app.gateway.pricing import estimate_cost_usd
 
 log = get_logger(__name__)
+
+# Mirrors infra/litellm/config.yaml so a failed primary is visible to tests
+# and the model that actually answered can be stored on the evaluation.
+MODEL_FALLBACKS: dict[str, list[str]] = {
+    "interview-chat": ["interview-chat-gemini"],
+    "structured-json": ["structured-json-gemini"],
+}
+
+# Set on each successful chat_completion. Interview turns copy this onto
+# evaluation_detail so reports can say which model scored the answer.
+llm_model_used: ContextVar[str | None] = ContextVar("llm_model_used", default=None)
 
 
 class LLMGatewayError(Exception):
@@ -34,6 +46,42 @@ async def chat_completion(
     Every successful call is logged to Mongo llm_call_logs (metadata only,
     never full prompts, per spec §7).
     """
+    chain = [model, *MODEL_FALLBACKS.get(model, [])]
+    last_error: Exception | None = None
+    for candidate in chain:
+        try:
+            content = await _chat_once(
+                client,
+                model=candidate,
+                messages=messages,
+                mongo_db=mongo_db,
+                request_id=request_id,
+                temperature=temperature,
+                response_format=response_format,
+                meta=meta,
+                max_attempts=max_attempts,
+            )
+        except LLMGatewayError as exc:
+            last_error = exc
+            log.warning("llm_model_failed", model=candidate, error=str(exc)[:200])
+            continue
+        llm_model_used.set(candidate)
+        return content
+    raise last_error or LLMGatewayError("LLM gateway call failed")
+
+
+async def _chat_once(
+    client: httpx.AsyncClient,
+    *,
+    model: str,
+    messages: list[dict],
+    mongo_db: AsyncIOMotorDatabase | None,
+    request_id: str | None,
+    temperature: float | None,
+    response_format: dict | None,
+    meta: dict | None,
+    max_attempts: int,
+) -> str:
     settings = get_settings()
     payload: dict = {"model": model, "messages": messages}
     if temperature is not None:

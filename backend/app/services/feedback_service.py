@@ -161,6 +161,13 @@ async def process_session_feedback(db: AsyncSession, session_id) -> dict:
         )
 
     content = enrich_assessments_with_turns(content, answered)
+    # Drop anything the agent invented for a question the candidate never answered.
+    answered_indexes = {t.turn_index for t in answered}
+    content["question_assessments"] = [
+        row
+        for row in (content.get("question_assessments") or [])
+        if int(row.get("turn_index") or 0) in answered_indexes
+    ]
 
     existing = (
         await db.execute(select(FeedbackReport).where(FeedbackReport.session_id == session.id))

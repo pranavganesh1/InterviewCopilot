@@ -5,6 +5,11 @@ import httpx
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
+from app.agents.question_quality import (
+    SINGLE_FOCUS_RULE,
+    is_programming_brief,
+    prepare_bank_question,
+)
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.gateway.structured import structured_completion
@@ -43,8 +48,13 @@ class BankQuestion(BaseModel):
     area: str
     question: str
     difficulty: Literal["foundational", "intermediate", "advanced"]
-    type: Literal["coding", "conceptual", "behavioral"]
+    type: Literal["coding", "conceptual", "behavioral", "mcq", "code_read"]
     expected_answer_sketch: str = ""
+    objective: str = ""
+    options: list[str] = Field(default_factory=list)
+    correct_index: int | None = None
+    explanation: str = ""
+    code_snippet: str = ""
 
 
 class InterviewBriefContent(BaseModel):
@@ -63,21 +73,30 @@ class TrackCreatorState(TypedDict, total=False):
     bank: list
 
 
-BANK_SYSTEM_PROMPT = """You are InterviewCopilot's question bank author. Given an
+BANK_SYSTEM_PROMPT = (
+    """You are InterviewCopilot's question bank author. Given an
 interview brief (areas, competencies, candidate angle), write 3-5 ANCHOR questions for
 this track. These are the opening questions of timed interview sessions — the interviewer
 generates all follow-up questions itself from the candidate's answers.
 
+"""
+    + SINGLE_FOCUS_RULE
+    + """
 Rules:
 - 3-5 questions ONLY, each testing a DIFFERENT learning objective, spread across the
-  brief's question_areas.
+  brief's question_areas. Put that objective in the objective field (one short line).
 - Difficulty arc: start foundational, end advanced.
-- Every question must be self-contained and answerable in plain text.
-- Mark type: coding (write/fix code), conceptual (explain/compare), or behavioral.
+- Every question must be self-contained.
+- type is conceptual, behavioral, mcq, code_read, or coding.
+  Programming subjects: about half conceptual, then mcq, code_read, and coding.
+  Other subjects: conceptual and mcq only.
+- mcq: exactly 4 options of similar length and exactly one correct_index (0-3).
+- code_read: one short code_snippet and one question about it.
 - expected_answer_sketch: ONE sentence (max ~120 chars) on what a strong answer covers.
 - Ground questions in the candidate's context where the brief's candidate_angle_notes
   suggests it.
 """
+)
 
 JUDGE_SYSTEM_PROMPT = """You are InterviewCopilot's question quality judge. For each
 indexed question, decide accept/reject.
@@ -86,6 +105,7 @@ Reject a question when ANY of these hold:
 - vague, ambiguous, or unanswerable in text;
 - trivially shallow for an interview (yes/no with no reasoning);
 - tests the same learning objective as another accepted question;
+- fails single_focus: more than one question, stacked asks, or praise in the question;
 - out of scope for the track subject.
 Give a short actionable reason for every rejection.
 """
@@ -172,8 +192,13 @@ class _BankQuestionIn(BaseModel):
     area: str = ""
     question: str
     difficulty: Literal["foundational", "intermediate", "advanced"] = "intermediate"
-    type: Literal["coding", "conceptual", "behavioral"] = "conceptual"
+    type: Literal["coding", "conceptual", "behavioral", "mcq", "code_read"] = "conceptual"
     expected_answer_sketch: str = ""
+    objective: str = ""
+    options: list[str] = Field(default_factory=list)
+    correct_index: int | None = None
+    explanation: str = ""
+    code_snippet: str = ""
 
 
 class _BankGeneration(BaseModel):
@@ -203,6 +228,7 @@ def build_track_creator_graph(
 
         brief = state["brief"]
         objective = state["objective"]
+        programming = is_programming_brief(brief, str(objective.get("subject") or ""))
         regen = regen_runner or bank_runner
         bank: list[dict] = []
         try:
@@ -228,6 +254,11 @@ def build_track_creator_graph(
                 candidates: list[dict] = []
                 rejects: list[tuple[dict, str]] = []
                 for q in pending:
+                    prepared = prepare_bank_question(q, programming=programming)
+                    if prepared is None:
+                        rejects.append((q, "failed single-focus or format validation"))
+                        continue
+                    q = prepared
                     text = q.get("question", "")
                     against = [a.get("question", "") for a in all_accepted] + [
                         c.get("question", "") for c in candidates

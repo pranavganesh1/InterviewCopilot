@@ -11,6 +11,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, Field
 
+from app.agents.question_quality import format_for_slot, is_programming_brief
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.gateway.structured import structured_completion
@@ -35,6 +36,7 @@ class PlanSlot(BaseModel):
     topic: str = Field(min_length=1, max_length=255)
     objective: str = Field(min_length=1, max_length=500)
     difficulty: Difficulty = "intermediate"
+    format: Literal["conceptual", "behavioral", "mcq", "code_read", "coding"] = "conceptual"
 
 
 class _PlanResponse(BaseModel):
@@ -71,6 +73,7 @@ def deterministic_question_plan(brief_content: dict, n: int) -> list[dict]:
     """Build n slots from brief topics/competencies without an LLM call."""
     n = max(0, int(n))
     topics = _topics_from_brief(brief_content)
+    programming = is_programming_brief(brief_content)
     slots: list[dict] = []
     for i in range(n):
         topic = topics[i % len(topics)]
@@ -83,6 +86,7 @@ def deterministic_question_plan(brief_content: dict, n: int) -> list[dict]:
                     f"(slot {i + 1}/{n}; distinct from other slots)."
                 ),
                 "difficulty": difficulty,
+                "format": format_for_slot(i, programming=programming),
             }
         )
     return slots
