@@ -55,6 +55,9 @@ export default function AdminUserDetailPage() {
             >
               {t.subject}
               <span className="ml-1.5 text-xs text-stone-400">{t.track_type}</span>
+              {t.archived && (
+                <span className="ml-1.5 text-xs font-semibold text-amber-700">Archived</span>
+              )}
             </span>
           ))}
         </div>

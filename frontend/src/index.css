@@ -43,3 +43,21 @@ body {
     animation: none;
   }
 }
+
+@keyframes track-card-out {
+  to {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.track-card-leave {
+  animation: track-card-out 150ms ease-out forwards;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track-card-leave {
+    animation: none;
+  }
+}

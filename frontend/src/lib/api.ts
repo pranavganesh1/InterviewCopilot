@@ -9,9 +9,18 @@ export { API_BASE };
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  sessionId?: string;
+  constructor(
+    status: number,
+    message: string,
+    extra?: { code?: string; sessionId?: string },
+  ) {
     super(message);
+    this.name = "ApiError";
     this.status = status;
+    this.code = extra?.code;
+    this.sessionId = extra?.sessionId;
   }
 }
 
@@ -46,13 +55,21 @@ export async function api<T>(
   }
 
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail: unknown = res.statusText;
     try {
-      detail = (await res.json()).detail ?? detail;
+      const body = await res.json();
+      detail = body.detail ?? detail;
     } catch {
       /* keep statusText */
     }
-    throw new ApiError(res.status, detail);
+    if (detail && typeof detail === "object") {
+      const record = detail as { message?: string; code?: string; session_id?: string };
+      throw new ApiError(res.status, record.message || res.statusText, {
+        code: record.code,
+        sessionId: record.session_id,
+      });
+    }
+    throw new ApiError(res.status, typeof detail === "string" ? detail : res.statusText);
   }
   if (res.status === 204 || res.headers.get("content-length") === "0") {
     return null as T;
@@ -97,6 +114,7 @@ export interface AssessmentSummary {
   questions_attempted: number;
   max_turns: number;
   status: string;
+  track_archived?: boolean;
   summary_overview: string;
   strengths: string[];
   improvement_areas: string[];
@@ -143,6 +161,8 @@ export interface Track {
   subject: string;
   company: string | null;
   status: string;
+  archived?: boolean;
+  archived_at?: string | null;
   created_at: string;
   brief_version?: number;
 }
@@ -345,7 +365,7 @@ export interface AdminUserRow {
 export interface AdminUserDetail {
   user: { id: string; email: string; name: string };
   llm: { calls: number; tokens: number; estimated_cost_usd: number };
-  tracks: { id: string; subject: string; track_type: string }[];
+  tracks: { id: string; subject: string; track_type: string; archived?: boolean }[];
   sessions: {
     id: string;
     mode: string;

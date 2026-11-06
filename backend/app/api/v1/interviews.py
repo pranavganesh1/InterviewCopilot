@@ -77,6 +77,11 @@ async def start_session(
                 status_code=403,
                 detail="Guided mode is locked until progression policy unlocks it",
             ) from None
+        if str(exc) == "track_archived":
+            raise HTTPException(
+                status_code=409,
+                detail="This track is archived. Restore it before starting an interview.",
+            ) from None
         raise
 
 
