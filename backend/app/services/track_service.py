@@ -73,17 +73,9 @@ async def create_track_with_brief(
     jd_text: str | None = None,
     request_id: str | None = None,
 ) -> dict:
-    track = Track(
-        user_id=user.id,
-        track_type=track_type,
-        subject=subject,
-        company=company,
-        jd_text=jd_text,
-    )
-    db.add(track)
-    await db.commit()
-    await db.refresh(track)
-
+    # Author FIRST: if the LLM fails, nothing is saved — the user gets a clean
+    # 503 and can retry. (Saving the track first used to leave orphans with
+    # "no Interview Brief" on every quota failure — M11 finding.)
     content = await build_track_creator_brief(
         objective={
             "track_type": track_type,
@@ -94,6 +86,17 @@ async def create_track_with_brief(
         vault_summary=await vault_summary(db, user.id),
         meta={"user_id": str(user.id)},
     )
+
+    track = Track(
+        user_id=user.id,
+        track_type=track_type,
+        subject=subject,
+        company=company,
+        jd_text=jd_text,
+    )
+    db.add(track)
+    await db.commit()
+    await db.refresh(track)
 
     brief = InterviewBrief(track_id=track.id, version=1, content=content)
     db.add(brief)
