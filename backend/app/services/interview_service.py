@@ -6,6 +6,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.agents import question_plan
 from app.agents.assistance import (
     generate_assistance,
     is_coding_question,
@@ -15,7 +16,7 @@ from app.agents.assistance import (
 )
 from app.agents.interviewer import TurnDecision, build_interviewer_graph
 from app.agents.question_dedupe import concept_fingerprint, is_duplicate_question
-from app.agents.question_plan import build_question_plan, opening_areas_to_avoid
+from app.agents.question_plan import opening_areas_to_avoid
 from app.agents.question_quality import (
     active_profile,
     is_programming_brief,
@@ -251,7 +252,7 @@ async def start_session(
             brief_areas, [row["area"] for row in history if row.get("turn_index") == 1]
         ),
     }
-    plan = await build_question_plan(plan_brief, get_settings().interview_max_turns)
+    plan = await question_plan.build_question_plan(plan_brief, get_settings().interview_max_turns)
     session = InterviewSession(
         id=session_id,
         track_id=track_id,
@@ -564,12 +565,7 @@ async def _decide(
         if questions_asked < 10
         else "advanced"
     )
-    diversity = (
-        "Ask a new question on a distinct learning objective within this track. "
-        "Do not restate or paraphrase any asked_questions entry, and do not re-test "
-        "the same concepts (e.g. array definition + contiguous storage + static vs "
-        "dynamic) under different wording."
-    )
+    diversity = ""  # static rules live in the system prompts (M11 trim)
     raw_plan = getattr(session, "question_plan", None)
     plan = raw_plan if isinstance(raw_plan, list) else None
     covered_so_far = build_covered_so_far(turns, plan=plan, questions_asked=questions_asked)
@@ -603,6 +599,7 @@ async def _decide(
         diversity += (
             " The opening question must use an area other than: " + ", ".join(avoid_areas) + "."
         )
+    asked_set = {t.question for t in turns}
     payload = {
         "mode": session.mode,
         "meta": {
@@ -614,12 +611,34 @@ async def _decide(
         "duration_minutes": duration,
         "minutes_elapsed": minutes_elapsed,
         "minutes_remaining": minutes_remaining,
-        "brief": brief_content,
+        # M11 trim: compact brief — the interviewer needs areas, angle, types
+        # and the unused bank; not the student's preparation_plan or long
+        # competency descriptions (token weight per turn).
+        "brief": {
+            "summary": (brief_content.get("summary") or "")[:300],
+            "question_areas": [
+                {
+                    "topic": qa.get("topic", ""),
+                    "guidance": (qa.get("guidance") or "")[:100],
+                }
+                for qa in (brief_content.get("question_areas") or [])
+            ],
+            "candidate_angle_notes": (brief_content.get("candidate_angle_notes") or "")[:250],
+            "domain_profile": brief_content.get("domain_profile") or {},
+            "allowed_types": brief_content.get("allowed_types") or [],
+            "pool": brief_content.get("pool") or {},
+            # Only UNUSED bank entries, question text only (no sketches).
+            "question_bank": [
+                {"area": q.get("area", ""), "question": q.get("question", "")}
+                for q in (brief_content.get("question_bank") or [])
+                if q.get("question") and q["question"] not in asked_set
+            ],
+        },
         "transcript": [
             {
                 "area": t.question_area,
                 "question": t.question,
-                "answer": t.answer,
+                "answer": (t.answer or "")[:400],
                 "assisted": bool(t.assisted),
                 "assistance_level": t.assistance_level or 0,
             }
@@ -645,8 +664,8 @@ async def _decide(
         # interviewer can use them verbatim without tripping duplicate checks.
         "question_bank": [
             q
-            for q in brief_content.get("question_bank", [])
-            if q.get("question") and q["question"] not in {t.question for t in turns}
+            for q in (brief_content.get("question_bank") or [])
+            if q.get("question") and q["question"] not in asked_set
         ],
         "covered_so_far": covered_so_far,
         "memory_instruction": (
