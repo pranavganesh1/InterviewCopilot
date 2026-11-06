@@ -142,7 +142,7 @@ export default function CodingWorkspace({
                 onClick={() => setLanguage(tab.id)}
                 className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
                   language === tab.id
-                    ? "bg-accent text-white"
+                    ? "bg-accent-soft text-accent-strong"
                     : "text-stone-600 hover:bg-white"
                 }`}
               >
