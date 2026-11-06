@@ -36,3 +36,6 @@ backend/m9_track*.json
 backend/u3_*.json
 backend/*_track.json
 test-results/
+
+# Git worktrees
+.worktrees/
