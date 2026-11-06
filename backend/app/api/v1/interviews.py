@@ -6,6 +6,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.api.v1.schemas.interviews import (
+    OpenSessionResult,
+    SessionWithTurn,
+    SessionWithTurns,
+    TurnResult,
+)
 from app.db.sqlalchemy import get_db
 from app.gateway.llm import LLMGatewayError
 from app.models.user import User
@@ -23,7 +29,7 @@ class CreateSession(BaseModel):
     duration_minutes: int = Field(default=60, ge=15, le=240)
 
 
-@router.get("/tracks/{track_id}/open-session")
+@router.get("/tracks/{track_id}/open-session", response_model=OpenSessionResult)
 async def open_session(
     track_id: uuid.UUID,
     user: User = Depends(get_current_user),
@@ -39,7 +45,7 @@ async def open_session(
     return result
 
 
-@router.post("/tracks/{track_id}/sessions", status_code=201)
+@router.post("/tracks/{track_id}/sessions", status_code=201, response_model=SessionWithTurn)
 async def start_session(
     track_id: uuid.UUID,
     request: Request,
@@ -87,7 +93,7 @@ async def start_session(
         raise
 
 
-@router.get("/sessions/{session_id}")
+@router.get("/sessions/{session_id}", response_model=SessionWithTurns)
 async def get_session(
     session_id: uuid.UUID,
     user: User = Depends(get_current_user),
@@ -99,7 +105,7 @@ async def get_session(
     return result
 
 
-@router.post("/sessions/{session_id}/turns")
+@router.post("/sessions/{session_id}/turns", response_model=TurnResult)
 async def submit_turn(
     session_id: uuid.UUID,
     body: SubmitAnswer,
