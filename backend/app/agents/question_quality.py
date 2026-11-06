@@ -28,7 +28,8 @@ _STACK = re.compile(
 )
 _OPENER = re.compile(
     r"^(i see|let's explore|lets explore|let's dive deeper|lets dive deeper|"
-    r"okay so|ok so)\b",
+    r"let's start with the basics|lets start with the basics|"
+    r"okay so|ok so|good start)\b",
     re.IGNORECASE,
 )
 _SHORT_FILLER = re.compile(

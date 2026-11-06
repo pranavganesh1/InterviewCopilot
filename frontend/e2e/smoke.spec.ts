@@ -52,7 +52,7 @@ test("dashboard lists tracks from the API", async ({ page }) => {
   );
   await page.goto("/");
   await expect(
-    page.getByRole("link", { name: "Backend Engineer Intern" }),
+    page.getByRole("button", { name: "Backend Engineer Intern" }),
   ).toBeVisible();
   await expect(page.getByText(/Interview prep focused on the/i)).toBeVisible();
 });

@@ -31,6 +31,9 @@ Rules:
 - topic: short area label; objective: one concrete thing the question should probe.
 - Stay inside the track subject. Do not invent unrelated domains.
 - When prior_areas is present, prefer areas that are not in that list.
+- prior_questions are short texts already asked on this track. Do not repeat them.
+- When avoid_areas is present and the brief has another area, the first slot
+  must use one of those other areas.
 """
 
 
@@ -73,19 +76,74 @@ def _topics_from_brief(brief_content: dict) -> list[str]:
     return topics
 
 
+def opening_areas_to_avoid(brief_areas: list[str], opening_areas: list[str]) -> list[str]:
+    """Areas that must not open the next session while another area is still fresh.
+
+    Once every brief area has already opened a session, only the previous
+    session's opening area is avoided.
+    """
+    areas: list[str] = []
+    for area in brief_areas:
+        text = (area or "").strip()
+        if text and text not in areas:
+            areas.append(text)
+    if len(areas) <= 1:
+        return []
+    used: list[str] = []
+    for area in opening_areas:
+        text = (area or "").strip()
+        if text and text not in used:
+            used.append(text)
+    if not used:
+        return []
+    if any(area not in used for area in areas):
+        return used
+    return [used[-1]]
+
+
+def _avoid_names(brief_content: dict) -> set[str]:
+    names = {
+        (area or "").strip().lower()
+        for area in (brief_content or {}).get("avoid_areas") or []
+        if (area or "").strip()
+    }
+    single = ((brief_content or {}).get("avoid_first_area") or "").strip().lower()
+    if single:
+        names.add(single)
+    return names
+
+
+def _steer_topics(topics: list[str], avoid: set[str]) -> list[str]:
+    if len(topics) <= 1 or not avoid:
+        return topics
+    fresh = [topic for topic in topics if topic.lower() not in avoid]
+    if not fresh:
+        if topics[0].lower() in avoid:
+            return topics[1:] + topics[:1]
+        return topics
+    return fresh + [topic for topic in topics if topic.lower() in avoid]
+
+
 def deterministic_question_plan(
     brief_content: dict, n: int, seed: str | None = None
 ) -> list[dict]:
     """Build n slots from brief topics/competencies without an LLM call.
 
-    A seed rotates which area is emphasized. No seed keeps the brief's own order.
+    A seed changes the starting area and the area order inside the difficulty
+    arc. No seed keeps the brief's own order, then still steps off an area
+    that already opened the previous session.
     """
     n = max(0, int(n))
     topics = _topics_from_brief(brief_content)
     plan_seed = seed or (brief_content or {}).get("plan_seed")
     if plan_seed and len(topics) > 1:
-        shift = random.Random(str(plan_seed)).randrange(len(topics))
+        rng = random.Random(str(plan_seed))
+        shift = rng.randrange(len(topics))
         topics = topics[shift:] + topics[:shift]
+        if len(topics) > 2:
+            left, right = rng.sample(range(len(topics)), 2)
+            topics[left], topics[right] = topics[right], topics[left]
+    topics = _steer_topics(topics, _avoid_names(brief_content))
     profile = active_profile(brief_content)
     programming = is_programming_brief(brief_content)
     slots: list[dict] = []
@@ -151,13 +209,17 @@ async def build_question_plan(brief_content: dict, n: int) -> list[dict]:
                             "candidate_angle_notes", ""
                         ),
                         "prior_areas": (brief_content or {}).get("prior_areas") or [],
+                        "prior_questions": (
+                            (brief_content or {}).get("prior_questions") or []
+                        )[-40:],
+                        "avoid_areas": (brief_content or {}).get("avoid_areas") or [],
                     },
                 },
                 schema=_PlanResponse,
             )
         normalized = _normalize_slots(result.slots, n)
         if normalized is not None:
-            return normalized
+            return _steer_opening(normalized, brief_content or {})
         log.warning("question_plan_invalid_llm_output", expected=n, got=len(result.slots))
     except Exception as exc:
         log.warning("question_plan_llm_failed", error=str(exc))
@@ -165,3 +227,29 @@ async def build_question_plan(brief_content: dict, n: int) -> list[dict]:
     return deterministic_question_plan(
         brief_content or {}, n, seed=(brief_content or {}).get("plan_seed")
     )
+
+
+def _steer_opening(slots: list[dict], brief_content: dict) -> list[dict]:
+    """Move a fresh area into slot 0 without changing the difficulty arc."""
+    avoid = _avoid_names(brief_content)
+    if len(_topics_from_brief(brief_content)) <= 1 or not avoid or not slots:
+        return slots
+    if (slots[0].get("topic") or "").strip().lower() not in avoid:
+        return slots
+    for index in range(1, len(slots)):
+        if (slots[index].get("topic") or "").strip().lower() in avoid:
+            continue
+        first = dict(slots[0])
+        other = dict(slots[index])
+        slots[0] = {
+            **first,
+            "topic": other["topic"],
+            "objective": other["objective"],
+        }
+        slots[index] = {
+            **other,
+            "topic": first["topic"],
+            "objective": first["objective"],
+        }
+        return slots
+    return slots

@@ -165,6 +165,17 @@ export interface BriefContent {
   clarification_message?: string;
 }
 
+export interface OpenSession {
+  id: string;
+  mode: string;
+  status: string;
+  question_index: number;
+  max_turns: number;
+  answered_count: number;
+  created_at?: string | null;
+  duration_minutes?: number | null;
+}
+
 export interface Progression {
   track_id: string;
   strict_completed: number;

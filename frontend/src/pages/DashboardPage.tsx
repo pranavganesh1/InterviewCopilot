@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
+import StartInterviewModal from "../components/StartInterviewModal";
 import UserAvatar from "../components/UserAvatar";
 import {
   api,
@@ -70,6 +71,7 @@ export default function DashboardPage() {
   const [topicFilter, setTopicFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [menuTrackId, setMenuTrackId] = useState<string | null>(null);
+  const [startTrack, setStartTrack] = useState<Track | null>(null);
   const [form, setForm] = useState({
     track_type: "topic",
     subject: "",
@@ -407,12 +409,13 @@ export default function DashboardPage() {
                           <span className="text-[11px] text-slate-400">{t.status}</span>
                         )}
                       </div>
-                      <Link
-                        to={`/tracks/${t.id}`}
-                        className="mt-1 block text-lg font-semibold text-slate-900 hover:text-indigo-700"
+                      <button
+                        type="button"
+                        onClick={() => setStartTrack(t)}
+                        className="mt-1 block text-left text-lg font-semibold text-slate-900 hover:text-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
                       >
                         {t.subject}
-                      </Link>
+                      </button>
                       <p className="mt-0.5 text-sm text-slate-500">
                         {trackDescription(t)}
                       </p>
@@ -442,15 +445,16 @@ export default function DashboardPage() {
                           View Report
                         </span>
                       )}
-                      <Link
-                        to={`/tracks/${t.id}`}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                      <button
+                        type="button"
+                        onClick={() => setStartTrack(t)}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
                       >
                         <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
                           <path d="M8 5v14l11-7L8 5Z" />
                         </svg>
                         Start Interview
-                      </Link>
+                      </button>
                       <div className="relative">
                         <button
                           type="button"
@@ -598,6 +602,10 @@ export default function DashboardPage() {
           </div>
         </aside>
       </div>
+      <StartInterviewModal
+        track={startTrack ? { id: startTrack.id, subject: startTrack.subject } : null}
+        onClose={() => setStartTrack(null)}
+      />
     </div>
   );
 }

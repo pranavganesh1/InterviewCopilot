@@ -1,21 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { requestLeave } from "../lib/leaveGuard";
 import UserAvatar from "./UserAvatar";
 
 export default function AppHeader() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
+  const { pathname } = useLocation();
+  const [menuPath, setMenuPath] = useState<string | null>(null);
+  const open = menuPath === pathname;
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!menuRef.current?.contains(e.target as Node)) setMenuPath(null);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") setMenuPath(null);
     };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -30,7 +33,15 @@ export default function AppHeader() {
   return (
     <header className="sticky top-0 z-40 overflow-x-clip border-b border-indigo-100/80 bg-white/95 backdrop-blur">
       <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center gap-2 px-3 py-3 sm:gap-6 sm:px-4">
-        <Link to="/" className="shrink-0 text-sm font-bold tracking-tight text-slate-900 sm:text-base">
+        <Link
+          to="/"
+          onClick={(event) => {
+            if (requestLeave({ kind: "href", href: "/", focus: event.currentTarget })) {
+              event.preventDefault();
+            }
+          }}
+          className="shrink-0 text-sm font-bold tracking-tight text-slate-900 sm:text-base"
+        >
           Interview<span className="text-indigo-600">Copilot</span>
         </Link>
 
@@ -38,6 +49,11 @@ export default function AppHeader() {
           <NavLink
             to="/"
             end
+            onClick={(event) => {
+              if (requestLeave({ kind: "href", href: "/", focus: event.currentTarget })) {
+                event.preventDefault();
+              }
+            }}
             className={({ isActive }) =>
               `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
                 isActive
@@ -50,6 +66,11 @@ export default function AppHeader() {
           </NavLink>
           <NavLink
             to="/onboarding"
+            onClick={(event) => {
+              if (requestLeave({ kind: "href", href: "/onboarding", focus: event.currentTarget })) {
+                event.preventDefault();
+              }
+            }}
             className={({ isActive }) =>
               `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
                 isActive
@@ -63,6 +84,11 @@ export default function AppHeader() {
           {user.is_admin && (
             <NavLink
               to="/admin"
+              onClick={(event) => {
+                if (requestLeave({ kind: "href", href: "/admin", focus: event.currentTarget })) {
+                  event.preventDefault();
+                }
+              }}
               className={({ isActive }) =>
                 `rounded-md px-3 py-1.5 text-sm ${
                   isActive ? "bg-amber-100 font-medium text-amber-800" : "text-amber-700 hover:bg-amber-50"
@@ -106,7 +132,7 @@ export default function AppHeader() {
               data-testid="nav-profile"
               aria-expanded={open}
               aria-haspopup="menu"
-              onClick={() => setOpen((v) => !v)}
+              onClick={() => setMenuPath(open ? null : pathname)}
               className="flex items-center gap-1 rounded-full p-0.5 ring-2 ring-transparent transition hover:ring-indigo-200 focus-visible:outline-none focus-visible:ring-indigo-400"
             >
               <UserAvatar
@@ -135,7 +161,13 @@ export default function AppHeader() {
                 <Link
                   role="menuitem"
                   to="/profile"
-                  onClick={() => setOpen(false)}
+                  onClick={(event) => {
+                    if (requestLeave({ kind: "href", href: "/profile", focus: event.currentTarget })) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setMenuPath(null);
+                  }}
                   className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-slate-700 hover:bg-indigo-50"
                 >
                   <span className="grid h-7 w-7 place-items-center rounded-lg bg-indigo-50 text-indigo-600">
@@ -148,7 +180,13 @@ export default function AppHeader() {
                 <Link
                   role="menuitem"
                   to="/profile#history"
-                  onClick={() => setOpen(false)}
+                  onClick={(event) => {
+                    if (requestLeave({ kind: "href", href: "/profile#history", focus: event.currentTarget })) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setMenuPath(null);
+                  }}
                   className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-slate-700 hover:bg-indigo-50"
                 >
                   <span className="grid h-7 w-7 place-items-center rounded-lg bg-violet-50 text-violet-600">
@@ -161,7 +199,13 @@ export default function AppHeader() {
                 <Link
                   role="menuitem"
                   to="/profile"
-                  onClick={() => setOpen(false)}
+                  onClick={(event) => {
+                    if (requestLeave({ kind: "href", href: "/profile", focus: event.currentTarget })) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setMenuPath(null);
+                  }}
                   className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-slate-700 hover:bg-indigo-50"
                 >
                   <span className="grid h-7 w-7 place-items-center rounded-lg bg-slate-100 text-slate-600">
@@ -175,10 +219,14 @@ export default function AppHeader() {
                 <button
                   role="menuitem"
                   type="button"
-                  onClick={async () => {
-                    setOpen(false);
-                    await signOut();
-                    navigate("/");
+                  onClick={async (event) => {
+                    const run = async () => {
+                      setMenuPath(null);
+                      await signOut();
+                      navigate("/");
+                    };
+                    if (requestLeave({ kind: "action", run, focus: event.currentTarget })) return;
+                    await run();
                   }}
                   className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-rose-600 hover:bg-rose-50"
                 >

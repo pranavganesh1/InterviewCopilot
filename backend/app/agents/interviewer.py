@@ -6,7 +6,12 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agents.coding_review import CODING_STATIC_REVIEW_RULES
-from app.agents.question_dedupe import duplicate_of, is_duplicate_question, normalize_question
+from app.agents.question_dedupe import (
+    concept_fingerprint,
+    duplicate_of,
+    is_duplicate_question,
+    normalize_question,
+)
 from app.agents.question_quality import (
     SINGLE_FOCUS_RULE,
     mcq_violation,
@@ -18,7 +23,7 @@ from app.agents.question_quality import (
     strict_praise_violation,
     strip_strict_praise,
 )
-from app.agents.session_pool import pick_pool_question
+from app.agents.session_pool import least_recent_text, pick_pool_question
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.gateway.llm import llm_model_used
@@ -41,7 +46,7 @@ STRICT_REACTION_RULE = """
 Strict reactions:
 - Never evaluate the previous answer. Forbidden openers include "I see", "Let's explore",
   "Let's dive deeper", "Good", "Great", "Nice", "Interesting", "Right", "Okay so",
-  "Exactly", "Good start", "That's right", and "Not quite".
+  "Exactly", "Good start", "Let's start with the basics", "That's right", and "Not quite".
 - A neutral lead-in is optional and must NOT be part of next_question. Allowed spoken
   lead-ins, kept out of the stored question: "Thanks. Next topic:" / "Understood. Moving on."
   / "Let's continue with <area>."
@@ -466,18 +471,46 @@ def _known_questions(payload: dict) -> list[str]:
 def _prompt_payload(payload: dict) -> dict:
     """Cap track history before it is sent to the model. Selection still sees it all."""
     history = [str(q) for q in payload.get("prior_track_questions") or [] if q]
-    return {**payload, "prior_track_questions": [q[:160] for q in history[-40:]]}
+    areas = [str(area) for area in payload.get("prior_areas") or [] if area]
+    visible = {key: value for key, value in payload.items() if key != "prior_fingerprints"}
+    return {
+        **visible,
+        "prior_areas": areas[-24:],
+        "prior_track_questions": [q[:160] for q in history[-40:]],
+    }
+
+
+def _fingerprint(text: str) -> tuple[str, ...]:
+    return tuple(sorted(concept_fingerprint(text)))
+
+
+def _known_fingerprints(payload: dict) -> set[tuple[str, ...]]:
+    found: set[tuple[str, ...]] = set()
+    for raw in payload.get("prior_fingerprints") or []:
+        fingerprint = tuple(raw)
+        if len(fingerprint) >= 4:
+            found.add(fingerprint)
+    for text in _known_questions(payload):
+        fingerprint = _fingerprint(text)
+        if len(fingerprint) >= 4:
+            found.add(fingerprint)
+    return found
 
 
 def _unused_bank_entries(payload: dict) -> list[dict]:
     asked = _known_questions(payload)
+    fingerprints = _known_fingerprints(payload)
     unused: list[dict] = []
     for entry in payload.get("question_bank") or []:
         if not isinstance(entry, dict):
             continue
         question = (entry.get("question") or "").strip()
-        if question and not is_duplicate_question(question, asked):
-            unused.append(entry)
+        if not question or is_duplicate_question(question, asked):
+            continue
+        fingerprint = _fingerprint(question)
+        if len(fingerprint) >= 4 and fingerprint in fingerprints:
+            continue
+        unused.append(entry)
     return unused
 
 
@@ -528,6 +561,7 @@ def _prefer_unused_bank(decision: TurnDecision, payload: dict) -> TurnDecision:
         return decision
     mode = (payload.get("mode") or "strict").lower()
     brief = payload.get("brief") if isinstance(payload.get("brief"), dict) else {}
+    avoid = [area for area in payload.get("avoid_areas") or [] if area]
     if brief.get("pool"):
         chosen = pick_pool_question(
             [entry for entry in payload.get("question_bank") or [] if isinstance(entry, dict)],
@@ -539,11 +573,18 @@ def _prefer_unused_bank(decision: TurnDecision, payload: dict) -> TurnDecision:
             history=[q for q in payload.get("prior_track_questions") or [] if q],
             covered_areas=list(payload.get("covered_areas") or []),
             mode=mode,
+            fingerprints=[tuple(fp) for fp in payload.get("prior_fingerprints") or []],
+            avoid_areas=avoid,
+            reuse=False,
         )
         if chosen:
             return decision.model_copy(update=_fields_from_bank(chosen, decision))
         return decision
     unused = _unused_bank_entries(payload)
+    if avoid:
+        steered = [entry for entry in unused if (entry.get("area") or "") not in set(avoid)]
+        if steered:
+            unused = steered
     if not unused:
         return decision
     current = (decision.next_question or "").strip()
@@ -969,6 +1010,14 @@ async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> Tu
         )
         forced = force_unique_decision(decision, routed)
         if forced.decision != "complete" and decision_violation(forced, routed):
+            reused = least_recent_text(
+                [q for q in routed.get("prior_track_questions") or [] if q],
+                [q for q in routed.get("asked_questions") or [] if q],
+            )
+            if reused:
+                return forced.model_copy(
+                    update={"decision": "next_area", "next_question": reused}
+                )
             return forced.model_copy(update={"decision": "complete", "next_question": ""})
         return forced
 
