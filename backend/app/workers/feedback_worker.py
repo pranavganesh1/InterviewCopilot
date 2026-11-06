@@ -19,6 +19,7 @@ from app.core.logging import configure_logging, get_logger
 from app.db.sqlalchemy import SessionFactory
 from app.models.feedback import FeedbackReport
 from app.models.interview import InterviewSession
+from app.models.track import Track
 from app.services import events
 from app.services.feedback_service import process_session_feedback
 
@@ -120,6 +121,39 @@ async def process_event(data: bytes, *, num_delivered: int = 1) -> dict:
         return result if isinstance(result, dict) else {"ok": True}
 
 
+async def author_pending_tracks(db, limit: int = 50) -> int:
+    """Author briefs for tracks still in brief_status "authoring" (M11)."""
+    from app.services.track_service import author_brief_for_track
+
+    pending = (
+        (
+            await db.execute(
+                select(Track)
+                .where(
+                    Track.brief_status == "authoring",
+                    Track.archived_at.is_(None),
+                )
+                .order_by(Track.created_at)
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not pending:
+        return 0
+    done = 0
+    for t in pending:
+        try:
+            await author_brief_for_track(db, t.id)
+            done += 1
+        except Exception as exc:
+            t.brief_status = "failed"
+            await db.commit()
+            log.error("track_authoring_failed", track_id=str(t.id), error=str(exc)[:160])
+    return done
+
+
 async def catch_up_once(min_age_seconds: int = 0, limit: int = 20) -> int:
     """Process completed sessions that still lack a FeedbackReport.
 
@@ -196,7 +230,10 @@ async def catch_up_once(min_age_seconds: int = 0, limit: int = 20) -> int:
 
 
 async def run_catch_up() -> None:
-    """CLI one-shot: process every eligible completed session (min_age 0)."""
+    """CLI one-shot: process completed sessions missing reports AND author
+    briefs for tracks still in "authoring" (M11 async track creation)."""
+    async with SessionFactory() as db:
+        await author_pending_tracks(db)
     await catch_up_once(min_age_seconds=0, limit=10_000)
 
 
