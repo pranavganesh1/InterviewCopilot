@@ -29,7 +29,6 @@ async def lifespan(app: FastAPI):
         await app.state.mongo_db.onboarding_conversations.create_index("user_id", unique=True)
     app.state.nats = await connect_nats()
     yield
-    app.state.mongo_client.close()
     if app.state.nats is not None:
         with suppress(Exception):
             await app.state.nats.drain()
