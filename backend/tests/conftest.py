@@ -19,10 +19,16 @@ def _stub_question_plan_llm(monkeypatch):
     quota pressure (gateway backoff). Tests get the deterministic plan — the
     LLM path is covered by dedicated mocked tests in test_question_plan.py.
     """
+
+    async def _stub(brief_content, n):
+        return question_plan.deterministic_question_plan(
+            brief_content, n, seed=(brief_content or {}).get("plan_seed")
+        )
+
     monkeypatch.setattr(
         question_plan,
         "build_question_plan",
-        lambda brief_content, n: question_plan.deterministic_question_plan(brief_content, n),
+        _stub,
     )
 
 
