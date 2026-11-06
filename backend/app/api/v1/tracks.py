@@ -1,7 +1,7 @@
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,8 +65,46 @@ async def create_track(
 
 
 @router.get("")
-async def list_tracks(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    return await track_service.list_tracks(db, user)
+async def list_tracks(
+    include_archived: bool = Query(default=False),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await track_service.list_tracks(db, user, include_archived=include_archived)
+
+
+@router.delete("/{track_id}")
+async def delete_track(
+    track_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await track_service.archive_track(db, user, track_id)
+    except track_service.UnfinishedInterviewError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "unfinished_interview",
+                "message": "Finish or close your unfinished interview first",
+                "session_id": str(exc.session_id),
+            },
+        ) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+    return result
+
+
+@router.post("/{track_id}/restore")
+async def restore_track(
+    track_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await track_service.restore_track(db, user, track_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+    return result
 
 
 @router.get("/{track_id}")

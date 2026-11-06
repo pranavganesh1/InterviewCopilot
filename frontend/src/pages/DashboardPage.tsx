@@ -1,8 +1,10 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
+import DeleteTrackDialog from "../components/DeleteTrackDialog";
 import StartInterviewModal from "../components/StartInterviewModal";
+import TrackOptionsMenu from "../components/TrackOptionsMenu";
 import TrackTypePicker from "../components/TrackTypePicker";
 import UserAvatar from "../components/UserAvatar";
 import {
@@ -89,15 +91,27 @@ function scoreDelta(assessments: AssessmentSummary[]): string | null {
   return `${delta > 0 ? "+" : ""}${delta}%`;
 }
 
+type PendingDelete = {
+  track: Track;
+  attempts: number;
+  reports: number;
+  returnFocus: HTMLElement | null;
+};
+
 export default function DashboardPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
   const [topicFilter, setTopicFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
+  const [showDeleted, setShowDeleted] = useState(false);
   const [menuTrackId, setMenuTrackId] = useState<string | null>(null);
   const [startTrack, setStartTrack] = useState<Track | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [leavingId, setLeavingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: string; subject: string } | null>(null);
   const [form, setForm] = useState({
     track_type: "topic",
     subject: "",
@@ -107,8 +121,9 @@ export default function DashboardPage() {
   const [touched, setTouched] = useState({ subject: false, company: false, jd: false });
 
   const tracks = useQuery({
-    queryKey: ["tracks"],
-    queryFn: () => api<Track[]>("/tracks"),
+    queryKey: ["tracks", showDeleted],
+    queryFn: () =>
+      api<Track[]>(showDeleted ? "/tracks?include_archived=true" : "/tracks"),
   });
 
   const assessments = useQuery({
@@ -134,6 +149,20 @@ export default function DashboardPage() {
       qc.invalidateQueries({ queryKey: ["tracks"] });
     },
   });
+
+  const restore = useMutation({
+    mutationFn: (id: string) => api(`/tracks/${id}/restore`, { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tracks"] });
+      qc.invalidateQueries({ queryKey: ["me-assessments"] });
+    },
+  });
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   const subjectError =
     form.subject.length > SUBJECT_MAX
@@ -224,10 +253,40 @@ export default function DashboardPage() {
     return list;
   }, [tracks.data, search, topicFilter, sortKey, byTrack]);
 
-  const progressLabel = scoreDelta(assessmentList);
-  const recent = assessmentList.slice(0, 5);
+  const visibleAssessments = assessmentList.filter((item) => !item.track_archived);
+  const activeTrackCount = trackList.filter((item) => !item.archived).length;
+  const progressLabel = scoreDelta(visibleAssessments);
+  const recent = visibleAssessments.slice(0, 5);
   const avgScore = dash?.average_score ?? null;
   const interviewsTaken = dash?.completed_interviews ?? 0;
+
+  function closeDeleteDialog() {
+    const focus = pendingDelete?.returnFocus;
+    setPendingDelete(null);
+    focus?.focus();
+  }
+
+  function onTrackDeleted(track: Track) {
+    setPendingDelete(null);
+    setLeavingId(track.id);
+    const wait = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 160;
+    window.setTimeout(() => {
+      setLeavingId(null);
+      qc.setQueryData<Track[]>(["tracks", showDeleted], (current) =>
+        (current ?? []).filter((item) => item.id !== track.id),
+      );
+      void qc.invalidateQueries({ queryKey: ["tracks"] });
+      void qc.invalidateQueries({ queryKey: ["me-assessments"] });
+      setToast({ id: track.id, subject: track.subject });
+    }, wait);
+  }
+
+  async function undoDelete() {
+    if (!toast) return;
+    const target = toast;
+    setToast(null);
+    await restore.mutateAsync(target.id);
+  }
 
   return (
     <div className="space-y-6">
@@ -391,7 +450,7 @@ export default function DashboardPage() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Total Tracks"
-          value={String(trackList.length)}
+          value={String(activeTrackCount)}
           icon={
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
               <path d="M4 19h4V9H4v10Zm6 0h4V5h-4v14Zm6 0h4v-7h-4v7Z" />
@@ -456,6 +515,18 @@ export default function DashboardPage() {
                 className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pr-3 pl-10 text-sm outline-none ring-indigo-100 focus:border-indigo-300 focus:ring-2"
               />
             </label>
+            <button
+              type="button"
+              aria-pressed={showDeleted}
+              onClick={() => setShowDeleted((value) => !value)}
+              className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                showDeleted
+                  ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                  : "border-slate-200 bg-white text-slate-600"
+              }`}
+            >
+              Show deleted
+            </button>
             <select
               value={topicFilter}
               onChange={(e) => setTopicFilter(e.target.value)}
@@ -506,7 +577,9 @@ export default function DashboardPage() {
               return (
                 <article
                   key={t.id}
-                  className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-200/40 sm:p-5"
+                  className={`rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-200/40 sm:p-5 ${
+                    menuTrackId === t.id ? "relative z-20" : "relative"
+                  } ${t.archived ? "opacity-60" : ""} ${leavingId === t.id ? "track-card-leave" : ""}`}
                 >
                   <div className="flex flex-wrap items-start gap-4">
                     <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-indigo-100 text-indigo-600">
@@ -525,7 +598,9 @@ export default function DashboardPage() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => setStartTrack(t)}
+                        onClick={() => {
+                          if (!t.archived) setStartTrack(t);
+                        }}
                         className="mt-1 block text-left text-lg font-semibold text-slate-900 hover:text-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
                       >
                         {t.subject}
@@ -559,52 +634,47 @@ export default function DashboardPage() {
                           View Report
                         </span>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => setStartTrack(t)}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-                      >
-                        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
-                          <path d="M8 5v14l11-7L8 5Z" />
-                        </svg>
-                        Start Interview
-                      </button>
-                      <div className="relative">
+                      {t.archived ? (
                         <button
                           type="button"
-                          aria-label="Track options"
-                          onClick={() =>
-                            setMenuTrackId((id) => (id === t.id ? null : t.id))
-                          }
-                          className="grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                          disabled={restore.isPending}
+                          onClick={() => restore.mutate(t.id)}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-60"
                         >
-                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-                            <circle cx="12" cy="5" r="1.5" />
-                            <circle cx="12" cy="12" r="1.5" />
-                            <circle cx="12" cy="19" r="1.5" />
-                          </svg>
+                          Restore
                         </button>
-                        {menuTrackId === t.id && (
-                          <div className="absolute right-0 z-10 mt-1 w-40 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
-                            <Link
-                              to={`/tracks/${t.id}`}
-                              onClick={() => setMenuTrackId(null)}
-                              className="block px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50"
-                            >
-                              Open track
-                            </Link>
-                            {latest && (
-                              <Link
-                                to={`/tracks/${t.id}/report/${latest.session_id}`}
-                                onClick={() => setMenuTrackId(null)}
-                                className="block px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50"
-                              >
-                                Latest report
-                              </Link>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setStartTrack(t)}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                        >
+                          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
+                            <path d="M8 5v14l11-7L8 5Z" />
+                          </svg>
+                          Start Interview
+                        </button>
+                      )}
+                      <TrackOptionsMenu
+                        trackId={t.id}
+                        open={menuTrackId === t.id}
+                        latestReportTo={
+                          latest ? `/tracks/${t.id}/report/${latest.session_id}` : null
+                        }
+                        showDelete={!t.archived}
+                        onToggle={() =>
+                          setMenuTrackId((id) => (id === t.id ? null : t.id))
+                        }
+                        onClose={() => setMenuTrackId(null)}
+                        onDelete={(button) =>
+                          setPendingDelete({
+                            track: t,
+                            attempts,
+                            reports: attempts,
+                            returnFocus: button,
+                          })
+                        }
+                      />
                     </div>
                   </div>
                 </article>
@@ -656,9 +726,9 @@ export default function DashboardPage() {
                 </li>
                 <li>
                   <span className="font-semibold text-slate-900">
-                    {trackList.length}
+                    {activeTrackCount}
                   </span>{" "}
-                  Track{trackList.length === 1 ? "" : "s"}
+                  Track{activeTrackCount === 1 ? "" : "s"}
                 </li>
               </ul>
             </div>
@@ -720,6 +790,40 @@ export default function DashboardPage() {
         track={startTrack ? { id: startTrack.id, subject: startTrack.subject } : null}
         onClose={() => setStartTrack(null)}
       />
+      {pendingDelete && (
+        <DeleteTrackDialog
+          track={pendingDelete.track}
+          attempts={pendingDelete.attempts}
+          reports={pendingDelete.reports}
+          onCancel={closeDeleteDialog}
+          onDeleted={() => onTrackDeleted(pendingDelete.track)}
+          onResume={(sessionId) => {
+            const trackId = pendingDelete.track.id;
+            setPendingDelete(null);
+            navigate(`/tracks/${trackId}/interview/${sessionId}`);
+          }}
+          onFinished={(sessionId) => {
+            const trackId = pendingDelete.track.id;
+            setPendingDelete(null);
+            navigate(`/tracks/${trackId}/report/${sessionId}`);
+          }}
+        />
+      )}
+      {toast && (
+        <div
+          role="status"
+          className="fixed bottom-4 left-1/2 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded-full bg-slate-900 px-4 py-2 text-sm text-white shadow-lg"
+        >
+          Track deleted
+          <button
+            type="button"
+            onClick={() => void undoDelete()}
+            className="font-semibold text-indigo-200 hover:text-white"
+          >
+            Undo
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -248,30 +248,34 @@ async def list_assessments_for_user(db: AsyncSession, user_id) -> dict:
 
     for report, track, session in rows:
         content = report.content if isinstance(report.content, dict) else {}
+        archived = track.archived_at is not None
         attempted = len(content.get("question_assessments") or [])
-        questions_attempted += attempted
         score = overall_score_from_content(content)
-        if score is not None:
-            scores.append(score)
+        if not archived:
+            questions_attempted += attempted
+            if score is not None:
+                scores.append(score)
 
-        for s in content.get("strengths") or []:
-            if s:
-                strength_counter[str(s)] += 1
-        for s in content.get("improvement_areas") or []:
-            if s:
-                improve_counter[str(s)] += 1
-        for s in content.get("recommendations") or []:
-            if s:
-                recommend_counter[str(s)] += 1
-        for comp in content.get("competency_assessments") or []:
-            name = comp.get("competency_name")
-            level = comp.get("level")
-            if not name:
-                continue
-            if level in ("strong", "solid"):
-                strength_counter[str(name)] += 2
-            elif level in ("weak", "developing"):
-                improve_counter[str(name)] += 2
+        if not archived:
+            for s in content.get("strengths") or []:
+                if s:
+                    strength_counter[str(s)] += 1
+            for s in content.get("improvement_areas") or []:
+                if s:
+                    improve_counter[str(s)] += 1
+            for s in content.get("recommendations") or []:
+                if s:
+                    recommend_counter[str(s)] += 1
+        if not archived:
+            for comp in content.get("competency_assessments") or []:
+                name = comp.get("competency_name")
+                level = comp.get("level")
+                if not name:
+                    continue
+                if level in ("strong", "solid"):
+                    strength_counter[str(name)] += 2
+                elif level in ("weak", "developing"):
+                    improve_counter[str(name)] += 2
 
         assessments.append(
             {
@@ -286,6 +290,7 @@ async def list_assessments_for_user(db: AsyncSession, user_id) -> dict:
                 "questions_attempted": attempted,
                 "max_turns": get_settings().interview_max_turns,
                 "status": "completed",
+                "track_archived": archived,
                 "summary_overview": content.get("summary_overview") or "",
                 "strengths": content.get("strengths") or [],
                 "improvement_areas": content.get("improvement_areas") or [],
@@ -294,7 +299,7 @@ async def list_assessments_for_user(db: AsyncSession, user_id) -> dict:
 
     return {
         "dashboard": {
-            "completed_interviews": len(assessments),
+            "completed_interviews": sum(1 for item in assessments if not item["track_archived"]),
             "average_score": int(round(sum(scores) / len(scores))) if scores else None,
             "total_questions_attempted": questions_attempted,
             "strongest_skills": [k for k, _ in strength_counter.most_common(5)],

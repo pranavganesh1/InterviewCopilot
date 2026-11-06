@@ -217,6 +217,8 @@ async def start_session(
     track_brief = await get_track_with_brief(db, user, track_id)
     if track_brief is None:
         raise LookupError("track_not_found")
+    if track_brief["track"].get("archived"):
+        raise PermissionError("track_archived")
     if track_brief["brief"] is None:
         raise LookupError("brief_not_found")
 

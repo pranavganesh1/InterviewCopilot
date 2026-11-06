@@ -246,7 +246,13 @@ async def user_detail(
             "estimated_cost_usd": round(float(c.get("estimated_cost_usd") or 0), 4),
         },
         "tracks": [
-            {"id": str(t.id), "subject": t.subject, "track_type": t.track_type} for t in tracks
+            {
+                "id": str(t.id),
+                "subject": t.subject,
+                "track_type": t.track_type,
+                "archived": t.archived_at is not None,
+            }
+            for t in tracks
         ],
         "sessions": [
             {

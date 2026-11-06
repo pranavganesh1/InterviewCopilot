@@ -1,10 +1,12 @@
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.question_quality import subject_problem
 from app.agents.track_creator import build_track_creator_graph
+from app.models.interview import InterviewSession
 from app.models.track import InterviewBrief, Track
 from app.models.user import User
 from app.services.vault_service import vault_summary
@@ -100,10 +102,18 @@ async def create_track_with_brief(
     return {"track": _track_dict(track), "brief": _brief_dict(brief)}
 
 
-async def list_tracks(db: AsyncSession, user: User) -> list[dict]:
-    result = await db.execute(
-        select(Track).where(Track.user_id == user.id).order_by(Track.created_at.desc())
-    )
+class UnfinishedInterviewError(Exception):
+    def __init__(self, session_id: uuid.UUID):
+        self.session_id = session_id
+
+
+async def list_tracks(
+    db: AsyncSession, user: User, *, include_archived: bool = False
+) -> list[dict]:
+    stmt = select(Track).where(Track.user_id == user.id)
+    if not include_archived:
+        stmt = stmt.where(Track.archived_at.is_(None))
+    result = await db.execute(stmt.order_by(Track.created_at.desc()))
     tracks = []
     for t in result.scalars().all():
         latest = await _latest_brief(db, t.id)
@@ -111,6 +121,48 @@ async def list_tracks(db: AsyncSession, user: User) -> list[dict]:
         d["brief_version"] = latest.version if latest else 0
         tracks.append(d)
     return tracks
+
+
+async def _owned_track(db: AsyncSession, user: User, track_id: uuid.UUID) -> Track | None:
+    track = await db.get(Track, track_id)
+    if track is None or track.user_id != user.id:
+        return None
+    return track
+
+
+async def archive_track(db: AsyncSession, user: User, track_id: uuid.UUID) -> dict | None:
+    """Hide a track from the owner's lists. Rows are left in place."""
+    track = await _owned_track(db, user, track_id)
+    if track is None:
+        return None
+    if track.archived_at is None:
+        result = await db.execute(
+            select(InterviewSession)
+            .where(
+                InterviewSession.track_id == track.id,
+                InterviewSession.user_id == user.id,
+                InterviewSession.status == "in_progress",
+            )
+            .order_by(InterviewSession.created_at.desc())
+        )
+        open_session = result.scalars().first()
+        if open_session is not None:
+            raise UnfinishedInterviewError(open_session.id)
+        track.archived_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(track)
+    return {"track": _track_dict(track)}
+
+
+async def restore_track(db: AsyncSession, user: User, track_id: uuid.UUID) -> dict | None:
+    track = await _owned_track(db, user, track_id)
+    if track is None:
+        return None
+    if track.archived_at is not None:
+        track.archived_at = None
+        await db.commit()
+        await db.refresh(track)
+    return {"track": _track_dict(track)}
 
 
 async def get_track_with_brief(db: AsyncSession, user: User, track_id: uuid.UUID) -> dict | None:
@@ -138,6 +190,8 @@ def _track_dict(t: Track) -> dict:
         "subject": t.subject,
         "company": t.company,
         "status": t.status,
+        "archived": t.archived_at is not None,
+        "archived_at": t.archived_at.isoformat() if t.archived_at else None,
         "created_at": t.created_at.isoformat(),
     }
 
