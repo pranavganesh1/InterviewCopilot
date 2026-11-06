@@ -1,5 +1,4 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
 import {
   LANGUAGE_TABS,
@@ -35,7 +34,8 @@ type Props = {
   assistPending: boolean;
   submitPending: boolean;
   submitError: string | null;
-  leaveHref: string;
+  onLeave: (source: HTMLElement) => void;
+  onDraftChange: (dirty: boolean) => void;
   onAssist: () => void;
   onSubmit: (answer: string) => void;
 };
@@ -53,7 +53,8 @@ export default function CodingWorkspace({
   assistPending,
   submitPending,
   submitError,
-  leaveHref,
+  onLeave,
+  onDraftChange,
   onAssist,
   onSubmit,
 }: Props) {
@@ -67,6 +68,11 @@ export default function CodingWorkspace({
 
   const sections = useMemo(() => parseProblemSections(question), [question]);
   const code = codeByLang[language];
+  const draftDirty = code.trim().length > 0 && code !== STARTER_CODE[language];
+  useEffect(() => {
+    onDraftChange(draftDirty);
+    return () => onDraftChange(false);
+  }, [draftDirty, onDraftChange]);
   const monacoLang =
     LANGUAGE_TABS.find((t) => t.id === language)?.monaco ?? "python";
   const canAssist =
@@ -214,12 +220,13 @@ export default function CodingWorkspace({
             {submitError && (
               <span className="text-xs text-red-600">{submitError}</span>
             )}
-            <Link
-              to={leaveHref}
+            <button
+              type="button"
+              onClick={(event) => onLeave(event.currentTarget)}
               className="ml-auto text-sm text-stone-500 hover:text-indigo-600 hover:underline"
             >
               Leave session
-            </Link>
+            </button>
           </div>
         </section>
 

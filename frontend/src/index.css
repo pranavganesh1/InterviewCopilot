@@ -3,3 +3,24 @@
 body {
   @apply bg-[#f6f4fb] text-slate-900 antialiased;
 }
+
+@keyframes start-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.start-modal-panel {
+  animation: start-modal-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start-modal-panel {
+    animation: none;
+  }
+}

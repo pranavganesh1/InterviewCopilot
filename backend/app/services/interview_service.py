@@ -390,6 +390,7 @@ async def get_open_session(db: AsyncSession, user: User, track_id) -> dict | Non
     question_index = (
         turns[-1].turn_index if turns and turns[-1].answer is None else answered + 1
     )
+    created = getattr(session, "created_at", None)
     return {
         "session": {
             "id": str(session.id),
@@ -398,6 +399,8 @@ async def get_open_session(db: AsyncSession, user: User, track_id) -> dict | Non
             "question_index": question_index,
             "max_turns": get_settings().interview_max_turns,
             "answered_count": answered,
+            "created_at": created.isoformat() if created is not None else None,
+            "duration_minutes": int(getattr(session, "duration_minutes", None) or 60),
         }
     }
 

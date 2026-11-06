@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import CodingWorkspace from "../components/CodingWorkspace";
@@ -11,6 +11,7 @@ import {
   type TurnEvaluation,
   type TurnResult,
 } from "../lib/api";
+import { requestLeave, setLeaveGuard } from "../lib/leaveGuard";
 import { isCodeFriendly, resolveKind } from "../lib/questionKind";
 
 const DEFAULT_MAX_TURNS = 15;
@@ -45,6 +46,7 @@ export default function InterviewPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [answer, setAnswer] = useState("");
+  const [codeDirty, setCodeDirty] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
   const [latestHint, setLatestHint] = useState<AssistanceResult["assistance"] | null>(
@@ -129,6 +131,29 @@ export default function InterviewPage() {
   const turns = session.data?.turns ?? [];
   const interviewDone =
     completed || session.data?.session.status === "completed";
+  const guardActive = !!session.data && !interviewDone;
+  const finishRef = useRef(finishEarly.mutateAsync);
+
+  useEffect(() => {
+    finishRef.current = finishEarly.mutateAsync;
+    if (!guardActive) {
+      setLeaveGuard(null);
+      return;
+    }
+    setLeaveGuard({
+      active: true,
+      dirty: answer.trim().length > 0 || codeDirty,
+      timed: (session.data?.session.duration_minutes ?? 0) > 0,
+      finish: () => finishRef.current().then(() => undefined),
+    });
+  }, [guardActive, answer, codeDirty, session.data?.session.duration_minutes, finishEarly.mutateAsync]);
+
+  useEffect(() => () => setLeaveGuard(null), []);
+
+  const leaveSession = (source: HTMLElement) => {
+    const href = `/tracks/${trackId}`;
+    if (!requestLeave({ kind: "href", href, focus: source })) navigate(href);
+  };
   const isGuided = session.data?.session.mode === "guided";
   const openQuestion = [...turns].reverse().find((t) => t.answer === null);
   const maxTurns = session.data?.session.max_turns ?? DEFAULT_MAX_TURNS;
@@ -377,7 +402,8 @@ export default function InterviewPage() {
             submitError={
               submit.error instanceof Error ? submit.error.message : null
             }
-            leaveHref={`/tracks/${trackId}`}
+            onLeave={leaveSession}
+            onDraftChange={setCodeDirty}
             onAssist={() => assist.mutate()}
             onSubmit={(payload) =>
               submit.mutate({
@@ -643,12 +669,13 @@ export default function InterviewPage() {
             </Link>
           )}
 
-          <Link
-            to={`/tracks/${trackId}`}
+          <button
+            type="button"
+            onClick={(event) => leaveSession(event.currentTarget)}
             className="text-center text-sm text-stone-500 hover:text-indigo-600 hover:underline sm:ml-auto"
           >
             Leave session
-          </Link>
+          </button>
         </div>
       )}
     </div>
