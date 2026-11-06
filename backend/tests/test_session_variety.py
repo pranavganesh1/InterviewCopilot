@@ -279,9 +279,7 @@ def test_strict_strips_openers_from_bank_and_generated_questions():
 
 
 def test_strict_strips_bank_openers_and_repairs_a_stacked_question():
-    opener = (
-        "I see. Let's explore a bit further. Why does a hash table use chaining?"
-    )
+    opener = "I see. Let's explore a bit further. Why does a hash table use chaining?"
     stacked = "How do you slice a list and what happens if the index is too large?"
     payload = {
         "mode": "strict",
@@ -498,9 +496,7 @@ async def test_three_sessions_open_on_different_areas_and_a_refresh_is_stable(
     bank = []
     for area_index, area in enumerate(AREAS):
         for copy in range(2):
-            bank.append(
-                _entry(area_index * 2 + copy, "foundational", "conceptual", area)
-            )
+            bank.append(_entry(area_index * 2 + copy, "foundational", "conceptual", area))
 
     async with SessionFactory() as db:
         user = User(google_sub=f"sub-{uuid.uuid4()}", email=f"variety-{uuid.uuid4()}@example.com")
@@ -539,9 +535,7 @@ async def test_three_sessions_open_on_different_areas_and_a_refresh_is_stable(
             assert started.status_code == 201
             turn = started.json()["turn"]
             sid = started.json()["session"]["id"]
-            refreshed = await client.get(
-                f"/api/v1/sessions/{sid}", cookies={"ic_access": token}
-            )
+            refreshed = await client.get(f"/api/v1/sessions/{sid}", cookies={"ic_access": token})
             assert refreshed.status_code == 200
             assert refreshed.json()["turns"][0]["question"] == turn["question"]
             assert refreshed.json()["turns"][0]["question_area"] == turn["question_area"]

@@ -286,9 +286,8 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
         last_turn.assisted = bool(last_turn.assistance_level and last_turn.assistance_level > 0)
         await db.commit()
     elif (
-        (last_turn.answer or "").strip() == answer.strip()
-        and last_turn.evaluation_coverage is None
-    ):
+        last_turn.answer or ""
+    ).strip() == answer.strip() and last_turn.evaluation_coverage is None:
         # Quota/503 left the answer saved and the turn unevaluated. Retry
         # scores this same turn instead of opening another one.
         pass
@@ -413,9 +412,7 @@ async def get_open_session(db: AsyncSession, user: User, track_id) -> dict | Non
         return {"session": None}
     turns = await _turns(db, session.id)
     answered = sum(1 for turn in turns if turn.answer is not None)
-    question_index = (
-        turns[-1].turn_index if turns and turns[-1].answer is None else answered + 1
-    )
+    question_index = turns[-1].turn_index if turns and turns[-1].answer is None else answered + 1
     created = getattr(session, "created_at", None)
     return {
         "session": {

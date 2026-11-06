@@ -48,14 +48,16 @@ async def create_track(
     if body.track_type == "company_jd" and not body.jd_text:
         raise HTTPException(status_code=422, detail="company_jd tracks require jd_text")
     try:
-        return _redact_track_payload(await track_service.create_track_with_brief(
-            db,
-            user,
-            track_type=body.track_type,
-            subject=body.subject,
-            company=body.company,
-            jd_text=body.jd_text,
-        ))
+        return _redact_track_payload(
+            await track_service.create_track_with_brief(
+                db,
+                user,
+                track_type=body.track_type,
+                subject=body.subject,
+                company=body.company,
+                jd_text=body.jd_text,
+            )
+        )
     except LLMGatewayError as exc:
         # Free-tier rate limits surface as 503 with a retry hint, not a raw 500.
         raise HTTPException(

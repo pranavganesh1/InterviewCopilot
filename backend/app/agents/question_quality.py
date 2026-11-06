@@ -64,9 +64,7 @@ _CATEGORIES = {
 _LEGACY_TYPES = {"conceptual", "behavioral", "mcq", "coding", "code_read"}
 
 # 8 conceptual, 3 mcq, 2 code_read, 2 coding = 15. Repeats if the plan is longer.
-_PROGRAMMING_MIX = (
-    ["conceptual"] * 8 + ["mcq"] * 3 + ["code_read"] * 2 + ["coding"] * 2
-)
+_PROGRAMMING_MIX = ["conceptual"] * 8 + ["mcq"] * 3 + ["code_read"] * 2 + ["coding"] * 2
 # Closest 15-slot splits of the suggested percentages. Difficulty still comes
 # from the plan index; later slots are the more applied formats.
 _MIXES = {
@@ -121,9 +119,7 @@ def is_programming_brief(brief: dict | None, subject: str = "") -> bool:
     return is_programming_text(subject, brief.get("summary") or "", topics)
 
 
-def format_for_slot(
-    index: int, *, programming: bool = False, profile: dict | None = None
-) -> str:
+def format_for_slot(index: int, *, programming: bool = False, profile: dict | None = None) -> str:
     """Pick a question format. A domain profile wins; otherwise the regex flag."""
     if profile:
         mix = _mix_for_profile(profile)
@@ -411,9 +407,9 @@ def score_mcq(answer: str, correct_index) -> tuple[str, list[str], list[str]]:
 
 
 def numeric_violation(expected, tolerance, unit: str) -> str | None:
-    if isinstance(expected, bool) or not isinstance(expected, (int, float)):
+    if isinstance(expected, bool) or not isinstance(expected, int | float):
         return "numeric needs one expected value"
-    if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)):
+    if isinstance(tolerance, bool) or not isinstance(tolerance, int | float):
         return "numeric needs a tolerance fraction"
     if not 0 <= float(tolerance) <= 1:
         return "numeric tolerance must be between 0 and 1"

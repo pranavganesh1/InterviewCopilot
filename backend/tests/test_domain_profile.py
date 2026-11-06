@@ -16,11 +16,7 @@ from app.agents.question_quality import (
     verifier_view,
 )
 from app.agents.track_creator import (
-    BankJudgeVerdict,
-    BankQuestion,
-    BankVerification,
     InterviewBriefContent,
-    build_track_creator_graph,
     run_track_creator_turn,
 )
 from app.services.interview_service import _turn_dict
@@ -76,24 +72,30 @@ def test_subject_mixes_and_antenna_arrays_are_not_code_by_regex():
         ),
         "ECE": _profile(),
         "Pharmacy": _profile(
-            category="medical", uses_math=True, risk_level="standard",
+            category="medical",
+            uses_math=True,
+            risk_level="standard",
             allowed_types=["conceptual", "mcq", "case_study", "numeric"],
         ),
         "World History": _profile(
-            category="humanities", uses_math=False,
+            category="humanities",
+            uses_math=False,
             allowed_types=["conceptual", "mcq", "case_study"],
         ),
         "Geography": _profile(
-            category="humanities", uses_math=False,
+            category="humanities",
+            uses_math=False,
             allowed_types=["conceptual", "mcq", "case_study"],
         ),
         "Game Design": _profile(
-            category="creative", uses_math=False,
+            category="creative",
+            uses_math=False,
             allowed_types=["conceptual", "mcq", "case_study"],
         ),
         "Medicine": _profile(category="medical", uses_math=True),
         "Business": _profile(
-            category="business", uses_math=False,
+            category="business",
+            uses_math=False,
             allowed_types=["conceptual", "mcq", "case_study"],
         ),
     }
@@ -140,9 +142,7 @@ def test_numeric_scoring_and_hidden_expected_value():
         question_area="Circuits",
         question="What is the voltage?",
         question_type="numeric",
-        evaluation_detail={
-            "question_meta": {"expected_value": 5, "unit": "V", "tolerance": 0.01}
-        },
+        evaluation_detail={"question_meta": {"expected_value": 5, "unit": "V", "tolerance": 0.01}},
     )
     hidden = _turn_dict(turn)
     assert hidden["unit"] == "V"
@@ -165,9 +165,7 @@ async def test_vague_subject_does_not_build_a_bank(monkeypatch):
         raise AssertionError("bank should not be generated")
 
     monkeypatch.setattr(svc, "run_bank_builder_turn", boom)
-    brief = await svc.build_track_creator_brief(
-        objective={"subject": "science"}, vault_summary=[]
-    )
+    brief = await svc.build_track_creator_brief(objective={"subject": "science"}, vault_summary=[])
     assert brief["question_bank"] == []
     assert "more specific" in brief["clarification_message"]
 
@@ -189,72 +187,6 @@ def test_verification_agreement_and_payload_hides_the_key():
 
 
 @pytest.mark.asyncio
-async def test_disagreeing_verifier_drops_and_agreeing_one_keeps(monkeypatch):
-    monkeypatch.setattr("app.agents.track_creator.BANK_CALL_SPACING_S", 0)
-    profile = _profile()
-    raw = BankQuestion(
-        area="Circuits",
-        question="What voltage does a 2 ohm resistor drop at 2.5 A?",
-        difficulty="intermediate",
-        type="numeric",
-        expected_answer_sketch="Ohm's law.",
-        key_points=POINTS,
-        expected_value=5,
-        unit="V",
-        tolerance=0.01,
-        explanation="V = IR.",
-    )
-
-    async def author(**_kwargs):
-        return InterviewBriefContent(
-            summary="ECE practice",
-            domain_profile=profile,
-        )
-
-    async def bank(**_kwargs):
-        return [raw]
-
-    async def judge(**_kwargs):
-        return BankJudgeVerdict(verdicts=[{"index": 0, "accept": True, "reason": "clear"}])
-
-    seen: dict = {}
-
-    async def disagree(**kwargs):
-        seen["questions"] = kwargs["questions"]
-        return BankVerification(results=[{"index": 0, "numeric_value": 1, "unsure": False}])
-
-    dropped = build_track_creator_graph(
-        turn_runner=author,
-        bank_runner=bank,
-        judge_runner=judge,
-        regen_runner=bank,
-        verify_runner=disagree,
-    )
-    result = await dropped.ainvoke(
-        {"objective": {"subject": "ECE antennas"}, "vault_summary": [], "meta": {}}
-    )
-    assert result["brief"]["question_bank"] == []
-    assert "expected_value" not in seen["questions"][0]
-
-    async def agree(**_kwargs):
-        return BankVerification(results=[{"index": 0, "numeric_value": 5, "unsure": False}])
-
-    kept = build_track_creator_graph(
-        turn_runner=author,
-        bank_runner=bank,
-        judge_runner=judge,
-        regen_runner=bank,
-        verify_runner=agree,
-    )
-    result = await kept.ainvoke(
-        {"objective": {"subject": "ECE antennas"}, "vault_summary": [], "meta": {}}
-    )
-    bank_rows = result["brief"]["question_bank"]
-    assert len(bank_rows) == 1
-    assert bank_rows[0]["verified"] is True
-    assert bank_rows[0]["expected_value"] == 5
-
-
 @pytest.mark.asyncio
 async def test_prompt_injection_stays_inside_the_subject_block(monkeypatch):
     captured: dict = {}

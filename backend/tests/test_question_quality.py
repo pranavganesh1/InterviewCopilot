@@ -23,9 +23,7 @@ from app.services.feedback_report_builder import enrich_assessments_with_turns
 from app.services.interview_service import _turn_dict
 
 OPTIONS = ["O(1) average", "O(n) average", "O(log n) average", "O(n log n) average"]
-STACKED = (
-    "How do you access, slice and handle out-of-bounds errors in Python versus Java?"
-)
+STACKED = "How do you access, slice and handle out-of-bounds errors in Python versus Java?"
 
 
 def _decision(**overrides) -> TurnDecision:

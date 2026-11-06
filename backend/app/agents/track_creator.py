@@ -35,6 +35,12 @@ Rules:
   covers. Include areas probing the candidate's own claimed projects (candidate_angle_notes).
 - preparation_plan: 5-8 concrete study actions for the student.
 - summary: one paragraph on what this interview examines and why it fits the objective.
+- question_bank: exactly 3-5 ANCHOR questions. Each tests a DIFFERENT learning
+  objective, spread across question_areas, difficulty arc foundational -> advanced.
+  type: coding only when answering requires writing actual code. Each question must
+  be self-contained and answerable in plain text. expected_answer_sketch: one
+  sentence (max ~120 chars) on what a strong answer covers. They will be
+  deduplicated automatically — near-paraphrases are dropped, so make each distinct.
 - domain_profile: classify the subject. category is programming, engineering, science,
   medical, humanities, business, creative, or other. uses_code is true only when writing
   or reading code is a normal part of this interview. uses_math is true when a numeric
@@ -415,141 +421,22 @@ def build_track_creator_graph(
         return {"brief": content.model_dump()}
 
     async def build_bank(state: TrackCreatorState) -> dict:
+        """Local validation only: the bank arrives inside the brief (single call).
+        Drops near-duplicates; never blocks track creation."""
         from app.agents.question_dedupe import is_duplicate_question
 
         brief = state["brief"]
-        objective = state["objective"]
-        subject = str(objective.get("subject") or "")
-        profile = active_profile(brief, subject)
-        programming = (
-            bool(profile["uses_code"]) if profile else is_programming_brief(brief, subject)
-        )
-        regen = regen_runner or bank_runner
-        target = 3 * get_settings().interview_max_turns
-        all_accepted: list[dict] = []
-        blocked: list[str] = []
-        batches = 0
-        try:
-            while len(all_accepted) < target and batches < 12:
-                batches += 1
-                before = len(all_accepted)
-                try:
-                    await asyncio.sleep(BANK_CALL_SPACING_S)
-                    questions = await bank_runner(
-                        objective=objective,
-                        brief={
-                            **brief,
-                            "accepted_questions": [
-                                q.get("question", "") for q in all_accepted
-                            ][:40],
-                        },
-                        meta=state.get("meta") or None,
-                    )
-                    pending = [q.model_dump() for q in questions]
-                except Exception as exc:
-                    log.warning("bank_generation_failed", error=str(exc))
-                    if not all_accepted:
-                        return {"brief": {**brief, "question_bank": []}}
-                    break
-
-                for round_no in range(2):
-                    candidates: list[dict] = []
-                    rejects: list[tuple[dict, str]] = []
-                    for q in pending:
-                        prepared = prepare_bank_question(
-                            q, programming=programming, profile=profile
-                        )
-                        if prepared is None:
-                            _remember_blocked(blocked, q)
-                            rejects.append((q, "failed single-focus or format validation"))
-                            continue
-                        q = prepared
-                        text = q.get("question", "")
-                        against = (
-                            [a.get("question", "") for a in all_accepted]
-                            + [c.get("question", "") for c in candidates]
-                            + blocked
-                        )
-                        if not text or any(is_duplicate_question(text, [s]) for s in against if s):
-                            _remember_blocked(blocked, q)
-                            rejects.append((q, "duplicates an earlier bank question"))
-                            continue
-                        candidates.append(q)
-
-                    if not candidates:
-                        break
-
-                    judged_idx: set[int] = set()
-                    accepted_now: list[int] = []
-                    try:
-                        await asyncio.sleep(BANK_CALL_SPACING_S)
-                        verdict = await judge_runner(
-                            objective=objective,
-                            questions=[{**q, "index": i} for i, q in enumerate(candidates)],
-                            meta=state.get("meta") or None,
-                        )
-                        for v in verdict.verdicts:
-                            idx = v.index
-                            if not (0 <= idx < len(candidates)):
-                                continue
-                            judged_idx.add(idx)
-                            if v.accept:
-                                accepted_now.append(idx)
-                            else:
-                                _remember_blocked(blocked, candidates[idx])
-                                rejects.append((candidates[idx], v.reason or "rejected"))
-                    except Exception as exc:
-                        log.warning("bank_judge_failed", error=str(exc))
-
-                    if profile:
-                        agreed = await _verified_indexes(
-                            verify_runner, objective, candidates, state.get("meta") or None
-                        )
-                        for idx in accepted_now:
-                            if idx in agreed:
-                                all_accepted.append({**candidates[idx], "verified": True})
-                            else:
-                                _remember_blocked(blocked, candidates[idx])
-                                rejects.append(
-                                    (candidates[idx], "verification disagreed or was unsure")
-                                )
-                        for i, q in enumerate(candidates):
-                            if i not in judged_idx:
-                                _remember_blocked(blocked, q)
-                                rejects.append((q, "question was not judged"))
-                    else:
-                        for idx in accepted_now:
-                            all_accepted.append(candidates[idx])
-                        for i, q in enumerate(candidates):
-                            if i not in judged_idx:
-                                all_accepted.append(q)
-
-                    if not rejects or round_no == 1:
-                        log.info(
-                            "bank_built", accepted=len(all_accepted), rejected=len(rejects)
-                        )
-                        break
-
-                    try:
-                        questions = await regen(
-                            objective=objective,
-                            brief=brief,
-                            regenerate_indices=list(range(len(rejects))),
-                            meta=state.get("meta") or None,
-                        )
-                        pending = [q.model_dump() for q in questions]
-                    except Exception as exc:
-                        log.warning("bank_regeneration_failed", error=str(exc))
-                        break
-                if len(all_accepted) == before:
-                    break
-        except Exception as exc:
-            log.warning("bank_validation_failed", error=str(exc))
-
-        stored = {**brief, "question_bank": all_accepted}
-        if all_accepted:
-            stored["pool"] = {"target": target}
-        return {"brief": stored}
+        bank: list[dict] = []
+        seen: list[str] = []
+        for q in brief.get("question_bank") or []:
+            text = (q.get("question") or "").strip()
+            if not text:
+                continue
+            if any(is_duplicate_question(text, [s]) for s in seen):
+                continue
+            seen.append(text)
+            bank.append(q)
+        return {"brief": {**brief, "question_bank": bank}}
 
     graph = StateGraph(TrackCreatorState)
     graph.add_node("author", author)

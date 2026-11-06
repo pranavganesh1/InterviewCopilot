@@ -124,9 +124,7 @@ def _steer_topics(topics: list[str], avoid: set[str]) -> list[str]:
     return fresh + [topic for topic in topics if topic.lower() in avoid]
 
 
-def deterministic_question_plan(
-    brief_content: dict, n: int, seed: str | None = None
-) -> list[dict]:
+def deterministic_question_plan(brief_content: dict, n: int, seed: str | None = None) -> list[dict]:
     """Build n slots from brief topics/competencies without an LLM call.
 
     A seed changes the starting area and the area order inside the difficulty
@@ -209,9 +207,9 @@ async def build_question_plan(brief_content: dict, n: int) -> list[dict]:
                             "candidate_angle_notes", ""
                         ),
                         "prior_areas": (brief_content or {}).get("prior_areas") or [],
-                        "prior_questions": (
-                            (brief_content or {}).get("prior_questions") or []
-                        )[-40:],
+                        "prior_questions": ((brief_content or {}).get("prior_questions") or [])[
+                            -40:
+                        ],
                         "avoid_areas": (brief_content or {}).get("avoid_areas") or [],
                     },
                 },

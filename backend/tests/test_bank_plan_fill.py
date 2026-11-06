@@ -90,11 +90,7 @@ async def test_bank_then_generated_fills_fifteen_distinct(monkeypatch):
             "mode": "strict",
             "brief": BRIEF,
             "asked_questions": list(asked),
-            "question_bank": [
-                entry
-                for entry in BANK
-                if entry["question"] not in set(asked)
-            ],
+            "question_bank": [entry for entry in BANK if entry["question"] not in set(asked)],
             "questions_asked": index,
             "questions_remaining": 15 - index,
             "question_plan_slot": plan[index],

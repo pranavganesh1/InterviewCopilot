@@ -88,9 +88,7 @@ def main() -> None:
     args = parser.parse_args()
     samples = _load_samples()
     runs = max(1, int(args.runs))
-    asyncio.run(
-        _dry_run(samples, runs) if args.dry else _live_run(samples, runs, model=args.model)
-    )
+    asyncio.run(_dry_run(samples, runs) if args.dry else _live_run(samples, runs, model=args.model))
 
 
 if __name__ == "__main__":

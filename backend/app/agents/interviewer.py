@@ -534,9 +534,7 @@ def _fields_from_bank(entry: dict, decision: TurnDecision) -> dict:
         "objective": entry.get("objective") or entry.get("area") or "",
         "options": list(entry.get("options") or []),
         "correct_index": entry.get("correct_index"),
-        "option_explanation": entry.get("explanation")
-        or entry.get("expected_answer_sketch")
-        or "",
+        "option_explanation": entry.get("explanation") or entry.get("expected_answer_sketch") or "",
         "code_snippet": entry.get("code_snippet") or "",
         "scenario": entry.get("scenario") or "",
         "key_points": list(entry.get("key_points") or []),
@@ -1015,9 +1013,7 @@ async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> Tu
                 [q for q in routed.get("asked_questions") or [] if q],
             )
             if reused:
-                return forced.model_copy(
-                    update={"decision": "next_area", "next_question": reused}
-                )
+                return forced.model_copy(update={"decision": "next_area", "next_question": reused})
             return forced.model_copy(update={"decision": "complete", "next_question": ""})
         return forced
 
