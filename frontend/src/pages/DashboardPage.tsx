@@ -9,6 +9,7 @@ import TrackTypePicker from "../components/TrackTypePicker";
 import UserAvatar from "../components/UserAvatar";
 import StatCard from "../components/ui/StatCard";
 import ProgressRing from "../components/ui/ProgressRing";
+import SectionHeader from "../components/ui/SectionHeader";
 import {
   api,
   type AssessmentSummary,
@@ -292,14 +293,10 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">
-            Preparation tracks
-          </h1>
-          <p className="mt-1 text-sm text-ink-soft">
-            Each track has its own interviews, feedback, and progression.
-          </p>
-        </div>
+        <SectionHeader
+          title="Preparation tracks"
+          subtitle="Each track has its own interviews, feedback, and progression."
+        />
         <button
           type="button"
           onClick={() => setShowForm((v) => !v)}
