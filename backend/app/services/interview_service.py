@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.assistance import (
@@ -13,7 +13,13 @@ from app.agents.assistance import (
 )
 from app.agents.interviewer import TurnDecision, build_interviewer_graph
 from app.agents.question_plan import build_question_plan
+from app.agents.question_quality import (
+    is_programming_brief,
+    public_question_meta,
+    score_mcq,
+)
 from app.core.config import get_settings
+from app.gateway.llm import llm_model_used
 from app.models.interview import InterviewSession, SessionTurn
 from app.models.user import User
 from app.services.events import publish_feedback_job
@@ -66,6 +72,7 @@ def build_covered_so_far(
                 "topic": slot.get("topic") or "",
                 "objective": slot.get("objective") or "",
                 "difficulty": slot.get("difficulty") or "intermediate",
+                "format": slot.get("format") or "conceptual",
             }
 
     weak_areas: list[dict] = []
@@ -125,16 +132,50 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
     session = await _owned_session(db, user, session_id)
     if session.status != "in_progress":
         raise LookupError("session_not_active")
+    # Deadline already passed: finish through the same path as manual complete,
+    # and do not store the late answer.
+    if _minutes_remaining(session) <= 0:
+        await _finish(db, session, nc=nc)
+        raise LookupError("deadline_passed")
     last_turn = await _latest_turn(db, session.id)
-    if last_turn is None or last_turn.answer is not None:
+    if last_turn is None:
         raise LookupError("no_open_question")
-    last_turn.answer = answer
-    last_turn.answered_at = datetime.now(UTC)
-    last_turn.assisted = bool(last_turn.assistance_level and last_turn.assistance_level > 0)
-    await db.commit()
+    if last_turn.answer is None:
+        last_turn.answer = answer
+        last_turn.answered_at = datetime.now(UTC)
+        last_turn.assisted = bool(last_turn.assistance_level and last_turn.assistance_level > 0)
+        await db.commit()
+    elif (
+        (last_turn.answer or "").strip() == answer.strip()
+        and last_turn.evaluation_coverage is None
+    ):
+        # Quota/503 left the answer saved and the turn unevaluated. Retry
+        # scores this same turn instead of opening another one.
+        pass
+    else:
+        raise LookupError("no_open_question")
 
     track_brief = await get_track_with_brief(db, user, session.track_id)
     decision = await _decide(db, session, track_brief["brief"]["content"], last_answer=answer)
+    if (last_turn.question_type or "") == "mcq":
+        stored = (
+            last_turn.evaluation_detail if isinstance(last_turn.evaluation_detail, dict) else {}
+        )
+        question_meta = stored.get("question_meta") if isinstance(stored, dict) else {}
+        correct = question_meta.get("correct_index") if isinstance(question_meta, dict) else None
+        coverage, strengths, gaps = score_mcq(answer, correct)
+        decision = decision.model_copy(
+            update={
+                "evaluation": decision.evaluation.model_copy(
+                    update={
+                        "coverage": coverage,
+                        "strengths": strengths,
+                        "gaps": gaps,
+                        "expected_answer_explanation": "",
+                    }
+                )
+            }
+        )
 
     # M9.2: time is the primary governor — hard-complete at the deadline.
     time_up = _minutes_remaining(session) <= 0
@@ -152,8 +193,14 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
         "evaluator_checks": list(getattr(decision, "evaluator_checks", None) or []),
     }
     # Coding answers are reviewed statically — never executed in this product yet.
+    prior = last_turn.evaluation_detail if isinstance(last_turn.evaluation_detail, dict) else {}
+    if isinstance(prior, dict) and prior.get("question_meta"):
+        detail["question_meta"] = prior["question_meta"]
     if (last_turn.question_type or "").lower() == "coding":
         detail["executed"] = False
+    used_model = getattr(decision, "model", None) or llm_model_used.get()
+    if used_model:
+        detail["model"] = used_model
     last_turn.evaluation_detail = detail
     last_turn.interviewer_notes = decision.notes_for_report
     await db.commit()
@@ -164,8 +211,7 @@ async def submit_answer(db: AsyncSession, user: User, session_id, answer: str, n
         or time_up
         or turns_so_far >= get_settings().interview_max_turns
     ):
-        if await _complete_if_needed(db, session):
-            await _dispatch_feedback(session, nc=nc)
+        await _finish(db, session, nc=nc)
         return {"completed": True, "evaluation": decision.evaluation.model_dump()}
 
     # Avoid creating a second open question if one somehow already exists.
@@ -193,7 +239,10 @@ async def get_session(db: AsyncSession, user: User, session_id) -> dict | None:
     turns = await _turns(db, session.id)
     return {
         "session": _session_dict(session),
-        "turns": [_turn_dict_full(t) for t in turns],
+        "turns": [
+            _turn_dict_full(t, reveal=session.mode == "guided" and t.answer is not None)
+            for t in turns
+        ],
     }
 
 
@@ -268,8 +317,7 @@ async def complete_session(db: AsyncSession, user: User, session_id, nc=None) ->
         session = await _owned_session(db, user, session_id)
     except LookupError:
         return None
-    if await _complete_if_needed(db, session):
-        await _dispatch_feedback(session, nc=nc)
+    await _finish(db, session, nc=nc)
     return {"session": _session_dict(session)}
 
 
@@ -359,10 +407,12 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
             "entry with a DIFFERENT question (never a rephrase of asked_questions)."
         ),
         "diversity_instruction": diversity,
+        "programming_track": is_programming_brief(brief_content),
     }
     if covered_so_far.get("next_planned_objective"):
         slot = covered_so_far["next_planned_objective"]
         payload["question_plan_slot"] = slot
+        payload["preferred_format"] = slot.get("format") or "conceptual"
         payload["diversity_instruction"] = (
             f"{diversity} Ask about this objective: {slot.get('objective', '')}."
         )
@@ -378,12 +428,22 @@ async def _decide(db: AsyncSession, session, brief_content: dict, *, last_answer
 
 async def _append_turn(db: AsyncSession, session, decision: TurnDecision) -> SessionTurn:
     index = (await _count_turns(db, session.id)) + 1
+    meta: dict = {}
+    if decision.objective:
+        meta["objective"] = decision.objective
+    if decision.question_type == "mcq" and decision.options:
+        meta["options"] = list(decision.options)
+        meta["correct_index"] = decision.correct_index
+        meta["explanation"] = decision.option_explanation
+    if decision.question_type == "code_read" and decision.code_snippet:
+        meta["code_snippet"] = decision.code_snippet
     turn = SessionTurn(
         session_id=session.id,
         turn_index=index,
         question_area=decision.question_area,
         question=decision.next_question,
         question_type=decision.question_type,
+        evaluation_detail={"question_meta": meta} if meta else None,
     )
     db.add(turn)
     await db.commit()
@@ -424,14 +484,37 @@ async def _latest_turn(db: AsyncSession, session_id) -> SessionTurn | None:
     return result.scalar_one_or_none()
 
 
+async def _finish(db: AsyncSession, session: InterviewSession, nc=None) -> bool:
+    """Complete the session and publish one feedback job.
+
+    Shared by manual finish and time expiry. A second caller sees the row
+    already completed and does not publish again.
+    """
+    if await _complete_if_needed(db, session):
+        await _dispatch_feedback(session, nc=nc)
+        return True
+    return False
+
+
 async def _complete_if_needed(db: AsyncSession, session: InterviewSession) -> bool:
-    """Mark the session completed. Returns True only on the first transition."""
-    if session.status == "completed":
-        return False
-    session.status = "completed"
-    session.completed_at = datetime.now(UTC)
+    """Mark the session completed. Returns True only on the first transition.
+
+    The UPDATE is conditional so two overlapping finish calls (expiry and
+    the Finish button) cannot both win.
+    """
+    now = datetime.now(UTC)
+    result = await db.execute(
+        update(InterviewSession)
+        .where(
+            InterviewSession.id == session.id,
+            InterviewSession.status != "completed",
+        )
+        .values(status="completed", completed_at=now)
+    )
+    won = result.rowcount == 1
     await db.commit()
-    return True
+    await db.refresh(session)
+    return won
 
 
 def _minutes_remaining(session: InterviewSession) -> float:
@@ -468,17 +551,19 @@ def _session_dict(s: InterviewSession) -> dict:
     }
 
 
-def _turn_dict(t: SessionTurn) -> dict:
-    return {
+def _turn_dict(t: SessionTurn, *, reveal: bool = False) -> dict:
+    body = {
         "turn_index": t.turn_index,
         "question_area": t.question_area,
         "question": t.question,
         "question_type": t.question_type,
     }
+    body.update(public_question_meta(t.evaluation_detail, reveal=reveal))
+    return body
 
 
-def _turn_dict_full(t: SessionTurn) -> dict:
-    d = _turn_dict(t)
+def _turn_dict_full(t: SessionTurn, *, reveal: bool = False) -> dict:
+    d = _turn_dict(t, reveal=reveal)
     d["answer"] = t.answer
     d["assisted"] = bool(t.assisted)
     d["assistance_level"] = t.assistance_level or 0

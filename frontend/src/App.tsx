@@ -1,4 +1,5 @@
-import { Link, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import type { ReactNode } from "react";
 import { useAuth } from "./context/AuthContext";
 import AppHeader from "./components/AppHeader";
 import DashboardPage from "./pages/DashboardPage";
@@ -11,6 +12,12 @@ import SignInPage from "./pages/SignInPage";
 import AdminOverviewPage from "./pages/AdminOverviewPage";
 import AdminUsersPage from "./pages/AdminUsersPage";
 import AdminUserDetailPage from "./pages/AdminUserDetailPage";
+
+function AdminOnly({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  if (!user?.is_admin) return <Navigate to="/" replace />;
+  return children;
+}
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -43,9 +50,30 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
           <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/admin" element={<AdminOverviewPage />} />
-          <Route path="/admin/users" element={<AdminUsersPage />} />
-          <Route path="/admin/users/:userId" element={<AdminUserDetailPage />} />
+          <Route
+            path="/admin"
+            element={
+              <AdminOnly>
+                <AdminOverviewPage />
+              </AdminOnly>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <AdminOnly>
+                <AdminUsersPage />
+              </AdminOnly>
+            }
+          />
+          <Route
+            path="/admin/users/:userId"
+            element={
+              <AdminOnly>
+                <AdminUserDetailPage />
+              </AdminOnly>
+            }
+          />
           <Route path="/tracks/:trackId" element={<TrackDetailPage />} />
           <Route
             path="/tracks/:trackId/interview/:sessionId"

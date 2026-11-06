@@ -26,6 +26,38 @@ async def _make_user(prefix: str = "u") -> tuple[User, str]:
     return user, create_access_token(str(user.id))
 
 
+ADMIN_PATHS = [
+    "/api/v1/admin/overview",
+    "/api/v1/admin/users",
+    "/api/v1/admin/users/00000000-0000-0000-0000-000000000001",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ADMIN_PATHS)
+async def test_admin_endpoints_401_when_logged_out(path):
+    from app.main import create_app
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(path)
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ADMIN_PATHS)
+async def test_admin_endpoints_403_for_non_admin(admin_env, clean_users_table, path):
+    _user, token = await _make_user("nonadmin")
+    from app.main import create_app
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(path, cookies={"ic_access": token})
+    assert response.status_code == 403
+
+
 @pytest.mark.asyncio
 async def test_overview_403_for_non_admin(admin_env, clean_users_table):
     user, token = await _make_user("nonadmin")

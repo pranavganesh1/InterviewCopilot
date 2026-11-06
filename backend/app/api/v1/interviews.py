@@ -98,6 +98,11 @@ async def submit_turn(
             detail="The LLM provider is rate-limited right now — please retry in a minute.",
         ) from exc
     except LookupError as exc:
+        if str(exc) == "deadline_passed":
+            raise HTTPException(
+                status_code=409,
+                detail="The interview deadline has passed",
+            ) from None
         if str(exc) == "no_open_question":
             raise HTTPException(
                 status_code=409, detail="No open question — session not active"

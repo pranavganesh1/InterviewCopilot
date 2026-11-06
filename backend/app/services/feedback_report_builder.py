@@ -36,6 +36,27 @@ def performance_level_from_score(score: int | None) -> str:
     return "Needs improvement"
 
 
+def _apply_question_meta(row: dict, turn: SessionTurn) -> None:
+    detail = turn.evaluation_detail if isinstance(turn.evaluation_detail, dict) else {}
+    meta = detail.get("question_meta") if isinstance(detail.get("question_meta"), dict) else {}
+    options = list(meta.get("options") or [])
+    if (turn.question_type or "") == "mcq" and options:
+        try:
+            chosen = int(str(turn.answer or "").strip())
+        except (TypeError, ValueError):
+            chosen = -1
+        row["chosen_option"] = (
+            options[chosen] if 0 <= chosen < len(options) else str(turn.answer or "")
+        )
+        correct = meta.get("correct_index")
+        if isinstance(correct, int) and 0 <= correct < len(options):
+            row["correct_option"] = options[correct]
+        if meta.get("explanation"):
+            row["explanation"] = meta["explanation"]
+    if meta.get("code_snippet"):
+        row["code_snippet"] = meta["code_snippet"]
+
+
 def enrich_assessments_with_turns(content: dict, answered_turns: list[SessionTurn]) -> dict:
     """Merge real Q&A + saved eval fields onto question_assessments (by turn_index)."""
     by_index = {t.turn_index: t for t in answered_turns}
@@ -70,6 +91,7 @@ def enrich_assessments_with_turns(content: dict, answered_turns: list[SessionTur
             if detail.get("executed") is False or (t.question_type or "").lower() == "coding":
                 row["executed"] = False
                 row["review_label"] = AI_REVIEWED_NOT_EXECUTED
+            _apply_question_meta(row, t)
         enriched.append(row)
 
     # Ensure every answered turn appears even if the agent omitted it.
@@ -97,6 +119,7 @@ def enrich_assessments_with_turns(content: dict, answered_turns: list[SessionTur
         if detail.get("executed") is False or (t.question_type or "").lower() == "coding":
             row["executed"] = False
             row["review_label"] = AI_REVIEWED_NOT_EXECUTED
+        _apply_question_meta(row, t)
         enriched.append(row)
     enriched.sort(key=lambda r: int(r.get("turn_index") or 0))
     content = {**content, "question_assessments": enriched}

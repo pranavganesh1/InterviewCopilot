@@ -41,10 +41,20 @@ export function resolveKind(turn: {
   question: string;
 }): QuestionKind {
   if (turn.question_type === "coding") return "coding";
-  if (turn.question_type === "conceptual" || turn.question_type === "behavioral") {
+  if (
+    turn.question_type === "conceptual" ||
+    turn.question_type === "behavioral" ||
+    turn.question_type === "mcq" ||
+    turn.question_type === "code_read"
+  ) {
     return "text";
   }
   return classifyQuestion(turn.question_area ?? "", turn.question);
+}
+
+/** Monospace answer box for questions whose answer is code or about code. */
+export function isCodeFriendly(questionType?: string | null): boolean {
+  return questionType === "code_read" || questionType === "coding";
 }
 
 export function parseProblemSections(question: string): {

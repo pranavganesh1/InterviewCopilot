@@ -7,8 +7,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agents.coding_review import CODING_STATIC_REVIEW_RULES
 from app.agents.question_dedupe import duplicate_of, is_duplicate_question, normalize_question
+from app.agents.question_quality import (
+    SINGLE_FOCUS_RULE,
+    mcq_violation,
+    question_focus_violation,
+    repair_single_focus,
+    strict_praise_violation,
+    strip_strict_praise,
+)
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.gateway.llm import llm_model_used
 from app.gateway.structured import structured_completion
 
 log = get_logger(__name__)
@@ -18,15 +27,22 @@ _MAX_REPAIR_ATTEMPTS = 2  # initial call + up to 2 repairs = 3 LLM calls max
 PERSONA_BLOCK = """
 Persona (human interviewer):
 - Warm, curious, professional; light humour at most once every few questions — never mocking.
-- After a prior answer, start next_question with ONE short human reaction
-  (e.g. "Nice, that's a clean way to put it." / "Good start — let's go a bit deeper."),
-  then ask exactly ONE concise question (max ~2 sentences). No lists of sub-questions.
-- Use natural topic transitions ("Let's switch gears to …"). Occasionally follow up on
-  something the candidate actually said.
+- next_question is ONLY the question. Do not store a reaction in that field.
+- Ask exactly ONE concise question (max two short sentences). No lists of sub-questions.
 - Use covered_so_far / memory_instruction when present.
-- STRICT: reactions are neutral and encouraging only — never say whether the answer was
-  right or wrong, never hint or teach. GUIDED: gentle coaching tone is ok; full answers
-  still belong in the assistance API, not in next_question.
+"""
+STRICT_REACTION_RULE = """
+Strict reactions:
+- Never evaluate the previous answer. Forbidden openers include "Good start", "Nice",
+  "That's right", "Not quite", and "let's dive deeper".
+- A neutral lead-in is optional and must NOT be part of next_question. Allowed spoken
+  lead-ins, kept out of the stored question: "Thanks. Next topic:" / "Understood. Moving on."
+  / "Let's continue with <area>."
+"""
+GUIDED_REACTION_RULE = """
+Guided reactions:
+- You may keep a short encouraging reaction in next_question, such as
+  "Good start — let's go a bit deeper." Full answers still belong in the assistance API.
 """
 
 COVERAGE_RUBRIC = """Coverage rubric:
@@ -64,6 +80,8 @@ STRICT_QUESTION_SYSTEM_PROMPT = (
     """You are InterviewCopilot's interviewer in STRICT mode.
 """
     + PERSONA_BLOCK
+    + STRICT_REACTION_RULE
+    + SINGLE_FOCUS_RULE
     + """
 """
     + COVERAGE_RUBRIC
@@ -104,9 +122,12 @@ Rules:
 - When last_answer is null (opening question), leave evaluation lists empty and
   expected_answer_explanation / corrected_code / complexities empty.
 - If questions_remaining is 0, decision MUST be complete.
-- question_type: set "coding" ONLY when answering requires writing actual code.
-  Conceptual explanations, design discussions and behavioral stories are
-  "conceptual"/"behavioral" even inside DSA areas.
+- question_type is one of conceptual, behavioral, mcq, code_read, coding.
+  coding ONLY when the candidate must write code. code_read shows a short snippet
+  and asks one question about it (put the snippet in code_snippet). mcq has exactly
+  4 options and one correct_index; do not put the key in next_question.
+  Use preferred_format when it is set. If programming_track is false, never use
+  coding or code_read.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent.
 """
 )
@@ -115,6 +136,8 @@ GUIDED_QUESTION_SYSTEM_PROMPT = (
     """You are InterviewCopilot's interviewer in GUIDED mode.
 """
     + PERSONA_BLOCK
+    + GUIDED_REACTION_RULE
+    + SINGLE_FOCUS_RULE
     + """
 """
     + COVERAGE_RUBRIC
@@ -155,9 +178,12 @@ Rules:
 - When last_answer is null (opening question), leave evaluation lists empty and
   expected_answer_explanation / corrected_code / complexities empty.
 - If questions_remaining is 0, decision MUST be complete.
-- question_type: set "coding" ONLY when answering requires writing actual code.
-  Conceptual explanations, design discussions and behavioral stories are
-  "conceptual"/"behavioral" even inside DSA areas.
+- question_type is one of conceptual, behavioral, mcq, code_read, coding.
+  coding ONLY when the candidate must write code. code_read shows a short snippet
+  and asks one question about it (put the snippet in code_snippet). mcq has exactly
+  4 options and one correct_index; do not put the key in next_question.
+  Use preferred_format when it is set. If programming_track is false, never use
+  coding or code_read.
 - notes_for_report: 1-2 sentence evidence note for the feedback agent. Note if the
   candidate appeared to need coaching.
 """
@@ -191,8 +217,15 @@ class QuestionMove(BaseModel):
     decision: Literal["follow_up", "next_area", "complete"]
     next_question: str
     question_area: str
-    question_type: Literal["coding", "conceptual", "behavioral"] = "conceptual"
+    question_type: Literal["coding", "conceptual", "behavioral", "mcq", "code_read"] = (
+        "conceptual"
+    )
     notes_for_report: str = ""
+    options: list[str] = Field(default_factory=list)
+    correct_index: int | None = None
+    option_explanation: str = ""
+    code_snippet: str = ""
+    objective: str = ""
 
     @model_validator(mode="after")
     def _question_required_unless_complete(self) -> "QuestionMove":
@@ -210,11 +243,19 @@ class TurnDecision(BaseModel):
     decision: Literal["follow_up", "next_area", "complete"]
     next_question: str
     question_area: str
-    question_type: Literal["coding", "conceptual", "behavioral"] = "conceptual"
+    question_type: Literal["coding", "conceptual", "behavioral", "mcq", "code_read"] = (
+        "conceptual"
+    )
     notes_for_report: str = ""
+    options: list[str] = Field(default_factory=list)
+    correct_index: int | None = None
+    option_explanation: str = ""
+    code_snippet: str = ""
+    objective: str = ""
     # Persistence-only metadata (excluded from LLM schema / default dumps).
     evaluator_checks: list[str] = Field(default_factory=list, exclude=True)
     rubric_version: str = Field(default=RUBRIC_VERSION, exclude=True)
+    model: str | None = Field(default=None, exclude=True)
 
     @model_validator(mode="after")
     def _question_required_unless_complete(self) -> "TurnDecision":
@@ -299,6 +340,24 @@ def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
                 "next_question repeats or closely paraphrases a previously asked "
                 f"question: {collide[:120]}"
             )
+        focus = question_focus_violation(decision.next_question)
+        if focus:
+            return focus
+        if (payload.get("mode") or "").lower() == "strict":
+            praise = strict_praise_violation(decision.next_question)
+            if praise:
+                return praise
+        if decision.question_type == "mcq":
+            problem = mcq_violation(decision.options, decision.correct_index)
+            if problem:
+                return problem
+        if decision.question_type == "code_read" and not (decision.code_snippet or "").strip():
+            return "code_read question is missing its snippet"
+        if not payload.get("programming_track", True) and decision.question_type in (
+            "coding",
+            "code_read",
+        ):
+            return "code questions are only for programming tracks"
     return None
 
 
@@ -323,14 +382,95 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
         else:
             return decision.model_copy(update={"decision": "complete", "next_question": ""})
 
-    if decision.decision == "complete":
+    if decision.decision == "complete" and not _plan_still_open(payload, remaining_slots):
         return decision.model_copy(update={"next_question": decision.next_question or ""})
 
     if mode == "strict" and decision.next_question:
-        cleaned = strip_strict_spoilers(decision.next_question)
+        cleaned = strip_strict_praise(strip_strict_spoilers(decision.next_question))
         if cleaned != decision.next_question:
             decision = decision.model_copy(update={"next_question": cleaned})
+    if (
+        decision.decision != "complete"
+        and decision.next_question
+        and question_focus_violation(decision.next_question)
+    ):
+        repaired = repair_single_focus(decision.next_question)
+        if repaired != decision.next_question and not question_focus_violation(repaired):
+            decision = decision.model_copy(update={"next_question": repaired})
+
+    # A planned slot is still waiting. Keep going instead of ending early.
+    if decision.decision == "complete" and _plan_still_open(payload, remaining_slots):
+        decision = decision.model_copy(
+            update={
+                "decision": "next_area",
+                "next_question": (decision.next_question or "").strip()
+                or "Continue with the next planned objective.",
+                "question_area": (decision.question_area or "").strip() or "General",
+            }
+        )
+    decision = _prefer_unused_bank(decision, payload)
+    if not payload.get("programming_track", True) and decision.question_type in (
+        "coding",
+        "code_read",
+    ):
+        decision = decision.model_copy(
+            update={"question_type": "conceptual", "code_snippet": "", "options": []}
+        )
     return decision
+
+
+def _plan_still_open(payload: dict, remaining_slots) -> bool:
+    planned = payload.get("question_plan_slot") or (payload.get("covered_so_far") or {}).get(
+        "next_planned_objective"
+    )
+    return bool(planned) and remaining_slots is not None and int(remaining_slots) > 0
+
+
+def _unused_bank_entries(payload: dict) -> list[dict]:
+    asked = [q for q in payload.get("asked_questions") or [] if q]
+    unused: list[dict] = []
+    for entry in payload.get("question_bank") or []:
+        if not isinstance(entry, dict):
+            continue
+        question = (entry.get("question") or "").strip()
+        if question and not is_duplicate_question(question, asked):
+            unused.append(entry)
+    return unused
+
+
+_BANK_TYPES = ("coding", "conceptual", "behavioral", "mcq", "code_read")
+
+
+def _fields_from_bank(entry: dict, decision: TurnDecision) -> dict:
+    qtype = entry.get("type")
+    return {
+        "next_question": (entry.get("question") or "").strip(),
+        "question_area": (entry.get("area") or decision.question_area or "General"),
+        "question_type": qtype if qtype in _BANK_TYPES else decision.question_type,
+        "objective": entry.get("objective") or entry.get("area") or "",
+        "options": list(entry.get("options") or []),
+        "correct_index": entry.get("correct_index"),
+        "option_explanation": entry.get("explanation")
+        or entry.get("expected_answer_sketch")
+        or "",
+        "code_snippet": entry.get("code_snippet") or "",
+    }
+
+
+def _prefer_unused_bank(decision: TurnDecision, payload: dict) -> TurnDecision:
+    """Use a validated bank question before a generated one. Dedupe still applies."""
+    if decision.decision == "complete":
+        return decision
+    unused = _unused_bank_entries(payload)
+    if not unused:
+        return decision
+    current = (decision.next_question or "").strip()
+    for entry in unused:
+        question = (entry.get("question") or "").strip()
+        if current and is_duplicate_question(current, [question]):
+            return decision.model_copy(update=_fields_from_bank(entry, decision))
+    entry = unused[0]
+    return decision.model_copy(update=_fields_from_bank(entry, decision))
 
 
 _FALLBACK_STEMS = (
@@ -607,6 +747,7 @@ async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, li
             system=system,
             user_payload=eval_payload,
             schema=AnswerEvaluation,
+            model=payload.get("model") or "structured-json",
             temperature=0,
         )
         issues = evaluation_inconsistencies(ev, is_code=is_code)
@@ -746,7 +887,13 @@ async def run_interviewer_turn(*, payload: dict, meta: dict | None = None) -> Tu
 def build_interviewer_graph(turn_runner=run_interviewer_turn):
     async def evaluate(state: InterviewerState) -> dict:
         decision = await turn_runner(payload=state["payload"])
-        return {"decision": decision.model_dump()}
+        dumped = decision.model_dump()
+        # ContextVar set inside the gateway does not survive LangGraph's copy.
+        # Carry the alias out on the decision payload instead.
+        used = llm_model_used.get()
+        if used:
+            dumped["model"] = used
+        return {"decision": dumped}
 
     graph = StateGraph(InterviewerState)
     graph.add_node("evaluate", evaluate)
