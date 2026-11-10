@@ -25,6 +25,9 @@ test("non-admin is redirected away from admin routes", async ({ page }) => {
       },
     }),
   );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
+  );
   await page.route("**/api/v1/tracks", (route) => route.fulfill({ json: [] }));
 
   await page.goto("/admin");

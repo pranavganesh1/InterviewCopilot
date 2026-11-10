@@ -29,6 +29,22 @@ test.beforeEach(async ({ page }) => {
       },
     }),
   );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
+  );
+  await page.route("**/api/v1/tracks/*/weaknesses", (route) =>
+    route.fulfill({
+      json: {
+        track_id: "t1",
+        has_data: false,
+        weak: [],
+        improving: [],
+        mastered: [],
+        top_weak: [],
+        recommended_practice: [],
+      },
+    }),
+  );
   await page.route("**/api/v1/auth/logout", (route) =>
     route.fulfill({ json: { status: "ok" } }),
   );
@@ -106,6 +122,7 @@ test("track detail shows the question bank (M9)", async ({ page }) => {
 
   await page.goto("/tracks/t1");
   const bank = page.getByText(/Question bank \(2 pre-validated questions\)/);
+  await expect(bank).toBeVisible();
   await bank.click();
   await expect(
     page.getByText("Walk through how a Python dict resolves collisions."),

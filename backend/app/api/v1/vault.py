@@ -1,16 +1,21 @@
-import asyncio
+import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.onboarding import ITEM_CATEGORIES_SET, ExtractedItem
 from app.api.deps import get_current_user
-from app.db.s3 import ensure_bucket, get_s3_client
+from app.core.logging import get_logger
+from app.db.s3 import get_s3_client
 from app.db.sqlalchemy import get_db
+from app.gateway.llm import LLMGatewayError
 from app.models.user import User
-from app.services.resume_service import MAX_RESUME_BYTES, process_resume
+from app.services import readiness as readiness_service
+from app.services.resume_service import ResumeUploadError, process_resume
 from app.services.vault_service import create_items, list_items
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/vault", tags=["vault"])
 
@@ -19,6 +24,10 @@ class ManualItem(BaseModel):
     category: str
     title: str = Field(max_length=255)
     details: dict[str, str] = {}
+
+
+class ReadinessRequest(BaseModel):
+    refresh: bool = False
 
 
 @router.get("/items")
@@ -49,13 +58,84 @@ async def add_item(
 
 @router.post("/resume")
 async def upload_resume(
-    file: UploadFile, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    request: Request,
+    file: UploadFile,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=415, detail="Only PDF resumes are supported")
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     data = await file.read()
-    if len(data) > MAX_RESUME_BYTES:
-        raise HTTPException(status_code=413, detail="Resume exceeds 10 MB")
     s3 = get_s3_client()
-    await asyncio.to_thread(ensure_bucket, s3, "resumes")
-    return await process_resume(db, s3, user, file.filename or "resume.pdf", data)
+    try:
+        return await process_resume(
+            db,
+            s3,
+            user,
+            file.filename or "resume.pdf",
+            data,
+            content_type=file.content_type,
+            request_id=request_id,
+        )
+    except ResumeUploadError as exc:
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"message": exc.message, "code": exc.code},
+        ) from None
+    except LLMGatewayError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "The model is busy right now — retry in a minute.",
+                "code": "model_unavailable",
+            },
+        ) from exc
+    except Exception:
+        correlation_id = request_id
+        log.exception(
+            "resume_upload_unhandled",
+            stage="api",
+            error_class="unexpected",
+            user_id=str(user.id),
+            correlation_id=correlation_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Something went wrong uploading your resume. Please try again.",
+                "code": "internal_error",
+                "correlation_id": correlation_id,
+            },
+        ) from None
+
+
+@router.post("/readiness")
+async def vault_readiness(
+    request: Request,
+    body: ReadinessRequest | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Owner-only resume readiness audit. Private; admin UIs do not surface this."""
+    refresh = bool(body.refresh) if body else False
+    items = await list_items(db, user.id)
+    mongo_db = getattr(request.app.state, "mongo_db", None)
+    try:
+        result = await readiness_service.run_readiness(
+            items=items,
+            user_id=str(user.id),
+            mongo_db=mongo_db,
+            refresh=refresh,
+        )
+    except PermissionError as exc:
+        if str(exc) == "rate_limited":
+            raise HTTPException(
+                status_code=429,
+                detail="Please wait a moment before running another readiness check.",
+            ) from None
+        raise
+    except LLMGatewayError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The model is busy right now — retry in a minute.",
+        ) from exc
+    return result.model_dump()

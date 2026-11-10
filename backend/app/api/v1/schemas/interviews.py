@@ -59,6 +59,8 @@ class SessionOut(BaseModel):
     answered_count: int | None = None
     # start-session-only fields
     practice_label: str | None = None
+    persona_id: str | None = None
+    persona_name: str | None = None
 
 
 class SessionWithTurn(BaseModel):
@@ -79,6 +81,30 @@ class OpenSessionResult(BaseModel):
     """Response for GET /tracks/{track_id}/open-session."""
 
     session: SessionOut | None
+    # Additive: all open sessions on the track, newest first.
+    sessions: list[SessionOut] = []
+
+
+class OpenSessionRow(BaseModel):
+    """One unfinished interview for GET /me/open-sessions."""
+
+    session_id: str
+    track_id: str
+    track_subject: str
+    mode: str
+    status: str
+    question_index: int
+    max_turns: int
+    answered_count: int
+    created_at: str | None = None
+    duration_minutes: int = 60
+
+
+class CloseEmptyResult(BaseModel):
+    """Response for POST /tracks/{track_id}/close-empty-sessions."""
+
+    closed_count: int
+    session_ids: list[str] = []
 
 
 class TurnResult(BaseModel):

@@ -28,6 +28,9 @@ async function mockShell(page: Page) {
       },
     }),
   );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
+  );
 }
 
 test("track type cards change the fields and submit the existing payload", async ({

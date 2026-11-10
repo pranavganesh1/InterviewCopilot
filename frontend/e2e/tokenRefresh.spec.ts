@@ -75,6 +75,9 @@ test("expired access token refreshes once and retries original request", async (
       },
     }),
   );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
+  );
 
   await page.route("**/api/v1/auth/me", async (route) => {
     meCalls += 1;
@@ -134,6 +137,9 @@ test("failed refresh clears session without infinite loop", async ({ page }) => 
         assessments: [],
       },
     }),
+  );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
   );
   await page.route("**/api/v1/auth/refresh", async (route) => {
     refreshCalls += 1;

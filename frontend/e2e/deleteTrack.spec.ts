@@ -44,6 +44,9 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/auth/logout", (route) =>
     route.fulfill({ json: { status: "ok" } }),
   );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
+  );
 });
 
 test("menu opens and closes, delete updates counts, and undo restores", async ({ page }) => {

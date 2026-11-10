@@ -63,10 +63,20 @@ export async function api<T>(
       /* keep statusText */
     }
     if (detail && typeof detail === "object") {
-      const record = detail as { message?: string; code?: string; session_id?: string };
-      throw new ApiError(res.status, record.message || res.statusText, {
+      const record = detail as {
+        message?: string;
+        code?: string;
+        session_id?: string;
+        correlation_id?: string;
+      };
+      const message =
+        record.message ||
+        (typeof (detail as { detail?: string }).detail === "string"
+          ? (detail as { detail: string }).detail
+          : res.statusText);
+      throw new ApiError(res.status, message, {
         code: record.code,
-        sessionId: record.session_id,
+        sessionId: record.session_id || record.correlation_id,
       });
     }
     throw new ApiError(res.status, typeof detail === "string" ? detail : res.statusText);
@@ -140,6 +150,73 @@ export interface VaultItem {
   source?: string;
 }
 
+export interface ReadinessClaim {
+  claim: string;
+  excerpt: string;
+  category: string;
+  status: "clear" | "add_detail" | "be_ready";
+  status_reason?: string;
+  questions: string[];
+  tips: string[];
+  stronger_phrasing?: string;
+}
+
+export interface ReadinessItem {
+  vault_item_id: string;
+  category: string;
+  title: string;
+  claims: ReadinessClaim[];
+}
+
+export interface ReadinessResult {
+  disclaimer: string;
+  empty: boolean;
+  empty_hint?: string;
+  content_hash?: string;
+  cached?: boolean;
+  summary: { clear: number; add_detail: number; be_ready: number };
+  items: ReadinessItem[];
+  consistency_hints: { message: string; related_item_ids: string[] }[];
+  claim_seeds: {
+    vault_item_id: string;
+    claim: string;
+    excerpt?: string;
+    title?: string;
+  }[];
+}
+
+export interface TrackWeaknesses {
+  track_id: string;
+  has_data: boolean;
+  weak: { concept: string; status: string; last_coverage?: string | null }[];
+  improving: { concept: string; status: string; last_coverage?: string | null }[];
+  mastered: { concept: string; status: string; last_coverage?: string | null }[];
+  top_weak: { concept: string; status: string; last_coverage?: string | null }[];
+  recommended_practice: {
+    concept: string;
+    status: string;
+    study_topics: string[];
+    practice_themes: string[];
+  }[];
+}
+
+export interface ReportDiagnostics {
+  identified_weaknesses: {
+    concept: string;
+    status: string;
+    evidence: { session_id?: string; turn_index?: number; coverage?: string }[];
+    missing_concepts: string[];
+  }[];
+  strengths: { concept: string; last_coverage?: string | null; trend?: string[] }[];
+  area_score_history: { session_id: string; areas: Record<string, number> }[];
+  recommended_practice: {
+    concept: string;
+    status: string;
+    study_topics: string[];
+    practice_themes: string[];
+  }[];
+}
+
 export interface OnboardingState {
   messages: { role: string; content: string; created_at?: string }[];
   vault_items: { id: string; category: string; title: string; source: string }[];
@@ -197,6 +274,19 @@ export interface OpenSession {
   duration_minutes?: number | null;
 }
 
+export interface OpenSessionRow {
+  session_id: string;
+  track_id: string;
+  track_subject: string;
+  mode: string;
+  status: string;
+  question_index: number;
+  max_turns: number;
+  answered_count: number;
+  created_at?: string | null;
+  duration_minutes?: number | null;
+}
+
 export interface Progression {
   track_id: string;
   strict_completed: number;
@@ -212,6 +302,8 @@ export interface SessionInfo {
   duration_minutes: number;
   created_at: string;
   practice_label?: string;
+  persona_id?: string;
+  persona_name?: string;
 }
 
 export interface TurnEvaluation {
@@ -242,6 +334,9 @@ export interface Turn {
   scenario?: string;
   unit?: string;
   objective?: string;
+  origin?: string;
+  probe_label?: string;
+  project_name?: string;
   correct_index?: number;
   explanation?: string;
   answer: string | null;
@@ -308,6 +403,8 @@ export interface ReportContent {
   summary_overview: string;
   coverage_status: string;
   practice_label?: string;
+  persona_id?: string;
+  persona_name?: string;
   question_assessments: QuestionAssessment[];
   competency_assessments: {
     competency_name: string;
@@ -322,6 +419,7 @@ export interface ReportContent {
   recommendations: string[];
   /** Present when any coding answer was assessed without execution. */
   coding_review_note?: string;
+  diagnostics?: ReportDiagnostics;
 }
 
 export interface Report {

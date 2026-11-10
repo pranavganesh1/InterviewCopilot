@@ -2,7 +2,13 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import StartInterviewModal from "../components/StartInterviewModal";
-import { api, type BriefContent, type Progression, type Track } from "../lib/api";
+import {
+  api,
+  type BriefContent,
+  type Progression,
+  type Track,
+  type TrackWeaknesses,
+} from "../lib/api";
 
 const IMPORTANCE_STYLE: Record<string, string> = {
   core: "bg-accent-soft text-accent-strong",
@@ -31,6 +37,12 @@ export default function TrackDetailPage() {
   const progression = useQuery({
     queryKey: ["progression", trackId],
     queryFn: () => api<Progression>(`/tracks/${trackId}/progression`),
+  });
+
+  const weaknesses = useQuery({
+    queryKey: ["weaknesses", trackId],
+    queryFn: () => api<TrackWeaknesses>(`/tracks/${trackId}/weaknesses`),
+    retry: false,
   });
 
   if (data.isLoading) return <p className="text-stone-500">Loading…</p>;
@@ -68,6 +80,35 @@ export default function TrackDetailPage() {
           )}
         </div>
       )}
+
+      <section className="rounded-lg border border-line bg-white p-5">
+        <h2 className="text-sm font-semibold text-ink">Weak areas</h2>
+        {weaknesses.isLoading ? (
+          <p className="mt-2 text-sm text-ink-faint">Loading…</p>
+        ) : weaknesses.isError ? (
+          <p className="mt-2 text-sm text-ink-faint">Could not load weakness data.</p>
+        ) : !weaknesses.data?.has_data || (weaknesses.data.top_weak?.length ?? 0) === 0 ? (
+          <p className="mt-2 text-sm text-ink-faint">
+            Complete interviews with answered questions to see weak areas.
+          </p>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {weaknesses.data.top_weak.map((row) => (
+              <li
+                key={row.concept}
+                className="flex min-w-0 items-center justify-between gap-2 text-sm"
+              >
+                <span className="truncate font-medium text-ink" title={row.concept}>
+                  {row.concept}
+                </span>
+                <span className="shrink-0 rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-semibold uppercase text-violet-700">
+                  {row.status}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {content ? (
         <div className="space-y-5">
