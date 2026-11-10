@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import random
 
-from app.agents.question_dedupe import concept_fingerprint, is_duplicate_question
+from app.agents.question_dedupe import fingerprint_tuple, is_duplicate_question
 from app.agents.question_quality import prepare_served_question
 
 POOL_BUFFER = 5
@@ -18,17 +18,13 @@ def needs_pool_topup(unseen: int, session_questions: int, buffer: int = POOL_BUF
     return unseen < int(session_questions) + int(buffer)
 
 
-def _fingerprint(text: str) -> tuple[str, ...]:
-    return tuple(sorted(concept_fingerprint(text)))
-
-
 def _matches(entry: dict, questions: list[str], fingerprints: set[tuple[str, ...]]) -> bool:
     text = (entry.get("question") or "").strip()
     if not text:
         return False
     if is_duplicate_question(text, questions):
         return True
-    fingerprint = _fingerprint(text)
+    fingerprint = fingerprint_tuple(text)
     return len(fingerprint) >= 4 and fingerprint in fingerprints
 
 

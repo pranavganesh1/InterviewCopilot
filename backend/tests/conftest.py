@@ -2,10 +2,9 @@ import os
 
 # Tests run against a dedicated database so fixture cleanup never touches
 # real data. Must be set before any app module imports config (lru_cache).
-# Keep an explicit interviewcopilot_test URL (e.g. Docker hostname `postgres`)
-# so local Windows Postgres on :5432 does not steal connections.
+# Host port 5433 matches docker-compose (native Windows Postgres often owns :5432).
 _TEST_DB_URL = (
-    "postgresql+asyncpg://interview:interview@localhost:5432/interviewcopilot_test"
+    "postgresql+asyncpg://interview:interview@localhost:5433/interviewcopilot_test"
 )
 _existing = os.environ.get("DATABASE_URL", "")
 if not _existing.rstrip("/").endswith("interviewcopilot_test"):

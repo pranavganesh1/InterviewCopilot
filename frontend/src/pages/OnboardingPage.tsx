@@ -6,9 +6,9 @@ import {
   api,
   type ChatResult,
   type OnboardingState,
-  type VaultItem,
 } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import { VaultSidebar } from "../components/VaultSidebar";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -32,15 +32,6 @@ const RESUME_HINTS: Record<string, string[]> = {
   empty_file: ["Choose a non-empty PDF file"],
   file_too_large: ["Keep the PDF under 10 MB"],
   unsupported_media_type: ["Only PDF files are accepted"],
-};
-
-const CATEGORY_STYLES: Record<string, string> = {
-  project: "bg-sky-100 text-sky-700",
-  internship: "bg-sky-100 text-sky-700",
-  skill: "bg-emerald-100 text-emerald-700",
-  achievement: "bg-amber-100 text-amber-700",
-  education: "bg-stone-100 text-stone-600",
-  other: "bg-stone-100 text-stone-600",
 };
 
 const REQUIRED_LABELS: Record<string, string> = {
@@ -206,12 +197,16 @@ export default function OnboardingPage() {
                 <p className="text-sm font-medium text-stone-700">
                   {finished
                     ? "Tell us what you’d like to update"
-                    : "Start with a project you’ve built"}
+                    : vaultItems.length > 0
+                      ? "Review the profile we already found"
+                      : "Start with a project you’ve built"}
                 </p>
                 <p className="mt-1 text-xs text-stone-500">
                   {finished
                     ? "New skills, projects, or education details go straight into your vault."
-                    : "Include stack, your role, and one concrete outcome."}
+                    : vaultItems.length > 0
+                      ? "Confirm what’s right, fix duplicates, and fill only the missing details."
+                      : "Include stack, your role, and one concrete outcome — or upload a resume."}
                 </p>
               </div>
             )}
@@ -261,41 +256,7 @@ export default function OnboardingPage() {
         </section>
 
         <aside className="flex flex-col gap-4">
-          <div className="rounded-lg border border-stone-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-stone-800">Your vault</h2>
-              <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-600">
-                {vaultItems.length} items
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-stone-500">
-              What your copilot already knows about you.
-            </p>
-            <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-0.5">
-              {vaultItems.length === 0 && (
-                <p className="rounded-md bg-stone-50 px-3 py-4 text-center text-xs text-stone-400">
-                  Empty so far — chat or upload a resume.
-                </p>
-              )}
-              {vaultItems.map((item: VaultItem) => (
-                <div
-                  key={item.id}
-                  className="rounded-md border border-stone-100 bg-stone-50/80 px-3 py-2.5"
-                >
-                  <span
-                    className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
-                      CATEGORY_STYLES[item.category] ?? CATEGORY_STYLES.other
-                    }`}
-                  >
-                    {item.category}
-                  </span>
-                  <p className="mt-1.5 text-sm font-medium leading-snug text-stone-800">
-                    {item.title}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
+          <VaultSidebar items={vaultItems} />
 
           <Link
             to="/readiness"

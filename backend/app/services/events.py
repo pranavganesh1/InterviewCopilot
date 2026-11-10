@@ -16,6 +16,21 @@ FEEDBACK_SUBJECT = "feedback.jobs"
 AUTHORING_STREAM = "AUTHORING"
 AUTHORING_SUBJECT = "track-authoring.jobs"
 
+# Fail fast when NATS is down (Docker not started) instead of hanging.
+_NATS_CONNECT_TIMEOUT_S = 5
+_NATS_MAX_RECONNECT = 10
+_NATS_RECONNECT_WAIT_S = 1
+
+
+async def _open_nats():
+    settings = get_settings()
+    return await nats.connect(
+        servers=[settings.nats_url],
+        connect_timeout=_NATS_CONNECT_TIMEOUT_S,
+        max_reconnect_attempts=_NATS_MAX_RECONNECT,
+        reconnect_time_wait=_NATS_RECONNECT_WAIT_S,
+    )
+
 
 async def publish_track_authoring_job(track_id, user_id) -> None:
     """Queue async brief authoring for a freshly created track (M11)."""
@@ -29,8 +44,9 @@ async def publish_track_authoring_job(track_id, user_id) -> None:
         "user_id": str(user_id),
         "occurred_at": datetime.now(UTC).isoformat(),
     }
+    nc = None
     try:
-        nc = await nats.connect(servers=[settings.nats_url])
+        nc = await _open_nats()
         js = nc.jetstream()
         with suppress(Exception):
             await js.add_stream(StreamConfig(name=AUTHORING_STREAM, subjects=[AUTHORING_SUBJECT]))
@@ -44,12 +60,18 @@ async def publish_track_authoring_job(track_id, user_id) -> None:
                 await nc.drain()
 
 
-async def connect_nats():
-    """Connect for app-lifetime reuse (main lifespan). Returns None on failure."""
+async def connect_nats(*, required: bool = False):
+    """Connect for app-lifetime reuse (main lifespan). Returns None on failure
+    unless required=True, in which case the exception is re-raised."""
+    settings = get_settings()
     try:
-        return await nats.connect(servers=[get_settings().nats_url])
+        nc = await _open_nats()
+        log.info("nats_connected", nats_url=settings.nats_url)
+        return nc
     except Exception as exc:
-        log.warning("nats_connect_failed", error=str(exc))
+        log.warning("nats_connect_failed", nats_url=settings.nats_url, error=str(exc))
+        if required:
+            raise
         return None
 
 
@@ -89,7 +111,7 @@ async def publish_feedback_job(session_id, track_id, user_id, nc=None) -> None:
     owned = nc is None
     try:
         if nc is None:
-            nc = await nats.connect(servers=[settings.nats_url])
+            nc = await _open_nats()
         js = nc.jetstream()
         with suppress(Exception):
             await js.add_stream(StreamConfig(name=FEEDBACK_STREAM, subjects=[FEEDBACK_SUBJECT]))

@@ -9,11 +9,13 @@ and `docs/superpowers/specs/` for the current build spec.
 Prerequisites: Python 3.13+, uv, Node 20+, Docker Desktop running.
 
 1. `cp .env.example .env` (repo root) and fill in your keys
-2. `cd infra && docker compose --env-file ../.env up -d` — starts Postgres, MongoDB (host port **27018**), SeaweedFS (S3), NATS, LiteLLM.
+2. `cd infra && docker compose --env-file ../.env up -d postgres mongo nats litellm seaweedfs` — starts Postgres (host port **5433**), MongoDB (host port **27018**), SeaweedFS (S3), NATS, LiteLLM.
+   Prefer infra-only when running API/worker with `uv` on the host (avoids fighting over port 8000). Keep Docker `backend-api` / `backend-worker` / `frontend` stopped in that mode.
+   Host ports 5433 / 27018 avoid native Windows PostgreSQL/MongoDB on 5432 / 27017.
    `--env-file ../.env` is required: compose otherwise reads `infra/.env` and would miss your API keys (LiteLLM would get no Groq key).
 3. `cd backend && uv sync`
 4. `uv run pytest` — backend tests
-5. `uv run uvicorn app.main:app --reload` — API at http://localhost:8000 (docs at /docs)
+5. `uv run uvicorn app.main:app --reload --host 127.0.0.1` — API at http://127.0.0.1:8000 (docs at /docs). On Windows, bind IPv4 explicitly so the Vite proxy can reach it.
 6. Feedback worker (second terminal): `uv run python -m app.workers.feedback_worker`
 
 ### Web app (M7)
@@ -21,7 +23,7 @@ Prerequisites: Python 3.13+, uv, Node 20+, Docker Desktop running.
 ```bash
 cd frontend
 npm install
-npm run dev        # http://localhost:5173 (proxies /api to :8000)
+npm run dev        # http://localhost:5173 (proxies /api → http://127.0.0.1:8000)
 npm run build      # production build
 npm run e2e        # Playwright smoke tests (mocked API)
 ```

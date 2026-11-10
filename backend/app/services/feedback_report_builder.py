@@ -6,12 +6,12 @@ feedback agent is unavailable). Only submitted answers are assessed.
 
 from __future__ import annotations
 
-from app.agents.coding_review import AI_REVIEWED_NOT_EXECUTED
 from app.agents.feedback_agent import (
     AssessedCompetency,
     FeedbackReportContent,
     QuestionEvidence,
 )
+from app.agents.question_quality import AI_REVIEWED_NOT_EXECUTED
 from app.models.interview import InterviewSession, SessionTurn
 
 _COVERAGE_RANK = {"none": 0, "partial": 1, "good": 2, "excellent": 3}

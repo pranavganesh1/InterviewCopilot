@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -114,7 +114,9 @@ async def refresh(request: Request):
         user_id = decode_token(token, "refresh")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token") from None
-    response = Response()
+    # JSON body (not empty 200): avoids flaky Set-Cookie application on
+    # Content-Length 0 responses before the SPA's immediate /me retry.
+    response = JSONResponse({"status": "ok"})
     _set_auth_cookies(response, create_access_token(user_id), create_refresh_token(user_id))
     return response
 

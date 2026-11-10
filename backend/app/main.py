@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager, suppress
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.v1.admin import router as admin_router
@@ -17,6 +20,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestIdMiddleware
 from app.core.oauth import oauth, register_google
 from app.db.mongo import get_mongo_client
+from app.db.sqlalchemy import SessionFactory
 from app.services.events import connect_nats
 
 
@@ -53,6 +57,38 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        """Local/dev dependency probe: Postgres, NATS, LiteLLM."""
+        settings = get_settings()
+        checks: dict[str, str] = {}
+
+        try:
+            async with SessionFactory() as session:
+                await session.execute(text("SELECT 1"))
+            checks["postgres"] = "ok"
+        except Exception as exc:
+            checks["postgres"] = f"error: {exc.__class__.__name__}"
+
+        nc = getattr(app.state, "nats", None)
+        if nc is not None and nc.is_connected:
+            checks["nats"] = "ok"
+        else:
+            checks["nats"] = "disconnected"
+
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(f"{settings.litellm_url.rstrip('/')}/health/liveliness")
+                checks["litellm"] = "ok" if resp.status_code < 500 else f"http_{resp.status_code}"
+        except Exception as exc:
+            checks["litellm"] = f"error: {exc.__class__.__name__}"
+
+        ready = all(v == "ok" for v in checks.values())
+        return JSONResponse(
+            {"status": "ready" if ready else "degraded", "checks": checks},
+            status_code=200 if ready else 503,
+        )
 
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(dev_router, prefix="/api/v1")

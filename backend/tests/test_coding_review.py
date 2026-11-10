@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agents.coding_review import AI_REVIEWED_NOT_EXECUTED, CODING_STATIC_REVIEW_RULES
 from app.agents.interviewer import AnswerEvaluation, evaluate_answer_with_meta
+from app.agents.question_quality import AI_REVIEWED_NOT_EXECUTED, CODING_STATIC_REVIEW_RULES
 from app.services.feedback_report_builder import enrich_assessments_with_turns
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "app"

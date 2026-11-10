@@ -1,7 +1,8 @@
 """Cheap checks for one-focus questions and neutral Strict wording.
 
 Used by the bank builder (before the LLM judge) and by the live interviewer
-repair loop. No network, no extra dependencies.
+repair loop. Also holds coding static-review labels shared with feedback.
+No network, no extra dependencies.
 """
 
 from __future__ import annotations
@@ -14,6 +15,17 @@ sentences, plus an optional code snippet or a set of options. No stacked
 sub-questions and no "and also".
 BAD: "How do you access, slice and handle out-of-bounds errors in Python versus Java?"
 GOOD: "In Python, what happens if you slice a list beyond its length, and why?"
+"""
+
+AI_REVIEWED_NOT_EXECUTED = "AI-reviewed, not executed"
+
+CODING_STATIC_REVIEW_RULES = """
+Coding answers (NOT executed):
+- The candidate's code was NOT run in any sandbox or interpreter.
+- Reason about correctness statically from the source text only.
+- Never claim specific program outputs, test results, or measured runtimes.
+- Give time/space complexity as estimates; say when you are uncertain.
+- Do not invent compile or runtime errors you cannot justify from the code text.
 """
 
 QuestionType = str

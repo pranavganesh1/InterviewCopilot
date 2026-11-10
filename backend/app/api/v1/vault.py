@@ -13,7 +13,14 @@ from app.gateway.llm import LLMGatewayError
 from app.models.user import User
 from app.services import readiness as readiness_service
 from app.services.resume_service import ResumeUploadError, process_resume
-from app.services.vault_service import create_items, list_items
+from app.services import conversation_store
+from app.services.vault_service import (
+    build_profile_review_message,
+    create_items,
+    delete_item,
+    list_items,
+    update_item,
+)
 
 log = get_logger(__name__)
 
@@ -24,6 +31,11 @@ class ManualItem(BaseModel):
     category: str
     title: str = Field(max_length=255)
     details: dict[str, str] = {}
+
+
+class VaultItemUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
+    details: dict[str, str] | None = None
 
 
 class ReadinessRequest(BaseModel):
@@ -56,6 +68,39 @@ async def add_item(
     return {"id": str(i.id), "category": i.category, "title": i.title}
 
 
+@router.patch("/items/{item_id}")
+async def patch_item(
+    item_id: uuid.UUID,
+    body: VaultItemUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    item = await update_item(
+        db, user.id, item_id, title=body.title, details=body.details
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Vault item not found")
+    return {
+        "id": str(item.id),
+        "category": item.category,
+        "title": item.title,
+        "details": item.details or {},
+        "source": item.source,
+    }
+
+
+@router.delete("/items/{item_id}")
+async def remove_item(
+    item_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    ok = await delete_item(db, user.id, item_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Vault item not found")
+    return {"status": "ok"}
+
+
 @router.post("/resume")
 async def upload_resume(
     request: Request,
@@ -67,7 +112,7 @@ async def upload_resume(
     data = await file.read()
     s3 = get_s3_client()
     try:
-        return await process_resume(
+        result = await process_resume(
             db,
             s3,
             user,
@@ -76,6 +121,16 @@ async def upload_resume(
             content_type=file.content_type,
             request_id=request_id,
         )
+        # Seed coach review message so onboarding starts from extracted profile.
+        items = await list_items(db, user.id)
+        if items:
+            await conversation_store.append_message(
+                request.app.state.mongo_db,
+                str(user.id),
+                "assistant",
+                build_profile_review_message(items),
+            )
+        return result
     except ResumeUploadError as exc:
         raise HTTPException(
             status_code=exc.status,
