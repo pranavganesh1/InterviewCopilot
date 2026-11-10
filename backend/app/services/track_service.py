@@ -73,9 +73,9 @@ async def create_track_with_brief(
     jd_text: str | None = None,
     request_id: str | None = None,
 ) -> dict:
-    # M11: async authoring — the track saves instantly with brief_status
-    # "authoring"; the worker fills the brief (no browser timeouts, and
-    # free-tier TPM windows are respected by the worker's retry pacing).
+    # Async authoring: the track saves instantly with brief_status "authoring";
+    # the worker fills the brief via NATS (no browser timeouts, and free-tier
+    # TPM windows are respected by the worker's retry pacing).
     track = Track(
         user_id=user.id,
         track_type=track_type,
@@ -87,11 +87,16 @@ async def create_track_with_brief(
     db.add(track)
     await db.commit()
     await db.refresh(track)
+    # Dispatch the authoring job so the worker picks it up immediately
+    # instead of waiting for the periodic catch-up poll.
+    from app.services.events import publish_track_authoring_job
+
+    await publish_track_authoring_job(track.id, user.id)
     return {"track": _track_dict(track), "brief": None}
 
 
 async def author_brief_for_track(db: AsyncSession, track_id: uuid.UUID) -> dict | None:
-    """Worker path (M11): author the brief for an existing track.
+    """Worker path: author the brief for an existing track.
 
     Marks brief_status ready/failed. Returns {"brief": ...} or None if the
     track vanished. Raises LLMGatewayError when authoring failed — the worker
@@ -99,6 +104,11 @@ async def author_brief_for_track(db: AsyncSession, track_id: uuid.UUID) -> dict 
     """
     track = await db.get(Track, track_id)
     if track is None:
+        return None
+
+    # Skip if already authored (idempotent — catch-up may re-queue a track
+    # that the NATS consumer already processed).
+    if track.brief_status == "ready":
         return None
 
     objective = {
@@ -124,6 +134,25 @@ async def author_brief_for_track(db: AsyncSession, track_id: uuid.UUID) -> dict 
     await db.commit()
     await db.refresh(brief)
     return {"brief": _brief_dict(brief)}
+
+
+async def reauthor_brief(db: AsyncSession, user: User, track_id: uuid.UUID) -> dict | None:
+    """Reset a failed brief back to 'authoring' and dispatch a new authoring job.
+
+    Returns {"track": ...} or None if the track doesn't exist / isn't owned.
+    """
+    track = await _owned_track(db, user, track_id)
+    if track is None:
+        return None
+    if track.brief_status != "failed":
+        return {"track": _track_dict(track)}
+    track.brief_status = "authoring"
+    await db.commit()
+    await db.refresh(track)
+    from app.services.events import publish_track_authoring_job
+
+    await publish_track_authoring_job(track.id, user.id)
+    return {"track": _track_dict(track)}
 
 
 class UnfinishedInterviewError(Exception):

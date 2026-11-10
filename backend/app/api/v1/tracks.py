@@ -99,6 +99,19 @@ async def restore_track(
     return result
 
 
+@router.post("/{track_id}/reauthor-brief")
+async def reauthor_brief(
+    track_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry brief authoring for a track whose brief_status is 'failed'."""
+    result = await track_service.reauthor_brief(db, user, track_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+    return result
+
+
 @router.get("/{track_id}")
 async def get_track(
     track_id: uuid.UUID,

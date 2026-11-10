@@ -20,6 +20,12 @@ export default function TrackDetailPage() {
       api<{ track: Track; brief: { version: number; content: BriefContent } | null }>(
         `/tracks/${trackId}`,
       ),
+    // Poll every 3s while the brief is being authored so the user sees it
+    // appear without a manual refresh.
+    refetchInterval: (query) => {
+      const status = query.state.data?.track?.brief_status;
+      return status === "authoring" ? 3000 : false;
+    },
   });
 
   const progression = useQuery({
@@ -158,6 +164,31 @@ export default function TrackDetailPage() {
             </ol>
           </section>
         </div>
+      ) : track.brief_status === "authoring" ? (
+        <div className="flex items-center gap-3 rounded-lg border border-stone-200 bg-white p-5">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-stone-300 border-t-accent" />
+          <p className="text-sm text-stone-500">
+            Generating your interview brief… this usually takes 30–60 seconds.
+          </p>
+        </div>
+      ) : track.brief_status === "failed" ? (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 p-5">
+          <p className="text-sm font-medium text-rose-700">Brief generation failed.</p>
+          <p className="mt-1 text-sm text-rose-600">
+            The LLM provider may be rate-limited. You can retry.
+          </p>
+          <button
+            type="button"
+            onClick={() =>
+              api(`/tracks/${trackId}/reauthor-brief`, { method: "POST" }).then(() =>
+                data.refetch(),
+              )
+            }
+            className="mt-3 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"
+          >
+            Retry brief generation
+          </button>
+        </div>
       ) : (
         <p className="text-sm text-stone-400">No Interview Brief yet.</p>
       )}
@@ -165,7 +196,8 @@ export default function TrackDetailPage() {
       <button
         type="button"
         onClick={() => setStartOpen(true)}
-        className="w-full rounded-lg bg-accent py-3 font-medium text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-auto sm:px-6"
+        disabled={!brief}
+        className="w-full rounded-lg bg-accent py-3 font-medium text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
       >
         Start interview
       </button>

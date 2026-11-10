@@ -7,6 +7,7 @@ Catch-up mode (no NATS): uv run python -m app.workers.feedback_worker --catch-up
 import asyncio
 import json
 import sys
+import uuid
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
@@ -238,9 +239,15 @@ async def run_catch_up() -> None:
 
 
 async def _periodic_catch_up(interval_seconds: int) -> None:
-    """Background loop: heal lost NATS jobs without racing fresh completions."""
+    """Background loop: heal lost NATS jobs without racing fresh completions.
+
+    Also authors briefs for tracks still in 'authoring' (heals any missed
+    NATS dispatch at track-creation time).
+    """
     while True:
         try:
+            async with SessionFactory() as db:
+                await author_pending_tracks(db)
             await catch_up_once(min_age_seconds=120)
         except asyncio.CancelledError:
             raise
@@ -255,6 +262,70 @@ def maybe_start_catch_up_task() -> asyncio.Task | None:
     if interval <= 0:
         return None
     return asyncio.create_task(_periodic_catch_up(interval))
+
+
+async def process_authoring_event(data: bytes) -> dict:
+    """Process a track-authoring NATS job: author the brief for the track."""
+    event = json.loads(data)
+    track_id = event.get("track_id")
+    if not track_id:
+        raise PermanentFeedbackError("authoring job missing track_id")
+    async with SessionFactory() as db:
+        from app.services.track_service import author_brief_for_track
+
+        try:
+            result = await author_brief_for_track(db, uuid.UUID(track_id))
+        except Exception as exc:
+            log.error("authoring_job_failed", track_id=track_id, error=str(exc)[:200])
+            raise
+        if result is None:
+            log.warning("authoring_job_track_gone", track_id=track_id)
+        else:
+            log.info("authoring_job_done", track_id=track_id)
+        return result or {"skipped": True}
+
+
+async def run_authoring_consumer(nc) -> None:
+    """Subscribe to track-authoring.jobs and process brief authoring requests."""
+    js = nc.jetstream()
+    with suppress(Exception):
+        await js.add_stream(
+            StreamConfig(name=events.AUTHORING_STREAM, subjects=[events.AUTHORING_SUBJECT])
+        )
+    with suppress(Exception):
+        await js.add_consumer(
+            events.AUTHORING_STREAM,
+            config=ConsumerConfig(
+                durable_name="authoring-worker",
+                deliver_policy=DeliverPolicy.ALL,
+                max_deliver=3,
+                ack_wait=120,
+            ),
+        )
+    sub = await js.pull_subscribe(events.AUTHORING_SUBJECT, durable="authoring-worker")
+    log.info("authoring_worker_listening", subject=events.AUTHORING_SUBJECT)
+    while True:
+        try:
+            msgs = await sub.fetch(batch=1, timeout=5)
+        except TimeoutError:
+            continue
+        except Exception as exc:
+            log.warning("authoring_fetch_error", error=str(exc))
+            await asyncio.sleep(1)
+            continue
+        for msg in msgs:
+            try:
+                await process_authoring_event(msg.data)
+                await msg.ack()
+            except PermanentFeedbackError as exc:
+                log.error("authoring_job_permanent_failure", error=str(exc))
+                try:
+                    await msg.term()
+                except Exception:
+                    await msg.ack()
+            except Exception as exc:
+                log.error("authoring_job_error", error=str(exc)[:200])
+                await msg.nak(delay=30)
 
 
 async def run_worker() -> None:
@@ -289,6 +360,7 @@ async def run_worker() -> None:
     log.info("feedback_worker_listening", subject=events.FEEDBACK_SUBJECT)
 
     catch_up_task = maybe_start_catch_up_task()
+    authoring_task = asyncio.create_task(run_authoring_consumer(nc))
     try:
         while True:
             try:
@@ -333,6 +405,9 @@ async def run_worker() -> None:
             catch_up_task.cancel()
             with suppress(asyncio.CancelledError):
                 await catch_up_task
+        authoring_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await authoring_task
 
 
 def main() -> None:
