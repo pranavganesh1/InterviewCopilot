@@ -219,7 +219,7 @@ export interface ReportDiagnostics {
 
 export interface OnboardingState {
   messages: { role: string; content: string; created_at?: string }[];
-  vault_items: { id: string; category: string; title: string; source: string }[];
+  vault_items: VaultItem[];
   onboarding_complete?: boolean;
   onboarding_finished?: boolean;
   onboarding_completed_at?: string | null;
@@ -229,6 +229,7 @@ export interface OnboardingState {
 export interface ChatResult {
   reply: string;
   items_created: { id: string; category: string; title: string }[];
+  items_updated?: { id: string; category: string; title: string }[];
   onboarding_complete: boolean;
 }
 

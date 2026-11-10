@@ -168,6 +168,11 @@ def concept_fingerprint(text: str) -> frozenset[str]:
     return frozenset(tags | tokens)
 
 
+def fingerprint_tuple(text: str) -> tuple[str, ...]:
+    """Sorted fingerprint tuple for set membership / history payloads."""
+    return tuple(sorted(concept_fingerprint(text)))
+
+
 def _set_coverage(a: set[str], b: set[str]) -> float:
     """How much of the smaller set is covered by the intersection."""
     if not a or not b:

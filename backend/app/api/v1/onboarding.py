@@ -26,6 +26,7 @@ def _vault_status(items) -> tuple[bool, list[str]]:
 
 
 async def _state_payload(mongo_db, db: AsyncSession, user: User) -> dict:
+    await onboarding_service.ensure_review_opener(db, mongo_db, user)
     messages = await conversation_store.get_messages(mongo_db, str(user.id), limit=100)
     items = await list_items(db, user.id)
     vault_ready, missing = _vault_status(items)
@@ -33,7 +34,13 @@ async def _state_payload(mongo_db, db: AsyncSession, user: User) -> dict:
     return {
         "messages": messages,
         "vault_items": [
-            {"id": str(i.id), "category": i.category, "title": i.title, "source": i.source}
+            {
+                "id": str(i.id),
+                "category": i.category,
+                "title": i.title,
+                "details": i.details or {},
+                "source": i.source,
+            }
             for i in items
         ],
         # Vault criteria (coach / readiness).
@@ -54,6 +61,7 @@ async def chat(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await onboarding_service.ensure_review_opener(db, request.app.state.mongo_db, user)
     return await onboarding_service.chat(
         db,
         request.app.state.mongo_db,

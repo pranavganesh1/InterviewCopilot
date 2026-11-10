@@ -15,7 +15,7 @@ from app.agents.assistance import (
     next_assistance_level,
 )
 from app.agents.interviewer import TurnDecision, build_interviewer_graph
-from app.agents.question_dedupe import concept_fingerprint, is_duplicate_question
+from app.agents.question_dedupe import fingerprint_tuple, is_duplicate_question
 from app.agents.question_plan import opening_areas_to_avoid
 from app.agents.question_quality import (
     active_profile,
@@ -57,7 +57,7 @@ _HISTORY_CAP = 80
 
 
 def _fingerprint(text: str) -> list[str]:
-    return sorted(concept_fingerprint(text))
+    return list(fingerprint_tuple(text))
 
 
 async def _track_history(db, user_id, track_id, exclude_session_id=None) -> list[dict]:

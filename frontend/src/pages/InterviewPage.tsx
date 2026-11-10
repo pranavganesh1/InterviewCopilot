@@ -488,6 +488,13 @@ export default function InterviewPage() {
               <p className="text-lg font-medium leading-relaxed text-ink sm:text-xl">
                 {focusTurn.question}
               </p>
+              {(focusTurn.objective || focusTurn.project_name) && (
+                <p className="mt-2 text-xs text-ink-soft">
+                  {[focusTurn.project_name, focusTurn.objective]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              )}
             </section>
 
             {focusTurn.answer !== null && (
@@ -533,17 +540,34 @@ export default function InterviewPage() {
               </div>
             )}
 
-            {!showCodingWorkspace && latestHint && awaitingAnswer && (
-              <div
-                className="rounded-lg border border-line bg-surface p-4 text-sm text-ink"
-                data-testid="assistance-panel"
-              >
-                <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
-                  {latestHint.assistance_type} · level {latestHint.level}
-                </p>
-                <p className="mt-2 whitespace-pre-wrap leading-relaxed">
-                  {latestHint.content}
-                </p>
+            {!showCodingWorkspace && awaitingAnswer && (
+              <div className="space-y-2" data-testid="assistance-panel">
+                {(focusTurn.assistance_events ?? []).map((event) => (
+                  <div
+                    key={event.assistance_event_id}
+                    className="rounded-lg border border-line bg-page p-3 text-sm text-ink"
+                  >
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
+                      {event.assistance_type} · level {event.level}
+                    </p>
+                    <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">
+                      {event.content}
+                    </p>
+                  </div>
+                ))}
+                {latestHint &&
+                  !(focusTurn.assistance_events ?? []).some(
+                    (e) => e.assistance_event_id === latestHint.assistance_event_id,
+                  ) && (
+                    <div className="rounded-lg border border-line bg-surface p-4 text-sm text-ink">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                        {latestHint.assistance_type} · level {latestHint.level}
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap leading-relaxed">
+                        {latestHint.content}
+                      </p>
+                    </div>
+                  )}
               </div>
             )}
 

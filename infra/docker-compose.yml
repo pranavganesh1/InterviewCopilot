@@ -8,7 +8,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-interview}
       POSTGRES_DB: ${POSTGRES_DB:-interviewcopilot}
     ports:
-      - "5432:5432"
+      # Host port 5433: native PostgreSQL on Windows often occupies 127.0.0.1:5432
+      # (same rationale as Mongo → 27018). Container still listens on 5432 in-network.
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -81,7 +83,8 @@ services:
 
   backend-api:
     build: ../backend
-    restart: unless-stopped
+    # "no": Docker Desktop restarts otherwise steal :8000 from host `uv run uvicorn`.
+    restart: "no"
     # No --reload in Docker: the Windows bind-mount __pycache__ churn triggers
 # continuous reloads that kill in-flight requests. Code changes = rebuild.
     entrypoint: ["/app/entrypoint.sh", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -123,7 +126,8 @@ services:
 
   backend-worker:
     build: ../backend
-    restart: unless-stopped
+    # "no": avoid competing with host `uv run python -m app.workers.feedback_worker`.
+    restart: "no"
     entrypoint: ["/opt/venv/bin/python", "-m", "app.workers.feedback_worker"]
     environment:
       APP_ENV: local
@@ -149,7 +153,7 @@ services:
 
   frontend:
     build: ../frontend
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "8080:80"
     depends_on:

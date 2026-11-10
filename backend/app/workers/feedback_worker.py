@@ -11,7 +11,6 @@ import uuid
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
-import nats
 from nats.js.api import ConsumerConfig, DeliverPolicy, StreamConfig
 from sqlalchemy import select, text
 
@@ -334,8 +333,19 @@ async def run_worker() -> None:
         "feedback_worker_db",
         database=settings.database_url.rsplit("/", 1)[-1],
         database_url_host=settings.database_url.split("@")[-1],
+        nats_url=settings.nats_url,
     )
-    nc = await nats.connect(servers=[settings.nats_url])
+    # Connect before any "listening" log — fail fast if Docker/NATS is down.
+    try:
+        nc = await events.connect_nats(required=True)
+    except Exception as exc:
+        log.error(
+            "feedback_worker_nats_connect_failed",
+            nats_url=settings.nats_url,
+            error=str(exc),
+            hint="Start infra: cd infra && docker compose --env-file ../.env up -d postgres mongo nats litellm seaweedfs",
+        )
+        raise SystemExit(1) from exc
     js = nc.jetstream()
     with suppress(Exception):
         await js.add_stream(
@@ -357,7 +367,7 @@ async def run_worker() -> None:
         )
 
     sub = await js.pull_subscribe(events.FEEDBACK_SUBJECT, durable="feedback-worker")
-    log.info("feedback_worker_listening", subject=events.FEEDBACK_SUBJECT)
+    log.info("feedback_worker_listening", subject=events.FEEDBACK_SUBJECT, nats_url=settings.nats_url)
 
     catch_up_task = maybe_start_catch_up_task()
     authoring_task = asyncio.create_task(run_authoring_consumer(nc))

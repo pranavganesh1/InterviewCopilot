@@ -5,14 +5,14 @@ import httpx
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.agents.coding_review import CODING_STATIC_REVIEW_RULES
 from app.agents.question_dedupe import (
-    concept_fingerprint,
     duplicate_of,
+    fingerprint_tuple,
     is_duplicate_question,
     normalize_question,
 )
 from app.agents.question_quality import (
+    CODING_STATIC_REVIEW_RULES,
     SINGLE_FOCUS_RULE,
     mcq_violation,
     numeric_violation,
@@ -491,10 +491,6 @@ def _prompt_payload(payload: dict) -> dict:
     }
 
 
-def _fingerprint(text: str) -> tuple[str, ...]:
-    return tuple(sorted(concept_fingerprint(text)))
-
-
 def _known_fingerprints(payload: dict) -> set[tuple[str, ...]]:
     found: set[tuple[str, ...]] = set()
     for raw in payload.get("prior_fingerprints") or []:
@@ -502,7 +498,7 @@ def _known_fingerprints(payload: dict) -> set[tuple[str, ...]]:
         if len(fingerprint) >= 4:
             found.add(fingerprint)
     for text in _known_questions(payload):
-        fingerprint = _fingerprint(text)
+        fingerprint = fingerprint_tuple(text)
         if len(fingerprint) >= 4:
             found.add(fingerprint)
     return found
@@ -518,7 +514,7 @@ def _unused_bank_entries(payload: dict) -> list[dict]:
         question = (entry.get("question") or "").strip()
         if not question or is_duplicate_question(question, asked):
             continue
-        fingerprint = _fingerprint(question)
+        fingerprint = fingerprint_tuple(question)
         if len(fingerprint) >= 4 and fingerprint in fingerprints:
             continue
         unused.append(entry)

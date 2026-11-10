@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Postgres
-    database_url: str = "postgresql+asyncpg://interview:interview@localhost:5432/interviewcopilot"
+    # Host port 5433 — see infra/docker-compose.yml (native PG often owns 5432 on Windows).
+    database_url: str = "postgresql+asyncpg://interview:interview@localhost:5433/interviewcopilot"
 
     # MongoDB (host port 27018 — see infra/docker-compose.yml)
     mongo_url: str = "mongodb://localhost:27018"

@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from app.agents.interviewer import TurnDecision, apply_local_policy, decision_violation
-from app.agents.question_dedupe import concept_fingerprint
+from app.agents.question_dedupe import fingerprint_tuple
 from app.agents.question_plan import deterministic_question_plan, opening_areas_to_avoid
 from app.agents.question_quality import prepare_served_question
 from app.agents.session_pool import least_recent_text, needs_pool_topup, pick_pool_question
@@ -245,7 +245,7 @@ def test_fresh_generation_wins_until_only_an_old_question_remains():
 def test_fingerprint_skips_a_bank_question_already_used_on_the_track():
     seen = "Why does contiguous array memory make index access a constant time operation?"
     other = _entry(5, "foundational", "conceptual", "Ledgers")
-    fingerprint = tuple(sorted(concept_fingerprint(seen)))
+    fingerprint = fingerprint_tuple(seen)
     assert len(fingerprint) >= 4
     picked = pick_pool_question(
         [
