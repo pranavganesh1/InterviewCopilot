@@ -1,13 +1,38 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ApiError,
   api,
   type ChatResult,
   type OnboardingState,
   type VaultItem,
 } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const RESUME_HINTS: Record<string, string[]> = {
+  pdf_unreadable: [
+    "Export again from Word/Google Docs as PDF",
+    "Remove any password protection",
+  ],
+  pdf_encrypted: [
+    "Export again from Word/Google Docs as PDF",
+    "Remove any password protection",
+  ],
+  no_text: [
+    "Use a text-based PDF (not a scanned photo)",
+    "Or type projects into the chat instead",
+  ],
+  empty_file: ["Choose a non-empty PDF file"],
+  file_too_large: ["Keep the PDF under 10 MB"],
+  unsupported_media_type: ["Only PDF files are accepted"],
+};
 
 const CATEGORY_STYLES: Record<string, string> = {
   project: "bg-sky-100 text-sky-700",
@@ -30,6 +55,9 @@ export default function OnboardingPage() {
   const { refresh } = useAuth();
   const [input, setInput] = useState("");
   const [coachMarkedComplete, setCoachMarkedComplete] = useState(false);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const resumeInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const state = useQuery({
@@ -53,13 +81,29 @@ export default function OnboardingPage() {
     mutationFn: (file: File) => {
       const form = new FormData();
       form.append("file", file);
-      return api<{ items_created: { title: string }[] }>("/vault/resume", {
-        method: "POST",
-        body: form,
-      });
+      return api<{ items_created: { title: string }[]; items_skipped?: number }>(
+        "/vault/resume",
+        { method: "POST", body: form },
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding-state"] }),
   });
+
+  function pickResume(file: File | undefined | null) {
+    if (!file || upload.isPending) return;
+    setResumeFile(file);
+    upload.mutate(file);
+  }
+
+  const uploadError =
+    upload.error instanceof ApiError
+      ? upload.error
+      : upload.error instanceof Error
+        ? new ApiError(500, upload.error.message)
+        : null;
+  const uploadHints = uploadError?.code
+    ? RESUME_HINTS[uploadError.code]
+    : undefined;
 
   const finish = useMutation({
     mutationFn: () =>
@@ -253,39 +297,128 @@ export default function OnboardingPage() {
             </div>
           </div>
 
+          <Link
+            to="/readiness"
+            className="block rounded-lg border border-accent/30 bg-accent-soft/50 p-4 hover:bg-accent-soft"
+            data-testid="readiness-onboarding-card"
+          >
+            <h2 className="text-sm font-semibold text-accent-strong">
+              Check how ready your resume is for interviews
+            </h2>
+            <p className="mt-1 text-xs text-ink-soft">
+              See which claims interviewers often ask about — without judging honesty.
+            </p>
+          </Link>
+
           <div className="rounded-lg border border-stone-200 bg-white p-4">
             <h2 className="text-sm font-semibold text-stone-800">Resume</h2>
             <p className="mt-1 text-xs text-stone-500">
               Optional — PDF up to 10 MB.
             </p>
-            <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-line bg-page px-4 py-5 text-center transition hover:border-accent hover:bg-surface">
-              <span className="text-sm font-medium text-ink">
-                {upload.isPending
-                  ? "Extracting your experience…"
-                  : "Upload resume PDF"}
-              </span>
+            <div
+              role="button"
+              tabIndex={upload.isPending ? -1 : 0}
+              aria-disabled={upload.isPending}
+              aria-label="Upload resume PDF"
+              data-testid="resume-upload-dropzone"
+              onKeyDown={(event) => {
+                if (upload.isPending) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  resumeInputRef.current?.click();
+                }
+              }}
+              onClick={() => {
+                if (!upload.isPending) resumeInputRef.current?.click();
+              }}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                if (!upload.isPending) setDragOver(true);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                if (!upload.isPending) setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragOver(false);
+                pickResume(event.dataTransfer.files?.[0]);
+              }}
+              className={`mt-3 flex min-w-0 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed px-4 py-5 text-center transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                upload.isPending
+                  ? "cursor-not-allowed border-line bg-stone-50 opacity-80"
+                  : dragOver
+                    ? "border-accent bg-accent-soft"
+                    : "border-line bg-page hover:border-accent hover:bg-surface"
+              }`}
+            >
+              {upload.isPending ? (
+                <span className="inline-flex items-center gap-2 text-sm font-medium text-ink">
+                  <span
+                    className="h-4 w-4 motion-safe:animate-spin rounded-full border-2 border-accent/30 border-t-accent"
+                    aria-hidden="true"
+                  />
+                  Extracting your experience…
+                </span>
+              ) : (
+                <span className="text-sm font-medium text-ink">Upload resume PDF</span>
+              )}
               <span className="mt-1 text-[11px] text-stone-500">
-                Speeds up vault setup when you have one
+                Drag and drop or click — speeds up vault setup
               </span>
               <input
+                ref={resumeInputRef}
                 type="file"
                 accept="application/pdf"
                 className="hidden"
                 disabled={upload.isPending}
                 onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) upload.mutate(f);
+                  pickResume(e.target.files?.[0]);
+                  e.target.value = "";
                 }}
               />
-            </label>
-            {upload.data && (
-              <p className="mt-2 text-xs text-emerald-600">
-                Added {upload.data.items_created.length} vault items from your
-                resume.
+            </div>
+            {resumeFile && (
+              <p className="mt-2 truncate text-xs text-ink-soft" title={resumeFile.name}>
+                {resumeFile.name} · {formatBytes(resumeFile.size)}
               </p>
             )}
-            {upload.error instanceof Error && (
-              <p className="mt-2 text-xs text-red-600">{upload.error.message}</p>
+            {upload.data && (
+              <p className="mt-2 text-xs text-emerald-700" data-testid="resume-upload-success">
+                {upload.data.items_created.length === 0
+                  ? "No new vault items — those titles were already saved."
+                  : `Added ${upload.data.items_created.length} vault item${
+                      upload.data.items_created.length === 1 ? "" : "s"
+                    } from your resume.`}
+              </p>
+            )}
+            {uploadError && (
+              <div
+                className="mt-2 rounded-md bg-red-50 p-3 text-xs text-red-700"
+                data-testid="resume-upload-error"
+                role="alert"
+              >
+                <p>{uploadError.message}</p>
+                {uploadHints && uploadHints.length > 0 && (
+                  <ul className="mt-2 list-disc space-y-0.5 pl-4 text-red-600/90">
+                    {uploadHints.map((hint) => (
+                      <li key={hint}>{hint}</li>
+                    ))}
+                  </ul>
+                )}
+                <button
+                  type="button"
+                  className="mt-2 font-semibold text-accent-strong underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  onClick={() => {
+                    upload.reset();
+                    if (resumeFile) upload.mutate(resumeFile);
+                    else resumeInputRef.current?.click();
+                  }}
+                >
+                  Try again
+                </button>
+              </div>
             )}
           </div>
 

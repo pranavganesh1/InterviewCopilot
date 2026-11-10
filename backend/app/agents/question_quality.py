@@ -584,6 +584,12 @@ def public_question_meta(detail: dict | None, *, reveal: bool) -> dict:
         out["scenario"] = meta["scenario"]
     if meta.get("unit"):
         out["unit"] = meta["unit"]
+    if meta.get("origin"):
+        out["origin"] = meta["origin"]
+    if meta.get("probe_label"):
+        out["probe_label"] = meta["probe_label"]
+    if meta.get("project_name"):
+        out["project_name"] = meta["project_name"]
     if reveal:
         if isinstance(meta.get("correct_index"), int):
             out["correct_index"] = meta["correct_index"]

@@ -249,9 +249,19 @@ export default function InterviewPage() {
       {/* Top bar: title + progress + exit */}
       <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-wide text-accent">
-            {session.data?.session.mode} interview
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-accent">
+              {session.data?.session.mode} interview
+            </p>
+            {session.data?.session.persona_name && (
+              <span
+                className="rounded-md border border-accent/30 bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent-strong"
+                data-testid="persona-badge"
+              >
+                Interviewer: {session.data.session.persona_name}
+              </span>
+            )}
+          </div>
           <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
             Interview session
           </h1>
@@ -459,6 +469,14 @@ export default function InterviewPage() {
                 {focusKind === "coding" && (
                   <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-stone-600">
                     Coding
+                  </span>
+                )}
+                {focusTurn.probe_label && (
+                  <span
+                    className="max-w-[14rem] truncate rounded-md bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700"
+                    title={focusTurn.probe_label}
+                  >
+                    {focusTurn.probe_label}
                   </span>
                 )}
                 {awaitingAnswer && (

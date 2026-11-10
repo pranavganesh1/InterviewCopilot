@@ -34,3 +34,11 @@ async def list_items(db: AsyncSession, user_id) -> list[VaultItem]:
 
 async def vault_summary(db: AsyncSession, user_id) -> list[dict]:
     return [{"category": i.category, "title": i.title} for i in await list_items(db, user_id)]
+
+
+async def vault_probe_ready(db: AsyncSession, user_id) -> bool:
+    """True when the vault has at least one project, skill, or internship."""
+    items = await list_items(db, user_id)
+    return any(
+        (item.category or "").lower() in ("project", "skill", "internship") for item in items
+    )

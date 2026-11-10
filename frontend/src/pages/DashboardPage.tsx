@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import DeleteTrackDialog from "../components/DeleteTrackDialog";
@@ -11,10 +11,13 @@ import StatCard from "../components/ui/StatCard";
 import ProgressRing from "../components/ui/ProgressRing";
 import SectionHeader from "../components/ui/SectionHeader";
 import {
+  ApiError,
   api,
   type AssessmentSummary,
   type AssessmentsDashboard,
+  type OpenSessionRow,
   type Track,
+  type TrackWeaknesses,
 } from "../lib/api";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -103,6 +106,7 @@ type PendingDelete = {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
@@ -114,6 +118,7 @@ export default function DashboardPage() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [leavingId, setLeavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ id: string; subject: string } | null>(null);
+  const [finishError, setFinishError] = useState<string | null>(null);
   const [form, setForm] = useState({
     track_type: "topic",
     subject: "",
@@ -131,6 +136,37 @@ export default function DashboardPage() {
   const assessments = useQuery({
     queryKey: ["me-assessments"],
     queryFn: () => api<AssessmentsDashboard>("/me/assessments"),
+  });
+
+  const openSessions = useQuery({
+    queryKey: ["me-open-sessions"],
+    queryFn: () => api<OpenSessionRow[]>("/me/open-sessions"),
+  });
+
+  const focusTrackId = (tracks.data ?? []).find((t) => !t.archived)?.id;
+  const weaknesses = useQuery({
+    queryKey: ["weaknesses", focusTrackId],
+    enabled: Boolean(focusTrackId),
+    retry: false,
+    queryFn: () => api<TrackWeaknesses>(`/tracks/${focusTrackId}/weaknesses`),
+  });
+
+  const finishOpen = useMutation({
+    mutationFn: async (row: OpenSessionRow) => {
+      await api(`/sessions/${row.session_id}/complete`, { method: "POST" });
+      return row;
+    },
+    onSuccess: (row) => {
+      setFinishError(null);
+      void qc.invalidateQueries({ queryKey: ["me-open-sessions"] });
+      void qc.invalidateQueries({ queryKey: ["me-assessments"] });
+      navigate(`/tracks/${row.track_id}/report/${row.session_id}`);
+    },
+    onError: (err) => {
+      setFinishError(
+        err instanceof ApiError ? err.message : "Could not finish this interview.",
+      );
+    },
   });
 
   const create = useMutation({
@@ -157,6 +193,7 @@ export default function DashboardPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tracks"] });
       qc.invalidateQueries({ queryKey: ["me-assessments"] });
+      qc.invalidateQueries({ queryKey: ["me-open-sessions"] });
     },
   });
 
@@ -261,6 +298,8 @@ export default function DashboardPage() {
   const recent = visibleAssessments.slice(0, 5);
   const avgScore = dash?.average_score ?? null;
   const interviewsTaken = dash?.completed_interviews ?? 0;
+  const openList = openSessions.data ?? [];
+  const inProgressCount = openList.length;
 
   function closeDeleteDialog() {
     const focus = pendingDelete?.returnFocus;
@@ -279,6 +318,7 @@ export default function DashboardPage() {
       );
       void qc.invalidateQueries({ queryKey: ["tracks"] });
       void qc.invalidateQueries({ queryKey: ["me-assessments"] });
+      void qc.invalidateQueries({ queryKey: ["me-open-sessions"] });
       setToast({ id: track.id, subject: track.subject });
     }, wait);
   }
@@ -715,8 +755,10 @@ export default function DashboardPage() {
                   Assessments
                 </li>
                 <li>
-                  <span className="font-semibold text-ink">—</span> In
-                  Progress
+                  <span className="font-semibold text-ink">
+                    {openSessions.isLoading ? "…" : inProgressCount}
+                  </span>{" "}
+                  In Progress
                 </li>
                 <li>
                   <span className="font-semibold text-ink">
@@ -724,11 +766,112 @@ export default function DashboardPage() {
                   </span>{" "}
                   Track{activeTrackCount === 1 ? "" : "s"}
                 </li>
+                <li>
+                  <span className="font-semibold text-ink">
+                    {weaknesses.isLoading
+                      ? "…"
+                      : weaknesses.data?.top_weak?.length ?? 0}
+                  </span>{" "}
+                  Weak areas
+                </li>
               </ul>
             </div>
-            <p className="mt-3 text-[11px] text-ink-faint">
-              In-progress sessions are not listed on this endpoint yet.
-            </p>
+            {(weaknesses.data?.top_weak?.length ?? 0) > 0 && (
+              <ul className="mt-3 space-y-1.5">
+                {weaknesses.data!.top_weak.map((row) => (
+                  <li
+                    key={row.concept}
+                    className="flex min-w-0 items-center justify-between gap-2 text-xs text-ink-soft"
+                  >
+                    <span className="truncate" title={row.concept}>
+                      {row.concept}
+                    </span>
+                    <span className="shrink-0 font-semibold uppercase text-violet-700">
+                      {row.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {finishError && (
+              <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+                {finishError}
+              </p>
+            )}
+            {openSessions.isLoading ? (
+              <p className="mt-3 text-xs text-ink-faint">Loading open interviews…</p>
+            ) : openList.length === 0 ? (
+              <p className="mt-3 text-[11px] text-ink-faint">
+                No unfinished interviews right now.
+              </p>
+            ) : (
+              <ul className="mt-3 space-y-3">
+                {openList.map((row) => {
+                  const finishing =
+                    finishOpen.isPending &&
+                    finishOpen.variables?.session_id === row.session_id;
+                  return (
+                    <li
+                      key={row.session_id}
+                      className="min-w-0 rounded-md border border-line bg-page/60 p-3"
+                    >
+                      <p className="truncate text-sm font-medium text-ink">
+                        {row.track_subject}
+                      </p>
+                      <p className="mt-0.5 text-xs text-ink-soft">
+                        Q{row.question_index}/{row.max_turns}
+                        {" · "}
+                        {row.answered_count} answered
+                        {" · "}
+                        {row.mode}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Link
+                          to={`/tracks/${row.track_id}/interview/${row.session_id}`}
+                          className="inline-flex rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-strong"
+                        >
+                          Resume
+                        </Link>
+                        <button
+                          type="button"
+                          disabled={finishOpen.isPending}
+                          onClick={() => {
+                            setFinishError(null);
+                            finishOpen.mutate(row);
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-page disabled:opacity-60"
+                        >
+                          {finishing && (
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="h-3.5 w-3.5 animate-spin"
+                              fill="none"
+                              aria-hidden="true"
+                            >
+                              <circle
+                                cx="12"
+                                cy="12"
+                                r="9"
+                                stroke="currentColor"
+                                strokeWidth="3"
+                                opacity="0.25"
+                              />
+                              <path
+                                d="M21 12a9 9 0 0 0-9-9"
+                                stroke="currentColor"
+                                strokeWidth="3"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                          )}
+                          Finish and get feedback
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
 
           <div className="rounded-lg border border-line bg-white p-5">

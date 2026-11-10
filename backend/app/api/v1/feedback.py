@@ -45,3 +45,16 @@ async def list_my_assessments(
 ):
     """Profile dashboard: completed interview reports owned by the current user."""
     return await feedback_service.list_assessments_for_user(db, user.id)
+
+
+@router.get("/tracks/{track_id}/weaknesses")
+async def get_track_weaknesses(
+    track_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Derived concept weaknesses for the track owner (empty when not enough data)."""
+    result = await feedback_service.get_weaknesses_for_track(db, user.id, track_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+    return result

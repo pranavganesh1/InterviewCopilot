@@ -73,6 +73,9 @@ async function mockShell(page: Page) {
       },
     }),
   );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
+  );
   await page.route("**/api/v1/onboarding/state", (route) =>
     route.fulfill({
       json: {

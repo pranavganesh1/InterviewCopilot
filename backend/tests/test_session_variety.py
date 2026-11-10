@@ -540,6 +540,12 @@ async def test_three_sessions_open_on_different_areas_and_a_refresh_is_stable(
             assert refreshed.json()["turns"][0]["question"] == turn["question"]
             assert refreshed.json()["turns"][0]["question_area"] == turn["question_area"]
             openings.append((turn["question_area"], turn["question"]))
+            # Close the empty open session so the next start creates a fresh one
+            # (start is idempotent for empty in-progress sessions).
+            closed = await client.post(
+                f"/api/v1/sessions/{sid}/abort", cookies={"ic_access": token}
+            )
+            assert closed.status_code == 200
     assert len({area for area, _ in openings}) == 3
     assert len({question for _, question in openings}) == 3
     assert "What is zephyr77 known for?" not in {question for _, question in openings}
