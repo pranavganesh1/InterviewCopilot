@@ -270,11 +270,11 @@ async def start_session(
     # the user retries cleanly and nothing is stuck on "Preparing…".
     try:
         decision = await _decide(db, session, brief_content, last_answer=None, mongo_db=mongo_db)
+        turn = await _append_turn(db, session, decision)
     except Exception:
         session.status = "aborted"
         await db.commit()
         raise
-    turn = await _append_turn(db, session, decision)
     _maybe_topup(brief_content, history, track_id)
     return {
         "session": _session_dict(session, practice_label=practice_label_for(brief_content)),

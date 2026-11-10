@@ -7,10 +7,15 @@ Edit this table when prices change. Matched by substring, most specific first.
 
 # (substr, input_usd_per_1m, output_usd_per_1m) — prices checked 2026-11-05.
 _PRICES: list[tuple[str, float, float]] = [
-    ("gpt-oss-120b", 0.15, 0.75),  # Groq list price
-    ("gpt-oss-20b", 0.05, 0.40),
-    ("gemini-flash", 0.30, 2.50),  # Gemini flash-class (AI Studio tier)
-    ("llama-3.3", 0.60, 0.60),  # fallback if model returns
+    # Keyed to the LiteLLM alias substrings sent by the gateway
+    # (the gateway passes the alias, not the underlying provider model name).
+    # Prices in USD per million tokens (prompt, completion).
+    ("structured-json-nim", 0.60, 0.60),  # NVIDIA NIM — Llama 3.3 70B
+    ("interview-chat-nim", 0.60, 0.60),
+    ("structured-json-gemini", 0.30, 2.50),  # Gemini flash
+    ("interview-chat-gemini", 0.30, 2.50),
+    ("structured-json", 0.15, 0.75),  # Groq — gpt-oss-120b primary
+    ("interview-chat", 0.15, 0.75),
 ]
 
 

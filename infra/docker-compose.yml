@@ -131,6 +131,7 @@ services:
       MONGO_DB: ${MONGO_DB:-interviewcopilot}
       NATS_URL: nats://nats:4222
       LITELLM_URL: http://litellm:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-master}
       S3_ENDPOINT_URL: http://seaweedfs:9000
       JWT_SECRET: ${JWT_SECRET}
       FEEDBACK_CATCH_UP_INTERVAL_SECONDS: ${FEEDBACK_CATCH_UP_INTERVAL_SECONDS:-300}

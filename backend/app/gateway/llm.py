@@ -114,7 +114,10 @@ async def _chat_once(
             )
             if resp.status_code == 429 and attempt < max_attempts - 1:
                 retry_after = resp.headers.get("retry-after")
-                delay = float(retry_after) if retry_after else 5
+                # Cap at 10s — a long retry-after (e.g. 90s daily-quota
+                # exhaustion) means the provider is saturated; fall through
+                # to the next model in the chain rather than waiting.
+                delay = min(float(retry_after) if retry_after else 5, 10)
                 log.warning(
                     "llm_gateway_rate_limited",
                     model=model,
