@@ -6,8 +6,10 @@ import {
   api,
   type ChatResult,
   type OnboardingState,
+  type PreparationPreferences,
 } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import GoalDiscovery from "../components/GoalDiscovery";
 import { VaultSidebar } from "../components/VaultSidebar";
 
 function formatBytes(n: number): string {
@@ -45,7 +47,6 @@ export default function OnboardingPage() {
   const navigate = useNavigate();
   const { refresh } = useAuth();
   const [input, setInput] = useState("");
-  const [coachMarkedComplete, setCoachMarkedComplete] = useState(false);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const resumeInputRef = useRef<HTMLInputElement>(null);
@@ -62,10 +63,18 @@ export default function OnboardingPage() {
         method: "POST",
         body: JSON.stringify({ message }),
       }),
-    onSuccess: (data) => {
-      if (data.onboarding_complete) setCoachMarkedComplete(true);
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["onboarding-state"] });
     },
+  });
+
+  const saveGoals = useMutation({
+    mutationFn: (body: Partial<PreparationPreferences> & { interests?: string[] }) =>
+      api<ChatResult>("/onboarding/goals", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding-state"] }),
   });
 
   const upload = useMutation({
@@ -106,6 +115,8 @@ export default function OnboardingPage() {
     },
   });
 
+  const goalsBusy = chat.isPending || saveGoals.isPending || finish.isPending;
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [state.data?.messages.length, chat.isPending]);
@@ -127,14 +138,19 @@ export default function OnboardingPage() {
       );
     })();
   const finished = state.data?.onboarding_finished === true;
-  const vaultComplete =
-    state.data?.onboarding_complete === true || missing.length === 0;
-  const canFinish =
-    !finished && (coachMarkedComplete || vaultComplete) && !finish.isPending;
+  const phase = state.data?.phase ?? (missing.length === 0 ? "goals" : "profile");
+  const prefs = state.data?.preparation_preferences;
+  const goalsReady = state.data?.goals_ready === true || Boolean(prefs?.confirmed);
+  const showGoalMenu = state.data?.show_goal_menu === true || phase === "goals";
+  const canStartPreparing =
+    !finished &&
+    missing.length === 0 &&
+    (prefs?.interests?.length ?? 0) > 0 &&
+    !finish.isPending;
 
   const messages = [
     ...(state.data?.messages ?? []),
-    ...(chat.isPending
+    ...(chat.isPending || saveGoals.isPending
       ? [
           {
             role: "pending",
@@ -229,6 +245,24 @@ export default function OnboardingPage() {
             )}
             <div ref={bottomRef} />
           </div>
+
+          {(phase === "goals" || phase === "ready" || showGoalMenu) && !finished && (
+            <div className="border-t border-stone-100 p-3 sm:p-4">
+              <GoalDiscovery
+                options={state.data?.goal_interest_options ?? []}
+                preferences={prefs}
+                suggestedSkills={state.data?.suggested_skills ?? []}
+                suggestedProjects={state.data?.suggested_projects ?? []}
+                phase={phase}
+                showGoalMenu={Boolean(state.data?.show_goal_menu) || !prefs?.interests?.length}
+                goalsReady={goalsReady}
+                pending={goalsBusy}
+                onSaveInterests={(interests) => saveGoals.mutate({ interests })}
+                onSaveDetails={(patch) => saveGoals.mutate(patch)}
+                onConfirmAndStart={() => finish.mutate()}
+              />
+            </div>
+          )}
 
           <div className="border-t border-stone-100 bg-stone-50/60 p-3 sm:p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
@@ -392,7 +426,7 @@ export default function OnboardingPage() {
             >
               Go to Tracks
             </button>
-          ) : canFinish ? (
+          ) : canStartPreparing ? (
             <div className="space-y-2">
               <button
                 type="button"
@@ -401,7 +435,7 @@ export default function OnboardingPage() {
                 disabled={finish.isPending}
                 className="w-full rounded-lg bg-accent px-4 py-3.5 text-center text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
               >
-                {finish.isPending ? "Saving…" : "Finish Onboarding"}
+                {finish.isPending ? "Saving…" : "Start Preparing"}
               </button>
               {finish.error instanceof Error && (
                 <p className="text-center text-xs text-red-600">
@@ -409,12 +443,14 @@ export default function OnboardingPage() {
                 </p>
               )}
             </div>
-          ) : (
+          ) : missing.length > 0 ? (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-center text-xs text-amber-900">
               Still needed:{" "}
-              {missing.map((c) => REQUIRED_LABELS[c] ?? c).join(", ") ||
-                "keep chatting with your coach"}
-              .
+              {missing.map((c) => REQUIRED_LABELS[c] ?? c).join(", ")}.
+            </p>
+          ) : (
+            <p className="rounded-lg border border-accent/30 bg-accent-soft/50 px-4 py-3 text-center text-xs text-ink">
+              Pick your interview preparation goals above to continue.
             </p>
           )}
         </aside>

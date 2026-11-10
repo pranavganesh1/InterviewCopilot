@@ -130,6 +130,7 @@ async def test_complete_marks_finished_and_survives_state_reload(clean_users_tab
 
     from app.db.mongo import get_mongo_client
     from app.models.vault import VaultItem
+    from app.services import conversation_store
 
     email = f"of-{uuid.uuid4()}@example.com"
     async with SessionFactory() as session:
@@ -158,6 +159,11 @@ async def test_complete_marks_finished_and_survives_state_reload(clean_users_tab
     from app.core.config import get_settings
 
     app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    await conversation_store.set_preparation_preferences(
+        app.state.mongo_db,
+        str(user_id),
+        {"interests": ["technical"], "target_role": "Intern", "confirmed": True},
+    )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         first = await client.post(

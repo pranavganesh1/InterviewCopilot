@@ -101,6 +101,8 @@ export interface User {
   onboarding_completed?: boolean;
   onboarding_completed_at?: string | null;
   is_admin?: boolean;
+  preparation_preferences?: PreparationPreferences;
+  recommended_tracks?: { track_type: string; subject: string }[];
 }
 
 export interface ProfileUpdate {
@@ -217,6 +219,18 @@ export interface ReportDiagnostics {
   }[];
 }
 
+export interface PreparationPreferences {
+  interests: string[];
+  target_role?: string | null;
+  technical_areas?: string[];
+  focus_skills?: string[];
+  focus_projects?: string[];
+  placement_target?: string | null;
+  experience_level?: string | null;
+  behavioral_goals?: string | null;
+  confirmed?: boolean;
+}
+
 export interface OnboardingState {
   messages: { role: string; content: string; created_at?: string }[];
   vault_items: VaultItem[];
@@ -224,6 +238,15 @@ export interface OnboardingState {
   onboarding_finished?: boolean;
   onboarding_completed_at?: string | null;
   missing_categories?: string[];
+  phase?: "profile" | "goals" | "ready";
+  show_goal_menu?: boolean;
+  preparation_preferences?: PreparationPreferences;
+  goal_interest_options?: { id: string; label: string }[];
+  suggested_skills?: string[];
+  suggested_projects?: string[];
+  recommended_tracks?: { track_type: string; subject: string }[];
+  preparation_summary?: string;
+  goals_ready?: boolean;
 }
 
 export interface ChatResult {
@@ -231,6 +254,9 @@ export interface ChatResult {
   items_created: { id: string; category: string; title: string }[];
   items_updated?: { id: string; category: string; title: string }[];
   onboarding_complete: boolean;
+  phase?: "profile" | "goals" | "ready";
+  show_goal_menu?: boolean;
+  preparation_preferences?: PreparationPreferences;
 }
 
 export interface Track {

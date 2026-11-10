@@ -352,6 +352,41 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      {(user?.recommended_tracks?.length ?? 0) > 0 && (
+        <div
+          className="rounded-lg border border-accent/20 bg-accent-soft/40 p-4"
+          data-testid="recommended-tracks"
+        >
+          <p className="text-sm font-semibold text-ink">Recommended for you</p>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            Based on your onboarding preparation goals.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {user!.recommended_tracks!.map((seed) => (
+              <button
+                key={`${seed.track_type}-${seed.subject}`}
+                type="button"
+                onClick={() => {
+                  setShowForm(true);
+                  setForm({
+                    track_type: seed.track_type,
+                    subject: seed.subject,
+                    company: "",
+                    jd_text: "",
+                  });
+                }}
+                className="rounded-md bg-white px-3 py-2 text-left text-xs font-medium text-ink ring-1 ring-stone-200 hover:ring-accent"
+              >
+                <span className="block text-[10px] uppercase tracking-wide text-ink-faint">
+                  {TYPE_LABELS[seed.track_type] ?? seed.track_type}
+                </span>
+                {seed.subject}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {showForm && (
         <form
           onSubmit={(e) => {
