@@ -1,6 +1,5 @@
 router_settings:
-  # Multi-tier resilience: when Groq 429s/exhausts rate limits, LiteLLM
-  # falls back to NVIDIA NIM (Llama 3.3 70B), then Gemini as tertiary.
+  # Multi-tier resilience: Groq primary → NVIDIA NIM fallback → Gemini tertiary.
   fallbacks:
     - {"interview-chat": ["interview-chat-nim", "interview-chat-gemini"]}
     - {"structured-json": ["structured-json-nim", "structured-json-gemini"]}
@@ -12,7 +11,7 @@ model_list:
       api_key: os.environ/GROQ_API_KEY
   - model_name: interview-chat-nim
     litellm_params:
-      model: openai/meta/llama-3.3-70b-instruct
+      model: openai/nvidia/nemotron-3.5-super-vl-120b-a12b
       api_base: https://integrate.api.nvidia.com/v1
       api_key: os.environ/NVIDIA_NIM_API_KEY
   - model_name: interview-chat-gemini
@@ -26,7 +25,7 @@ model_list:
       response_format: {"type": "json_object"}
   - model_name: structured-json-nim
     litellm_params:
-      model: openai/meta/llama-3.3-70b-instruct
+      model: openai/nvidia/nemotron-3.5-super-vl-120b-a12b
       api_base: https://integrate.api.nvidia.com/v1
       api_key: os.environ/NVIDIA_NIM_API_KEY
       response_format: {"type": "json_object"}
@@ -36,7 +35,7 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY
 
 litellm_settings:
-  # Our gateway owns 429 backoff (45s/90s) — LiteLLM-internal instant retries
+  # Our gateway owns 429 backoff — LiteLLM-internal instant retries
   # would re-trigger Groq's cooldown during the gateway's waits.
   num_retries: 0
   timeout: 120
