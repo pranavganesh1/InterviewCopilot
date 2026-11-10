@@ -179,6 +179,26 @@ export default function AppHeader() {
                 </Link>
                 <Link
                   role="menuitem"
+                  to="/readiness"
+                  onClick={(event) => {
+                    if (requestLeave({ kind: "href", href: "/readiness", focus: event.currentTarget })) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setMenuPath(null);
+                  }}
+                  className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-page"
+                  data-testid="nav-readiness"
+                >
+                  <span className="grid h-7 w-7 place-items-center rounded-md bg-page text-ink-soft">
+                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
+                      <path d="M7 3h10a2 2 0 0 1 2 2v14l-7-3-7 3V5a2 2 0 0 1 2-2Zm2 4v2h6V7H9Zm0 4v2h6v-2H9Z" />
+                    </svg>
+                  </span>
+                  Resume readiness
+                </Link>
+                <Link
+                  role="menuitem"
                   to="/profile#history"
                   onClick={(event) => {
                     if (requestLeave({ kind: "href", href: "/profile#history", focus: event.currentTarget })) {

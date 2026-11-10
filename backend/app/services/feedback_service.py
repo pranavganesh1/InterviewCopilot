@@ -165,6 +165,21 @@ async def process_session_feedback(db: AsyncSession, session_id) -> dict:
     label = practice_label_for(brief_content if isinstance(brief_content, dict) else {})
     if label:
         content["practice_label"] = label
+    try:
+        from app.agents.persona import get_persona
+        from app.services import probe as probe_service
+
+        persona = get_persona(
+            probe_service.session_opts_from_plan(session.question_plan).get("persona_id")
+        )
+        content["persona_id"] = persona.id
+        content["persona_name"] = persona.name
+    except Exception as exc:
+        log.warning(
+            "persona_report_enrich_failed",
+            session_id=str(session.id),
+            error=str(exc)[:200],
+        )
     # Drop anything the agent invented for a question the candidate never answered.
     answered_indexes = {t.turn_index for t in answered}
     content["question_assessments"] = [
@@ -172,6 +187,22 @@ async def process_session_feedback(db: AsyncSession, session_id) -> dict:
         for row in (content.get("question_assessments") or [])
         if int(row.get("turn_index") or 0) in answered_indexes
     ]
+    try:
+        from app.services import weakness as weakness_service
+        from app.services.interview_service import _track_answered_turns
+
+        prior_turns, session_ids = await _track_answered_turns(
+            db, session.user_id, session.track_id
+        )
+        # Include this session's answered turns (already in prior after commit path).
+        summary = weakness_service.aggregate_turns(prior_turns, session_order=session_ids)
+        content["diagnostics"] = weakness_service.build_diagnostics(summary)
+    except Exception as exc:
+        log.warning(
+            "diagnostics_build_failed",
+            session_id=str(session.id),
+            error=str(exc)[:200],
+        )
 
     existing = (
         await db.execute(select(FeedbackReport).where(FeedbackReport.session_id == session.id))
@@ -224,6 +255,36 @@ async def get_progression_for_track(db: AsyncSession, user_id, track_id) -> dict
         "track_id": str(track_id),
         "strict_completed": prog.strict_completed if prog else 0,
         "guided_state": prog.guided_state if prog else "LOCKED",
+    }
+
+
+async def get_weaknesses_for_track(db: AsyncSession, user_id, track_id) -> dict | None:
+    track = await db.get(Track, track_id)
+    if track is None or track.user_id != user_id:
+        return None
+    from app.services import weakness as weakness_service
+    from app.services.interview_service import _track_answered_turns
+
+    turns, session_ids = await _track_answered_turns(db, user_id, track_id)
+    summary = weakness_service.aggregate_turns(turns, session_order=session_ids)
+    top = (summary.get("weak") or [])[:3]
+    return {
+        "track_id": str(track_id),
+        "has_data": bool(summary.get("has_data")),
+        "weak": summary.get("weak") or [],
+        "improving": summary.get("improving") or [],
+        "mastered": summary.get("mastered") or [],
+        "top_weak": [
+            {
+                "concept": c["concept"],
+                "status": c["status"],
+                "last_coverage": c.get("last_coverage"),
+            }
+            for c in top
+        ],
+        "recommended_practice": weakness_service.recommended_practice(
+            (summary.get("weak") or []) + (summary.get("improving") or [])
+        ),
     }
 
 

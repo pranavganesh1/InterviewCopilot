@@ -8,6 +8,8 @@ import {
   nextReportPollInterval,
 } from "../lib/feedbackStatus";
 import Badge from "../components/ui/Badge";
+import DiagnosticSection from "../components/DiagnosticSection";
+import StartInterviewModal from "../components/StartInterviewModal";
 import { COVERAGE_TONE, LEVEL_TONE } from "../lib/status";
 
 function StatusShell({
@@ -54,6 +56,7 @@ function StatusShell({
 export default function ReportPage() {
   const { trackId, sessionId } = useParams();
   const [pollsSoFar, setPollsSoFar] = useState(0);
+  const [practiceOpen, setPracticeOpen] = useState(false);
 
   const report = useQuery({
     queryKey: ["report", sessionId],
@@ -164,6 +167,11 @@ export default function ReportPage() {
             Feedback ready
           </p>
           <h1 className="text-xl font-semibold tracking-tight">Feedback report</h1>
+          {c.persona_name && (
+            <p className="mt-1 text-sm text-ink-soft" data-testid="persona-header">
+              Interviewed by {c.persona_name}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
@@ -222,6 +230,11 @@ export default function ReportPage() {
             {c.coverage_status}
           </Badge>
           <span className="text-stone-400">{c.session_mode} interview</span>
+          {c.persona_name && (
+            <span className="text-stone-500" data-testid="persona-interviewed-by">
+              Interviewed by {c.persona_name}
+            </span>
+          )}
           {c.practice_label && (
             <span
               className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900"
@@ -278,6 +291,20 @@ export default function ReportPage() {
           ))}
         </div>
       </section>
+
+      <DiagnosticSection
+        diagnostics={c.diagnostics}
+        onPracticeWeak={() => setPracticeOpen(true)}
+      />
+      <StartInterviewModal
+        track={
+          practiceOpen && trackId
+            ? { id: trackId, subject: "Practice weak areas" }
+            : null
+        }
+        onClose={() => setPracticeOpen(false)}
+        initialFocusWeak
+      />
 
       <div className="grid gap-4 md:grid-cols-2">
         <section className="rounded-lg border border-stone-200 bg-white p-5">

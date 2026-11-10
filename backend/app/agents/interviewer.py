@@ -73,6 +73,8 @@ Do not write the next interview question — evaluation only.
 {COVERAGE_RUBRIC}
 Rules:
 - Judge ONLY what the candidate actually wrote. Never invent mistakes or facts.
+- If probe_context is present, judge consistency with that claim or project, but
+  never call a resume fact false — say uncertain instead of inventing errors.
 - Judge against the stored key_points when they are present, and against
   well-established knowledge. If you are not sure a statement is wrong, put
   "uncertain" in gaps instead of inventing an error.
@@ -212,10 +214,18 @@ GUIDED_SYSTEM_PROMPT = GUIDED_QUESTION_SYSTEM_PROMPT
 SYSTEM_PROMPT = STRICT_SYSTEM_PROMPT
 
 
-def system_prompt_for_mode(mode: str) -> str:
-    if mode == "guided":
-        return GUIDED_QUESTION_SYSTEM_PROMPT
-    return STRICT_QUESTION_SYSTEM_PROMPT
+def system_prompt_for_mode(mode: str, persona_id: str | None = None) -> str:
+    from app.agents.persona import persona_prompt_block
+
+    base = (
+        GUIDED_QUESTION_SYSTEM_PROMPT
+        if mode == "guided"
+        else STRICT_QUESTION_SYSTEM_PROMPT
+    )
+    extra = persona_prompt_block(persona_id, mode=mode)
+    if extra:
+        return f"{base}\n{extra}"
+    return base
 
 
 class AnswerEvaluation(BaseModel):
@@ -864,6 +874,8 @@ async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, li
         "is_code_answer": is_code,
         "rubric_version": RUBRIC_VERSION,
         "key_points": payload.get("key_points") or [],
+        "probe_context": payload.get("probe_context") or "",
+        "probe_origin": payload.get("probe_origin") or "",
     }
 
     system = EVALUATE_SYSTEM_PROMPT
@@ -929,7 +941,7 @@ async def run_interviewer_turn(
     if mode not in ("strict", "guided"):
         mode = "strict"
     routed = {**payload, "mode": mode}
-    system = system_prompt_for_mode(mode)
+    system = system_prompt_for_mode(mode, payload.get("persona_id"))
 
     raw_answer = payload.get("last_answer")
     text_answer = "" if raw_answer is None else str(raw_answer).strip()

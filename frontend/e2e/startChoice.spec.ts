@@ -37,6 +37,23 @@ async function mockShell(page: Page) {
       },
     }),
   );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
+  );
+  await page.route("**/api/v1/vault/items", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/v1/tracks/*/weaknesses", (route) =>
+    route.fulfill({
+      json: {
+        track_id: "t1",
+        has_data: false,
+        weak: [],
+        improving: [],
+        mastered: [],
+        top_weak: [],
+        recommended_practice: [],
+      },
+    }),
+  );
   await page.route("**/api/v1/tracks", (route) =>
     route.fulfill({
       json: [
@@ -100,7 +117,7 @@ test("an unfinished session opens in the modal and resume keeps that question", 
   await expect(dialog.getByText("Question 2 of 15")).toBeVisible();
   await expect(dialog.getByText("Started 2 hours ago")).toBeVisible();
   await expect(dialog.getByText(/left/)).toBeVisible();
-  await expect(dialog.getByText("Strict")).toBeVisible();
+  await expect(dialog.getByText("Strict", { exact: true })).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
@@ -274,7 +291,10 @@ test("a backdrop click does nothing while the session is being created", async (
 
   await page.goto("/");
   await page.getByRole("button", { name: "Start Interview", exact: true }).click();
-  await page.getByRole("button", { name: "Start interview", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  const startBtn = page.getByRole("button", { name: "Start interview", exact: true });
+  await startBtn.click();
+  await expect(startBtn).toBeDisabled();
   await page.mouse.click(8, 8);
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page).toHaveURL("/");

@@ -143,6 +143,9 @@ test("profile nav opens dashboard empty state", async ({ page }) => {
       },
     }),
   );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
+  );
   await page.route("**/api/v1/auth/refresh", (route) =>
     route.fulfill({ status: 204 }),
   );

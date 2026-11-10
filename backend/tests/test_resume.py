@@ -68,6 +68,16 @@ async def test_resume_upload_creates_vault_items(monkeypatch, clean_users_table)
     import app.services.resume_service as resume_svc
 
     monkeypatch.setattr(resume_svc, "structured_completion", fake_completion)
+    monkeypatch.setattr(
+        resume_svc,
+        "extract_pdf_text",
+        lambda _data: "Hello Resume text with enough characters for extraction.",
+    )
+    monkeypatch.setattr(
+        resume_svc,
+        "store_resume_pdf",
+        lambda s3, *, user_id, filename, data: f"{user_id}/test-{filename}",
+    )
 
     app = create_app()
     transport = httpx.ASGITransport(app=app)

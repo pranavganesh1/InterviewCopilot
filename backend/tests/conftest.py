@@ -2,9 +2,14 @@ import os
 
 # Tests run against a dedicated database so fixture cleanup never touches
 # real data. Must be set before any app module imports config (lru_cache).
-os.environ["DATABASE_URL"] = (
+# Keep an explicit interviewcopilot_test URL (e.g. Docker hostname `postgres`)
+# so local Windows Postgres on :5432 does not steal connections.
+_TEST_DB_URL = (
     "postgresql+asyncpg://interview:interview@localhost:5432/interviewcopilot_test"
 )
+_existing = os.environ.get("DATABASE_URL", "")
+if not _existing.rstrip("/").endswith("interviewcopilot_test"):
+    os.environ["DATABASE_URL"] = _TEST_DB_URL
 
 import pytest  # noqa: E402
 from sqlalchemy import delete  # noqa: E402

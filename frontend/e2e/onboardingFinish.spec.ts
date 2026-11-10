@@ -46,6 +46,9 @@ test.beforeEach(async ({ page }) => {
       },
     }),
   );
+  await page.route("**/api/v1/me/open-sessions", (route) =>
+    route.fulfill({ json: [] }),
+  );
 });
 
 test("Finish Onboarding posts complete then lands on Tracks", async ({

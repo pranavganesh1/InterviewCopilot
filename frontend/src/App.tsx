@@ -8,6 +8,7 @@ import TrackDetailPage from "./pages/TrackDetailPage";
 import InterviewPage from "./pages/InterviewPage";
 import ReportPage from "./pages/ReportPage";
 import ProfilePage from "./pages/ProfilePage";
+import ReadinessPage from "./pages/ReadinessPage";
 import SignInPage from "./pages/SignInPage";
 import AdminOverviewPage from "./pages/AdminOverviewPage";
 import AdminUsersPage from "./pages/AdminUsersPage";
@@ -50,6 +51,7 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/readiness" element={<ReadinessPage />} />
           <Route
             path="/admin"
             element={

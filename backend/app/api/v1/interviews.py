@@ -1,13 +1,15 @@
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.api.v1.schemas.interviews import (
+    CloseEmptyResult,
     OpenSessionResult,
+    OpenSessionRow,
     SessionWithTurn,
     SessionWithTurns,
     TurnResult,
@@ -27,6 +29,20 @@ class SubmitAnswer(BaseModel):
 class CreateSession(BaseModel):
     mode: Literal["strict", "guided"] = "strict"
     duration_minutes: int = Field(default=60, ge=15, le=240)
+    use_resume: bool = False
+    focus_weak: bool = False
+    persona_id: str = "balanced"
+    claim_seeds: list[dict] = Field(default_factory=list, max_length=24)
+
+
+@router.get("/me/open-sessions", response_model=list[OpenSessionRow])
+async def list_my_open_sessions(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    limit: int | None = Query(default=None, ge=1, le=100),
+):
+    """Dashboard: unfinished interviews across the current user's tracks."""
+    return await interview_service.list_open_sessions_for_user(db, user, limit=limit)
 
 
 @router.get("/tracks/{track_id}/open-session", response_model=OpenSessionResult)
@@ -34,15 +50,34 @@ async def open_session(
     track_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=20, ge=1, le=50),
 ):
-    """The unfinished session on this track, if one exists.
+    """Open sessions on this track (newest first). `session` is the newest.
 
-    Nothing else can discover it: the track payload does not include sessions.
+    Nothing else can discover them: the track payload does not include sessions.
     """
-    result = await interview_service.get_open_session(db, user, track_id)
+    result = await interview_service.get_open_session(db, user, track_id, limit=limit)
     if result is None:
         raise HTTPException(status_code=404, detail="Track not found")
     return result
+
+
+@router.post(
+    "/tracks/{track_id}/close-empty-sessions",
+    response_model=CloseEmptyResult,
+)
+async def close_empty_sessions(
+    track_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Abort open interviews on this track that have 0 answered turns."""
+    try:
+        return await interview_service.close_empty_sessions_for_track(db, user, track_id)
+    except LookupError as exc:
+        if str(exc) == "track_not_found":
+            raise HTTPException(status_code=404, detail="Track not found") from None
+        raise
 
 
 @router.post("/tracks/{track_id}/sessions", status_code=201, response_model=SessionWithTurn)
@@ -60,6 +95,10 @@ async def start_session(
             track_id,
             mode=(body.mode if body else "strict"),
             duration_minutes=(body.duration_minutes if body else 60),
+            use_resume=bool(body.use_resume) if body else False,
+            focus_weak=bool(body.focus_weak) if body else False,
+            persona_id=(body.persona_id if body else "balanced"),
+            claim_seeds=(body.claim_seeds if body else None),
             mongo_db=getattr(request.app.state, "mongo_db", None),
         )
     except LLMGatewayError as exc:
@@ -78,6 +117,11 @@ async def start_session(
             raise HTTPException(
                 status_code=422, detail="mode must be 'strict' or 'guided'"
             ) from None
+        if str(exc) == "invalid_persona":
+            raise HTTPException(
+                status_code=422,
+                detail="persona_id must be one of: balanced, architect, hiring_manager, academic",
+            ) from None
         raise
     except PermissionError as exc:
         if str(exc) == "guided_locked":
@@ -90,7 +134,25 @@ async def start_session(
                 status_code=409,
                 detail="This track is archived. Restore it before starting an interview.",
             ) from None
+        if str(exc) == "open_session_in_progress":
+            raise HTTPException(
+                status_code=409,
+                detail="An unfinished interview already has answers. Resume or finish it first.",
+            ) from None
         raise
+
+
+@router.post("/sessions/{session_id}/abort")
+async def abort_session(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Close an unfinished session without scoring (rows kept)."""
+    result = await interview_service.abort_session(db, user, session_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return result
 
 
 @router.get("/sessions/{session_id}", response_model=SessionWithTurns)
