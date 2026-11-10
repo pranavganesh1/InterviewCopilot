@@ -13,6 +13,9 @@ def test_compose_api_and_worker_share_database_and_nats():
     nats = "nats://nats:4222"
     assert text.count(f"DATABASE_URL: {database}") >= 2
     assert text.count(f"NATS_URL: {nats}") >= 2
+    # SeaweedFS S3 listens on 8333 inside the compose network (host maps 9000→8333).
+    assert text.count("S3_ENDPOINT_URL: http://seaweedfs:8333") >= 2
+    assert "S3_ENDPOINT_URL: http://seaweedfs:9000" not in text
     assert events.FEEDBACK_SUBJECT == "feedback.jobs"
     source = Path(feedback_worker.__file__).read_text(encoding="utf-8")
     assert "feedback_worker_db" in source
