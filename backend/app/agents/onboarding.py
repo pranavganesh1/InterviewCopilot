@@ -6,6 +6,13 @@ from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.gateway.structured import structured_completion
+from app.services.preparation_goals import (
+    EMPTY_PREFERENCES,
+    GOAL_INTEREST_LABELS,
+    merge_preferences,
+    normalize_preferences,
+    preferences_ready,
+)
 
 ITEM_CATEGORIES = Literal["project", "internship", "skill", "achievement", "education", "other"]
 
@@ -18,12 +25,13 @@ ITEM_CATEGORIES_SET = {
     "other",
 }
 
-SYSTEM_PROMPT = """You are the InterviewCopilot onboarding coach.
+SYSTEM_PROMPT = """You are the InterviewCopilot onboarding coach (profile phase).
 
 You receive:
 - known_vault_summary: existing profile items with details, source, and missing_details
 - possible_duplicates: near-duplicate titles that need confirmation (do not merge silently)
 - profile_gaps: categories still missing or projects missing detail fields
+- conversation_mode: optional focus (ai_interview | explore_projects | test_skills | career_goal)
 - conversation_so_far / new_user_message
 
 Hard rules:
@@ -44,27 +52,57 @@ Hard rules:
    silently merge or delete.
 7. After successfully saving information, do NOT ask for confirmation again — thank
    them briefly and move to the next gap.
-8. Set onboarding_complete=true only when project AND skill AND education exist in
-   known_vault_summary (after applying this turn's extractions_items).
-9. extracted_items: use the taxonomy; details hold short factual keys
-   (purpose, technologies, architecture, contribution, outcome, features, level, etc.).
-   Re-emit an item with the same title to enrich details — do not invent new titles for
-   the same project.
+8. Set phase="profile" until project AND skill AND education exist. When they do,
+   set phase="goals", show_goal_menu=true, and briefly invite them to pick interview
+   preparation goals (the UI shows the choices).
+9. extracted_items: use the taxonomy; details hold short factual keys.
+10. Leave preparation_update empty during profile phase unless the user volunteers goals.
+11. conversation_mode guidance (still onboarding — never invent scores/assessments):
+   - ai_interview: natural warm-up interview; introduce yourself briefly then ask about
+     education/skills/projects from the vault one question at a time; dig into architecture,
+     decisions, challenges, and personal contribution.
+   - explore_projects: deep-dive a vault project; never invent tech/results.
+   - test_skills: explore available_skills only; ask which to practise.
+   - career_goal: discover role/placement/skills/projects/behavioral prep; fill
+     preparation_update when stated.
+"""
+
+GOALS_SYSTEM_PROMPT = """You are the InterviewCopilot preparation coach (goals phase).
+
+The profile vault is already complete. Discover what the candidate wants to practice.
+
+You receive known_vault_summary, available_skills, available_projects,
+current_preparation_preferences, conversation_so_far, and new_user_message.
+
+Interest ids: technical, skill, project, placement, behavioral.
+
+Rules:
+1. Ask exactly ONE follow-up at a time. Never re-ask answered details.
+2. Do not re-collect resume facts already in known_vault_summary.
+3. Interpret short yes/no/skip answers from conversation context.
+4. Contextual follow-ups:
+   - technical → target role and technical areas
+   - skill → which of available_skills to practice (do not invent skills)
+   - project → which of available_projects to interview on
+   - placement → internship, full-time, or both
+   - behavioral → experience level and interview goals
+5. Multiple interests are allowed. Fill preparation_update with any newly stated fields.
+6. When interests are chosen and the needed follow-ups for those interests are covered,
+   set preparation_update.confirmed=true, phase="ready", and give a concise summary.
+7. show_goal_menu=true only when interests are still empty.
+8. extracted_items should usually be empty in this phase.
+9. reply: warm, concise (max 3 sentences).
 """
 
 FINISHED_SYSTEM_PROMPT = """You are the InterviewCopilot profile coach. This student has
-already finished onboarding. They are revisiting to edit or enrich their vault.
+already finished onboarding. They are revisiting to edit or enrich their vault or goals.
 
 Rules:
-- Do NOT restart the intake questionnaire or re-ask for projects, skills, or education
-  they already have in known_vault_summary.
-- Acknowledge updates briefly. Ask at most one clarifying question only when the new
-  detail is incomplete.
-- Interpret short yes/no/skip answers from conversation context; never loop the same ask.
-- Whenever they share concrete new information, record it in extracted_items.
-- For possible_duplicates, ask which to keep — never silently merge.
-- reply must be warm and concise (max 3 sentences). Prefer confirmation over probing.
-- Always set onboarding_complete=true.
+- Do NOT restart the intake questionnaire.
+- Acknowledge updates briefly. Ask at most one clarifying question when needed.
+- Interpret short yes/no/skip answers from conversation context.
+- Record new vault facts in extracted_items; goal changes in preparation_update.
+- Always set phase="ready" and onboarding_complete=true.
 """
 
 
@@ -74,10 +112,25 @@ class ExtractedItem(BaseModel):
     details: dict[str, str] = {}
 
 
+class PreparationUpdate(BaseModel):
+    interests: list[str] | None = None
+    target_role: str | None = None
+    technical_areas: list[str] | None = None
+    focus_skills: list[str] | None = None
+    focus_projects: list[str] | None = None
+    placement_target: str | None = None
+    experience_level: str | None = None
+    behavioral_goals: str | None = None
+    confirmed: bool | None = None
+
+
 class OnboardingTurn(BaseModel):
     reply: str
     extracted_items: list[ExtractedItem] = []
     onboarding_complete: bool = False
+    phase: Literal["profile", "goals", "ready"] = "profile"
+    show_goal_menu: bool = False
+    preparation_update: PreparationUpdate | None = None
 
 
 class OnboardingState(TypedDict, total=False):
@@ -86,7 +139,12 @@ class OnboardingState(TypedDict, total=False):
     vault_summary: list[dict]
     possible_duplicates: list[dict]
     profile_gaps: dict
+    preparation_preferences: dict
+    available_skills: list[str]
+    available_projects: list[str]
+    conversation_mode: str
     already_finished: bool
+    phase: str
     meta: dict
     turn: dict
 
@@ -108,6 +166,24 @@ def compute_profile_gaps(vault_summary: list[dict]) -> dict:
     }
 
 
+def vault_is_ready(vault_summary: list[dict]) -> bool:
+    cats = {str(i.get("category") or "") for i in vault_summary}
+    return {"project", "skill", "education"}.issubset(cats)
+
+
+def derive_phase(
+    *,
+    vault_summary: list[dict],
+    preferences: dict | None,
+    already_finished: bool,
+) -> str:
+    if already_finished or preferences_ready(preferences):
+        return "ready"
+    if vault_is_ready(vault_summary):
+        return "goals"
+    return "profile"
+
+
 async def run_onboarding_turn(
     *,
     message: str,
@@ -116,24 +192,55 @@ async def run_onboarding_turn(
     already_finished: bool = False,
     possible_duplicates: list[dict] | None = None,
     profile_gaps: dict | None = None,
+    preparation_preferences: dict | None = None,
+    available_skills: list[str] | None = None,
+    available_projects: list[str] | None = None,
+    conversation_mode: str | None = None,
+    phase: str | None = None,
     meta: dict | None = None,
 ) -> OnboardingTurn:
-    """One LLM decision for the onboarding intake (conversation + extraction)."""
-    # History already includes the just-appended user message; avoid duplicating it
-    # inside conversation_so_far when present as the last entry.
+    """One LLM decision for onboarding (profile intake or goal discovery)."""
     prior = list(history or [])
     if prior and prior[-1].get("role") == "user" and prior[-1].get("content") == message:
         prior = prior[:-1]
+
+    prefs = normalize_preferences(preparation_preferences)
+    mode = (conversation_mode or "").strip() or None
+    current_phase = phase or derive_phase(
+        vault_summary=vault_summary,
+        preferences=prefs,
+        already_finished=already_finished,
+    )
+    # Starters choose the coach: career goals vs exploratory warm-up.
+    if not already_finished:
+        if mode == "career_goal":
+            current_phase = "goals"
+        elif mode in ("ai_interview", "explore_projects", "test_skills"):
+            # Keep the profile/exploration coach even when the vault is already ready.
+            current_phase = "profile"
 
     payload = {
         "known_vault_summary": vault_summary,
         "possible_duplicates": possible_duplicates or [],
         "profile_gaps": profile_gaps or compute_profile_gaps(vault_summary),
+        "current_preparation_preferences": prefs,
+        "available_skills": available_skills or [],
+        "available_projects": available_projects or [],
+        "goal_interest_labels": GOAL_INTEREST_LABELS,
+        "conversation_mode": mode,
         "conversation_so_far": prior[-18:],
         "new_user_message": message,
         "already_finished": already_finished,
+        "phase": current_phase,
     }
-    system = FINISHED_SYSTEM_PROMPT if already_finished else SYSTEM_PROMPT
+
+    if already_finished:
+        system = FINISHED_SYSTEM_PROMPT
+    elif current_phase in ("goals", "ready"):
+        system = GOALS_SYSTEM_PROMPT
+    else:
+        system = SYSTEM_PROMPT
+
     async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
         turn = await structured_completion(
             client,
@@ -142,15 +249,40 @@ async def run_onboarding_turn(
             schema=OnboardingTurn,
             meta=meta,
         )
+
+    # Deterministic phase / completion after the model replies.
+    merged_prefs = prefs
+    if turn.preparation_update is not None:
+        merged_prefs = merge_preferences(prefs, turn.preparation_update.model_dump(exclude_none=True))
+
+    cats = {str(i.get("category") or "") for i in vault_summary}
+    for item in turn.extracted_items:
+        cats.add(item.category)
+    vault_ready = {"project", "skill", "education"}.issubset(cats)
+
     if already_finished:
+        turn.phase = "ready"
         turn.onboarding_complete = True
+        turn.show_goal_menu = False
+    elif preferences_ready(merged_prefs):
+        turn.phase = "ready"
+        turn.onboarding_complete = True
+        turn.show_goal_menu = False
+    elif mode in ("ai_interview", "explore_projects", "test_skills"):
+        # Exploration starters stay in conversational profile mode; goals UI waits.
+        turn.phase = "profile"
+        turn.onboarding_complete = False
+        turn.show_goal_menu = False
+    elif vault_ready or mode == "career_goal":
+        turn.phase = "goals"
+        turn.onboarding_complete = False
+        if not merged_prefs["interests"]:
+            turn.show_goal_menu = True
     else:
-        # Prefer vault facts over the model's guess when categories are already filled.
-        cats = {str(i.get("category") or "") for i in vault_summary}
-        for item in turn.extracted_items:
-            cats.add(item.category)
-        if {"project", "skill", "education"}.issubset(cats):
-            turn.onboarding_complete = True
+        turn.phase = "profile"
+        turn.onboarding_complete = False
+        turn.show_goal_menu = False
+
     return turn
 
 
@@ -165,6 +297,11 @@ def build_onboarding_graph(turn_runner=run_onboarding_turn):
             already_finished=bool(state.get("already_finished")),
             possible_duplicates=state.get("possible_duplicates"),
             profile_gaps=state.get("profile_gaps"),
+            preparation_preferences=state.get("preparation_preferences") or EMPTY_PREFERENCES,
+            available_skills=state.get("available_skills"),
+            available_projects=state.get("available_projects"),
+            conversation_mode=state.get("conversation_mode"),
+            phase=state.get("phase"),
             meta=state.get("meta"),
         )
         return {"turn": turn.model_dump()}

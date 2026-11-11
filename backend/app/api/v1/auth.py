@@ -129,10 +129,18 @@ async def logout(response: Response):
 
 
 @router.get("/me")
-async def me(user: User = Depends(get_current_user)):
+async def me(request: Request, user: User = Depends(get_current_user)):
     data = profile_service.user_dict(user)
     allowed = get_settings().admin_email_set
     data["is_admin"] = user.email.lower() in allowed
+    mongo = getattr(request.app.state, "mongo_db", None)
+    if mongo is not None:
+        from app.services import conversation_store
+        from app.services.preparation_goals import recommend_track_seeds
+
+        prefs = await conversation_store.get_preparation_preferences(mongo, str(user.id))
+        data["preparation_preferences"] = prefs
+        data["recommended_tracks"] = recommend_track_seeds(prefs)
     return data
 
 
