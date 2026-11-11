@@ -10,11 +10,13 @@ from app.main import create_app
 from app.models.user import User
 from app.models.vault import VaultItem
 from app.services.preparation_review import (
+    annotate_roadmap_completion,
     build_profile_summary,
     build_review,
     build_roadmap,
     classify_item,
     merge_review_patch,
+    resolve_next_action,
     _preserve_if_incomplete,
 )
 from app.services.vault_service import upsert_extracted_items
@@ -126,6 +128,74 @@ def test_roadmap_prioritizes_persisted_improvement_topics():
     assert roadmap[0]["subject"] == "Recursion"
     assert "prior feedback" in roadmap[0]["practise"].lower() or "improvement" in roadmap[0]["why"].lower()
     assert any(s["subject"] == "Java" for s in roadmap)
+
+
+def test_resolve_next_action_priority_order():
+    open_session = {
+        "session_id": "s1",
+        "track_id": "t1",
+        "track_subject": "Python",
+        "question_index": 2,
+        "max_turns": 15,
+        "answered_count": 1,
+    }
+    assert (
+        resolve_next_action(open_sessions=[open_session])["kind"] == "resume_session"
+    )
+
+    clarify = resolve_next_action(
+        needs_clarification=[
+            {
+                "item_id": "p1",
+                "category": "project",
+                "title": "QCGNN",
+                "status": "needs_clarification",
+                "reason": "Still missing: technologies.",
+            }
+        ],
+        roadmap=[{"id": "1", "subject": "Python", "track_type": "topic", "why": "focus"}],
+    )
+    assert clarify["kind"] == "clarify_profile"
+
+    create_first = resolve_next_action(
+        roadmap=[{"id": "1", "subject": "Python", "track_type": "topic", "why": "focus"}],
+        existing_tracks=[],
+    )
+    assert create_first["kind"] == "create_track"
+    assert create_first["subject"] == "Python"
+
+    weak = resolve_next_action(
+        existing_tracks=[{"id": "t2", "subject": "Algorithms"}],
+        improvement_topics=["Recursion"],
+        roadmap=[{"id": "1", "subject": "Java", "track_type": "topic", "why": "next"}],
+    )
+    assert weak["kind"] == "practise_weakness"
+    assert weak["subject"] == "Recursion"
+
+    recommend = resolve_next_action(
+        existing_tracks=[{"id": "t3", "subject": "Python"}],
+        roadmap=[
+            {
+                "id": "1",
+                "subject": "Java",
+                "track_type": "topic",
+                "why": "next skill",
+                "completion": "not_started",
+            }
+        ],
+    )
+    assert recommend["kind"] == "recommend_track"
+    assert recommend["subject"] == "Java"
+
+
+def test_roadmap_completion_from_persisted_state():
+    steps = annotate_roadmap_completion(
+        [{"id": "1", "subject": "Python", "title": "Python"}],
+        existing_track_subjects={"python"},
+        assessed_subjects={"python"},
+    )
+    assert steps[0]["completion"] == "completed"
+    assert steps[0]["stage"] == 1
 
 
 def test_incomplete_rebuild_does_not_wipe_prior_review():
@@ -258,8 +328,10 @@ async def test_complete_generates_persisted_review(monkeypatch, clean_users_tabl
         assert body["onboarding_finished"] is True
         review = body["profile_review"]
         assert review and "QCGNN" in review["summary"]
-        assert review["next_action"]["subject"]
+        # Incomplete project details → clarify before creating a track.
+        assert review["next_action"]["kind"] == "clarify_profile"
         assert any(i["status"] == "not_assessed" for i in review["item_statuses"])
+        assert any(s.get("completion") for s in review["roadmap"])
 
         # Refresh / login persistence via /auth/me and /onboarding/review
         me = await client.get("/api/v1/auth/me", cookies={"ic_access": token})

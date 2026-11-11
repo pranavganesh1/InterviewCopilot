@@ -398,19 +398,27 @@ async def _improvement_topics(db: AsyncSession, user_id) -> list[str]:
     return [name for name, _ in counter.most_common(5)]
 
 
-async def _existing_track_subjects(db: AsyncSession, user_id) -> set[str]:
+async def _existing_tracks(db: AsyncSession, user_id) -> list[dict]:
     from sqlalchemy import select
 
     from app.models.track import Track
 
     rows = (
         await db.execute(
-            select(Track.subject).where(
+            select(Track.id, Track.subject).where(
                 Track.user_id == user_id, Track.archived_at.is_(None)
             )
         )
     ).all()
-    return {str(r[0]) for r in rows if r and r[0]}
+    return [
+        {"id": str(r[0]), "subject": str(r[1])}
+        for r in rows
+        if r and r[0] and r[1]
+    ]
+
+
+async def _existing_track_subjects(db: AsyncSession, user_id) -> set[str]:
+    return {t["subject"] for t in await _existing_tracks(db, user_id)}
 
 
 async def ensure_profile_review(
@@ -421,15 +429,21 @@ async def ensure_profile_review(
     force: bool = False,
 ) -> dict:
     """Build or refresh the post-onboarding review; persist without clobbering edits."""
+    from app.services import interview_service
+
     items = await list_items(db, user.id)
     prefs = await conversation_store.get_preparation_preferences(mongo_db, str(user.id))
     previous = await conversation_store.get_profile_review(mongo_db, str(user.id)) or {}
+    tracks = await _existing_tracks(db, user.id)
+    open_sessions = await interview_service.list_open_sessions_for_user(db, user, limit=5)
     review = build_review(
         items,
         prefs,
         previous=previous,
         assessed_subjects=await _assessed_subjects(db, user.id),
-        existing_track_subjects=await _existing_track_subjects(db, user.id),
+        existing_tracks=tracks,
+        existing_track_subjects={t["subject"] for t in tracks},
+        open_sessions=open_sessions,
         improvement_topics=await _improvement_topics(db, user.id),
         force_summary=force,
     )
