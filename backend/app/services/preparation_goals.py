@@ -159,3 +159,37 @@ GOALS_INTRO = (
     "Your profile looks good! Now let's personalize your interview preparation. "
     "What would you like to focus on first? You can pick more than one."
 )
+
+
+def goals_followup_reply(prefs: dict | None) -> str:
+    """Deterministic coach follow-up when the LLM is unavailable."""
+    p = normalize_preferences(prefs)
+    if not p["interests"]:
+        return (
+            "Pick one or more preparation focuses above and I will tailor the next questions."
+        )
+    focus = ", ".join(GOAL_INTEREST_LABELS.get(i, i) for i in p["interests"])
+    if "technical" in p["interests"] and not p.get("target_role"):
+        return (
+            f"Great — focusing on {focus}. "
+            "What target role are you aiming for?"
+        )
+    if "technical" in p["interests"] and not p.get("technical_areas"):
+        return (
+            "Thanks. Which technical areas should we emphasize "
+            "(for example DSA, system design, or backend)?"
+        )
+    if "skill" in p["interests"] and not p.get("focus_skills"):
+        return "Which skills from your vault do you want to practise first?"
+    if "project" in p["interests"] and not p.get("focus_projects"):
+        return "Which project should we deep-dive in interviews?"
+    if "placement" in p["interests"] and not p.get("placement_target"):
+        return "Are you preparing for internship, full-time, or both?"
+    if "behavioral" in p["interests"] and not (
+        p.get("experience_level") or p.get("behavioral_goals")
+    ):
+        return "For HR and behavioral prep, what experience level should we target?"
+    return (
+        f"Nice — your preparation focus is set ({focus}). "
+        "Tap Start Preparing when you're ready, or tell me any adjustments."
+    )
