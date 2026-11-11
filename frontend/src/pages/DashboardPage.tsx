@@ -135,6 +135,12 @@ export default function DashboardPage() {
     queryKey: ["tracks", showDeleted],
     queryFn: () =>
       api<Track[]>(showDeleted ? "/tracks?include_archived=true" : "/tracks"),
+    refetchInterval: (query) => {
+      const hasAuthoring = query.state.data?.some(
+        (t) => t.brief_status === "authoring",
+      );
+      return hasAuthoring ? 2500 : false;
+    },
   });
 
   const profileReview = useQuery({
@@ -278,6 +284,13 @@ export default function DashboardPage() {
       qc.invalidateQueries({ queryKey: ["tracks"] });
       qc.invalidateQueries({ queryKey: ["me-assessments"] });
       qc.invalidateQueries({ queryKey: ["me-open-sessions"] });
+    },
+  });
+
+  const reauthor = useMutation({
+    mutationFn: (id: string) => api(`/tracks/${id}/reauthor-brief`, { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tracks"] });
     },
   });
 
@@ -783,13 +796,26 @@ export default function DashboardPage() {
                         {t.status !== "active" && (
                           <span className="text-[11px] text-ink-faint">{t.status}</span>
                         )}
+                        {t.brief_status === "authoring" && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                            <span className="h-2 w-2 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+                            Authoring brief…
+                          </span>
+                        )}
+                        {t.brief_status === "failed" && (
+                          <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700">
+                            Brief failed
+                          </span>
+                        )}
                       </div>
                       <button
                         type="button"
                         onClick={() => {
-                          if (!t.archived) setStartTrack(t);
+                          if (!t.archived && t.brief_status !== "authoring") setStartTrack(t);
                         }}
-                        className="mt-1 block text-left text-lg font-semibold text-ink hover:text-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                        className={`mt-1 block text-left text-lg font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                          t.brief_status === "authoring" ? "cursor-wait opacity-80" : "hover:text-accent-strong"
+                        }`}
                       >
                         {t.subject}
                       </button>
@@ -830,6 +856,24 @@ export default function DashboardPage() {
                           className="inline-flex items-center gap-1.5 rounded-md border border-line bg-white px-3.5 py-2 text-sm font-semibold text-accent-strong hover:bg-accent-soft disabled:opacity-60"
                         >
                           Restore
+                        </button>
+                      ) : t.brief_status === "authoring" ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="inline-flex items-center gap-1.5 rounded-md bg-accent/60 px-3.5 py-2 text-sm font-semibold text-white cursor-wait opacity-85"
+                        >
+                          <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/60 border-t-white" />
+                          Preparing Brief…
+                        </button>
+                      ) : t.brief_status === "failed" ? (
+                        <button
+                          type="button"
+                          disabled={reauthor.isPending}
+                          onClick={() => reauthor.mutate(t.id)}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+                        >
+                          Retry Brief
                         </button>
                       ) : (
                         <button

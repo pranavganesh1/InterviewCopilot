@@ -11,9 +11,9 @@ from app.db.s3 import get_s3_client
 from app.db.sqlalchemy import get_db
 from app.gateway.llm import LLMGatewayError
 from app.models.user import User
+from app.services import onboarding_service
 from app.services import readiness as readiness_service
 from app.services.resume_service import ResumeUploadError, process_resume
-from app.services import onboarding_service
 from app.services.vault_service import (
     create_items,
     delete_item,
@@ -91,9 +91,7 @@ async def patch_item(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    item = await update_item(
-        db, user.id, item_id, title=body.title, details=body.details
-    )
+    item = await update_item(db, user.id, item_id, title=body.title, details=body.details)
     if item is None:
         raise HTTPException(status_code=404, detail="Vault item not found")
     await _refresh_review_after_vault_change(request, db, user)
@@ -142,9 +140,12 @@ async def upload_resume(
         )
         # Personalized welcome once — never duplicate on re-upload/refresh.
         items = await list_items(db, user.id)
-        welcome_seeded = await onboarding_service.seed_resume_welcome(
-            request.app.state.mongo_db, str(user.id), items
-        )
+        mongo = getattr(request.app.state, "mongo_db", None)
+        welcome_seeded = False
+        if mongo is not None:
+            welcome_seeded = await onboarding_service.seed_resume_welcome(
+                mongo, str(user.id), items
+            )
         return {**result, "welcome_seeded": welcome_seeded}
     except ResumeUploadError as exc:
         raise HTTPException(

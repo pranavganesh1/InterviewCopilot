@@ -2,6 +2,7 @@
 .env
 .env.local
 *.env
+infra/.env
 
 # Python
 __pycache__/
@@ -39,3 +40,4 @@ test-results/
 
 # Superpowers SDD scratch workspace
 .superpowers/
+scratch/

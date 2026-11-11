@@ -28,7 +28,9 @@ async def test_track_with_versioned_briefs(clean_users_table):
         briefs = (
             (
                 await session.execute(
-                    InterviewBrief.__table__.select().where(InterviewBrief.track_id == track.id)
+                    InterviewBrief.__table__.select()
+                    .where(InterviewBrief.track_id == track.id)
+                    .order_by(InterviewBrief.version)
                 )
             )
             .mappings()

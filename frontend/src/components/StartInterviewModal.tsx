@@ -27,7 +27,11 @@ type Phase =
   | "confirm-close-empty"
   | "setup";
 
-export type StartTrack = { id: string; subject: string };
+export type StartTrack = {
+  id: string;
+  subject: string;
+  brief_status?: "authoring" | "ready" | "failed";
+};
 
 type OpenSessionPayload = {
   session: OpenSession | null;
@@ -44,6 +48,9 @@ function sessionSummary(row: OpenSession): string {
 function friendly(err: unknown): string {
   if (err instanceof ApiError && err.status === 503) {
     return "The interview model is busy right now. Wait a moment and try again.";
+  }
+  if (err instanceof Error && err.message?.includes("Brief yet")) {
+    return "Your interview brief is still being generated. Please wait a moment and click Try again.";
   }
   if (err instanceof Error && err.message) return err.message;
   return "Something went wrong. Please try again.";
@@ -150,6 +157,8 @@ export default function StartInterviewModal({
     retry: false,
     queryFn: () => api<TrackWeaknesses>(`/tracks/${track!.id}/weaknesses`),
   });
+
+  const isBriefAuthoring = track?.brief_status === "authoring";
 
   const openSessions =
     openSession.data?.sessions ??
@@ -592,6 +601,17 @@ export default function StartInterviewModal({
 
         {phase === "setup" && (
           <div className="space-y-5">
+            {isBriefAuthoring && (
+              <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-amber-900">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-amber-600 border-t-transparent shrink-0" />
+                <div className="text-sm">
+                  <p className="font-semibold">Generating interview brief…</p>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    The AI is preparing competencies and questions (takes ~30s). The start button will activate as soon as it is ready.
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
@@ -676,11 +696,10 @@ export default function StartInterviewModal({
                             (index + move + PERSONA_OPTIONS.length) % PERSONA_OPTIONS.length
                           ];
                         setPersonaId(next.id);
-                        requestAnimationFrame(() => {
-                          panelRef.current
-                            ?.querySelector<HTMLElement>(`[data-persona-id="${next.id}"]`)
-                            ?.focus();
-                        });
+                        const nextBtn = panelRef.current?.querySelector<HTMLElement>(
+                          `[data-persona-id="${next.id}"]`,
+                        );
+                        nextBtn?.focus();
                       }}
                       className={`min-w-[12.5rem] shrink-0 snap-start rounded-lg border p-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-60 sm:min-w-0 ${
                         selected
@@ -811,14 +830,14 @@ export default function StartInterviewModal({
             </div>
             <button
               type="button"
-              disabled={requestBusy || startMinutes == null}
+              disabled={requestBusy || startMinutes == null || isBriefAuthoring}
               onClick={requestStart}
               className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent py-3 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
-              {(start.isPending || starting) && (
+              {(start.isPending || starting || isBriefAuthoring) && (
                 <span className="h-4 w-4 motion-safe:animate-spin rounded-full border-2 border-white/40 border-t-white" />
               )}
-              Start interview
+              {isBriefAuthoring ? "Preparing brief…" : "Start interview"}
             </button>
           </div>
         )}

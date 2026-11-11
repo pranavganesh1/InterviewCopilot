@@ -21,6 +21,11 @@ const READY_STATE = {
   onboarding_complete: true,
   onboarding_finished: false,
   missing_categories: [],
+  preparation_preferences: {
+    interests: ["technical"],
+    target_role: "Software Engineer",
+    confirmed: true,
+  },
 };
 
 test.beforeEach(async ({ page }) => {
