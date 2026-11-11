@@ -350,30 +350,211 @@ def build_roadmap(
     return steps[:8]
 
 
-def pick_next_action(roadmap: list[dict], existing_track_subjects: set[str] | None = None) -> dict | None:
-    if not roadmap:
-        return None
-    existing = {s.lower() for s in (existing_track_subjects or set())}
-    for step in roadmap:
-        if step["subject"].lower() not in existing:
-            return {
-                "title": f"Based on your profile and goals, I recommend starting with {step['subject']}.",
-                "reason": step["why"],
-                "track_type": step["track_type"],
-                "subject": step["subject"],
-                "step_id": step["id"],
-                "action_label": "Start Recommended Interview",
+def annotate_roadmap_completion(
+    roadmap: list[dict],
+    *,
+    existing_track_subjects: set[str] | None = None,
+    assessed_subjects: set[str] | None = None,
+    open_session_subjects: set[str] | None = None,
+) -> list[dict]:
+    """Mark each roadmap step from persisted tracks/sessions/reports only."""
+    existing = {s.lower() for s in (existing_track_subjects or set()) if s}
+    assessed = {s.lower() for s in (assessed_subjects or set()) if s}
+    open_subs = {s.lower() for s in (open_session_subjects or set()) if s}
+    out: list[dict] = []
+    for index, step in enumerate(roadmap or []):
+        subject = str(step.get("subject") or "").lower()
+        if subject and any(subject in a or a in subject for a in assessed if a):
+            completion = "completed"
+        elif subject and (
+            subject in open_subs
+            or any(subject in o or o in subject for o in open_subs if o)
+        ):
+            completion = "in_progress"
+        elif subject and (
+            subject in existing
+            or any(subject in e or e in subject for e in existing if e)
+        ):
+            completion = "in_progress"
+        else:
+            completion = "not_started"
+        out.append(
+            {
+                **step,
+                "stage": index + 1,
+                "completion": completion,
             }
-    step = roadmap[0]
-    return {
-        "title": f"Continue with {step['subject']} — you already have a related track.",
-        "reason": step["why"],
-        "track_type": step["track_type"],
-        "subject": step["subject"],
-        "step_id": step["id"],
-        "action_label": "Open Recommended Track",
-        "reuse_existing": True,
-    }
+        )
+    return out
+
+
+def resolve_next_action(
+    *,
+    open_sessions: list[dict] | None = None,
+    needs_clarification: list[dict] | None = None,
+    roadmap: list[dict] | None = None,
+    existing_tracks: list[dict] | None = None,
+    improvement_topics: list[str] | None = None,
+) -> dict | None:
+    """Single reusable resolver for the dashboard primary CTA.
+
+    Priority:
+    1. Resume an open interview
+    2. Clarify important profile/project gaps
+    3. Create the first recommended track if none exist
+    4. Practise weak concepts from real interview reports
+    5. Recommend another relevant track
+    Never creates tracks/sessions by itself.
+    """
+    sessions = list(open_sessions or [])
+    if sessions:
+        row = sessions[0]
+        subject = row.get("track_subject") or "your interview"
+        return {
+            "kind": "resume_session",
+            "title": f"Resume your open interview on {subject}.",
+            "reason": (
+                f"You have an unfinished session"
+                f" (Q{row.get('question_index', '?')}/{row.get('max_turns', '?')},"
+                f" {row.get('answered_count', 0)} answered)."
+            ),
+            "action_label": "Resume Interview",
+            "session_id": row.get("session_id"),
+            "track_id": row.get("track_id"),
+            "subject": subject,
+            "href": f"/tracks/{row.get('track_id')}/interview/{row.get('session_id')}",
+        }
+
+    clarify = [
+        c
+        for c in (needs_clarification or [])
+        if isinstance(c, dict)
+        and (c.get("category") or "").lower() in ("project", "education", "other")
+    ]
+    if not clarify:
+        clarify = [c for c in (needs_clarification or []) if isinstance(c, dict)]
+    if clarify:
+        first = clarify[0]
+        title = first.get("title") or "a vault item"
+        return {
+            "kind": "clarify_profile",
+            "title": f"Clarify “{title}” before your next interview.",
+            "reason": first.get("reason")
+            or "Some profile details are incomplete or conflicting.",
+            "action_label": "Fix in vault",
+            "item_id": first.get("item_id"),
+            "subject": title,
+            "href": "/onboarding",
+        }
+
+    tracks = [t for t in (existing_tracks or []) if isinstance(t, dict) and t.get("subject")]
+    track_by_subject = {str(t["subject"]).lower(): t for t in tracks}
+    steps = list(roadmap or [])
+
+    if not tracks:
+        step = steps[0] if steps else None
+        if step:
+            return {
+                "kind": "create_track",
+                "title": (
+                    f"Based on your profile and goals, I recommend starting with"
+                    f" {step['subject']}."
+                ),
+                "reason": step.get("why") or "Create your first preparation track.",
+                "action_label": "Start Recommended Interview",
+                "track_type": step.get("track_type") or "topic",
+                "subject": step["subject"],
+                "step_id": step.get("id"),
+            }
+        return {
+            "kind": "create_track",
+            "title": "Create your first preparation track to begin practising.",
+            "reason": "No tracks yet — pick a subject aligned to your goals.",
+            "action_label": "Create a track",
+            "track_type": "topic",
+            "subject": "",
+            "href": "/#new-track",
+        }
+
+    for topic in improvement_topics or []:
+        label = str(topic).strip()
+        if not label:
+            continue
+        match = None
+        for subject, track in track_by_subject.items():
+            if label.lower() in subject or subject in label.lower():
+                match = track
+                break
+        if match:
+            return {
+                "kind": "practise_weakness",
+                "title": f"Practise “{label}” — flagged in your interview feedback.",
+                "reason": "Based on a completed assessment, not a guessed proficiency score.",
+                "action_label": "Practise weak area",
+                "subject": label,
+                "track_id": match.get("id"),
+                "href": f"/tracks/{match.get('id')}",
+            }
+        return {
+            "kind": "practise_weakness",
+            "title": f"Practise “{label}” — flagged in your interview feedback.",
+            "reason": "Based on a completed assessment, not a guessed proficiency score.",
+            "action_label": "Start focused practice",
+            "track_type": "topic",
+            "subject": label,
+        }
+
+    for step in steps:
+        subject = str(step.get("subject") or "")
+        existing = track_by_subject.get(subject.lower())
+        if existing is None:
+            return {
+                "kind": "recommend_track",
+                "title": (
+                    f"Based on your profile and goals, I recommend starting with {subject}."
+                ),
+                "reason": step.get("why") or "Next step on your preparation roadmap.",
+                "action_label": "Start Recommended Interview",
+                "track_type": step.get("track_type") or "topic",
+                "subject": subject,
+                "step_id": step.get("id"),
+            }
+        if step.get("completion") != "completed":
+            return {
+                "kind": "recommend_track",
+                "title": f"Continue with {subject} — you already have a related track.",
+                "reason": step.get("why") or "Open your existing preparation track.",
+                "action_label": "Open Recommended Track",
+                "track_type": step.get("track_type") or "topic",
+                "subject": subject,
+                "step_id": step.get("id"),
+                "track_id": existing.get("id"),
+                "reuse_existing": True,
+                "href": f"/tracks/{existing.get('id')}",
+            }
+
+    if steps:
+        step = steps[0]
+        existing = track_by_subject.get(str(step.get("subject") or "").lower())
+        return {
+            "kind": "recommend_track",
+            "title": f"Continue with {step.get('subject')} — you already have a related track.",
+            "reason": step.get("why") or "Revisit your primary preparation track.",
+            "action_label": "Open Recommended Track",
+            "track_type": step.get("track_type") or "topic",
+            "subject": step.get("subject"),
+            "step_id": step.get("id"),
+            "track_id": (existing or {}).get("id"),
+            "reuse_existing": True,
+            "href": f"/tracks/{(existing or {}).get('id')}" if existing else None,
+        }
+    return None
+
+
+def pick_next_action(roadmap: list[dict], existing_track_subjects: set[str] | None = None) -> dict | None:
+    """Backward-compatible wrapper around resolve_next_action."""
+    tracks = [{"subject": s} for s in (existing_track_subjects or set()) if s]
+    return resolve_next_action(roadmap=roadmap, existing_tracks=tracks)
 
 
 def _preserve_if_incomplete(previous: dict, review: dict) -> dict:
@@ -400,6 +581,8 @@ def build_review(
     previous: dict | None = None,
     assessed_subjects: set[str] | None = None,
     existing_track_subjects: set[str] | None = None,
+    existing_tracks: list[dict] | None = None,
+    open_sessions: list[dict] | None = None,
     improvement_topics: list[str] | None = None,
     force_summary: bool = False,
 ) -> dict:
@@ -408,6 +591,16 @@ def build_review(
     prefs_n = normalize_preferences(prefs)
     fp = vault_fingerprint(items)
     assessed = {s.lower() for s in (assessed_subjects or set()) if s}
+    tracks = list(existing_tracks or [])
+    if not tracks and existing_track_subjects:
+        tracks = [{"subject": s} for s in existing_track_subjects if s]
+    track_subjects = {
+        str(t.get("subject") or "") for t in tracks if t.get("subject")
+    } | {str(s) for s in (existing_track_subjects or set()) if s}
+    open_rows = list(open_sessions or [])
+    open_subjects = {
+        str(r.get("track_subject") or "") for r in open_rows if r.get("track_subject")
+    }
 
     duplicate_ids: set[str] = set()
     for pair in find_near_duplicates(items):
@@ -428,6 +621,9 @@ def build_review(
             user_override=prev_statuses.get(str(item.id)),
         )
         for item in items
+    ]
+    needs_clarification = [
+        s for s in item_statuses if s["status"] == "needs_clarification"
     ]
 
     user_summary = (previous.get("summary_user_edit") or "").strip() or None
@@ -456,15 +652,25 @@ def build_review(
     # Keep prior roadmap if a rebuild somehow produced nothing.
     if not roadmap and (previous.get("roadmap") or []):
         roadmap = list(previous["roadmap"])
-    next_action = pick_next_action(roadmap, existing_track_subjects)
+    roadmap = annotate_roadmap_completion(
+        roadmap,
+        existing_track_subjects=track_subjects,
+        assessed_subjects=assessed,
+        open_session_subjects=open_subjects,
+    )
+    next_action = resolve_next_action(
+        open_sessions=open_rows,
+        needs_clarification=needs_clarification,
+        roadmap=roadmap,
+        existing_tracks=tracks,
+        improvement_topics=improvement_topics,
+    )
 
     review = {
         "summary": summary,
         "summary_user_edit": summary_user_edit,
         "item_statuses": item_statuses,
-        "needs_clarification": [
-            s for s in item_statuses if s["status"] == "needs_clarification"
-        ],
+        "needs_clarification": needs_clarification,
         "not_assessed": [s for s in item_statuses if s["status"] == "not_assessed"],
         "confirmed": [s for s in item_statuses if s["status"] == "confirmed"],
         "roadmap": roadmap,

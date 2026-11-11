@@ -103,6 +103,15 @@ export interface ProfileReviewItem {
   user_set?: boolean;
 }
 
+export type RoadmapCompletion = "not_started" | "in_progress" | "completed";
+
+export type NextActionKind =
+  | "resume_session"
+  | "clarify_profile"
+  | "create_track"
+  | "practise_weakness"
+  | "recommend_track";
+
 export interface RoadmapStep {
   id: string;
   title: string;
@@ -112,6 +121,23 @@ export interface RoadmapStep {
   track_type: string;
   subject: string;
   action_label: string;
+  stage?: number;
+  completion?: RoadmapCompletion;
+}
+
+export interface NextAction {
+  kind?: NextActionKind;
+  title: string;
+  reason?: string;
+  track_type?: string;
+  subject?: string;
+  step_id?: string;
+  action_label?: string;
+  reuse_existing?: boolean;
+  session_id?: string;
+  track_id?: string;
+  item_id?: string;
+  href?: string | null;
 }
 
 export interface ProfileReview {
@@ -122,15 +148,7 @@ export interface ProfileReview {
   not_assessed?: ProfileReviewItem[];
   confirmed?: ProfileReviewItem[];
   roadmap: RoadmapStep[];
-  next_action?: {
-    title: string;
-    reason?: string;
-    track_type: string;
-    subject: string;
-    step_id?: string;
-    action_label?: string;
-    reuse_existing?: boolean;
-  } | null;
+  next_action?: NextAction | null;
   selected_next_track_id?: string | null;
   preparation_summary?: string;
   goal_labels?: string[];

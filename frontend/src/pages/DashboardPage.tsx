@@ -16,6 +16,7 @@ import {
   api,
   type AssessmentSummary,
   type AssessmentsDashboard,
+  type NextAction,
   type OpenSessionRow,
   type ProfileReview,
   type RoadmapStep,
@@ -162,16 +163,15 @@ export default function DashboardPage() {
   });
 
   const startRecommended = useMutation({
-    mutationFn: (step?: RoadmapStep) =>
+    mutationFn: (payload?: {
+      subject?: string;
+      track_type?: string;
+    }) =>
       api<{ track: Track; created: boolean; review: ProfileReview }>(
         "/onboarding/review/start-recommended",
         {
           method: "POST",
-          body: JSON.stringify(
-            step
-              ? { subject: step.subject, track_type: step.track_type }
-              : {},
-          ),
+          body: JSON.stringify(payload ?? {}),
         },
       ),
     onSuccess: (data) => {
@@ -181,6 +181,41 @@ export default function DashboardPage() {
       navigate(`/tracks/${data.track.id}`);
     },
   });
+
+  function handleNextAction(action: NextAction) {
+    const kind = action.kind || "recommend_track";
+    if (kind === "resume_session" && action.track_id && action.session_id) {
+      navigate(`/tracks/${action.track_id}/interview/${action.session_id}`);
+      return;
+    }
+    if (kind === "clarify_profile") {
+      navigate("/onboarding");
+      return;
+    }
+    if (kind === "practise_weakness" && action.track_id) {
+      navigate(`/tracks/${action.track_id}`);
+      return;
+    }
+    if (
+      (kind === "create_track" ||
+        kind === "recommend_track" ||
+        kind === "practise_weakness") &&
+      action.subject
+    ) {
+      if (action.reuse_existing && action.track_id) {
+        navigate(`/tracks/${action.track_id}`);
+        return;
+      }
+      startRecommended.mutate({
+        subject: action.subject,
+        track_type: action.track_type || "topic",
+      });
+      return;
+    }
+    // No subject yet — open the new-track form instead of inventing one.
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   const assessments = useQuery({
     queryKey: ["me-assessments"],
@@ -401,7 +436,14 @@ export default function DashboardPage() {
               ],
             })
           }
-          onStartRecommended={(step) => startRecommended.mutate(step)}
+          onNextAction={handleNextAction}
+          onStartRecommended={(step?: RoadmapStep) =>
+            startRecommended.mutate(
+              step
+                ? { subject: step.subject, track_type: step.track_type }
+                : undefined,
+            )
+          }
           onBrowseTracks={() => {
             setShowForm(true);
             window.scrollTo({ top: 0, behavior: "smooth" });

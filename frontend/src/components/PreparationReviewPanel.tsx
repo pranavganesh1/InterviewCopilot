@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import type { ProfileReview, RoadmapStep } from "../lib/api";
+import type { NextAction, ProfileReview, RoadmapStep } from "../lib/api";
 
 const STATUS_STYLES: Record<string, string> = {
   confirmed: "bg-emerald-50 text-emerald-800 ring-emerald-200",
@@ -14,6 +14,18 @@ const STATUS_LABELS: Record<string, string> = {
   not_assessed: "Not assessed",
 };
 
+const COMPLETION_STYLES: Record<string, string> = {
+  completed: "bg-emerald-50 text-emerald-800",
+  in_progress: "bg-sky-50 text-sky-800",
+  not_started: "bg-stone-100 text-stone-600",
+};
+
+const COMPLETION_LABELS: Record<string, string> = {
+  completed: "Completed",
+  in_progress: "In progress",
+  not_started: "Not started",
+};
+
 type Props = {
   review: ProfileReview | null | undefined;
   userName?: string | null;
@@ -23,6 +35,7 @@ type Props = {
     itemId: string,
     status: "confirmed" | "needs_clarification" | "not_assessed",
   ) => void;
+  onNextAction: (action: NextAction) => void;
   onStartRecommended: (step?: RoadmapStep) => void;
   onBrowseTracks: () => void;
 };
@@ -33,6 +46,7 @@ export default function PreparationReviewPanel({
   pending,
   onSaveSummary,
   onSetItemStatus,
+  onNextAction,
   onStartRecommended,
   onBrowseTracks,
 }: Props) {
@@ -50,6 +64,8 @@ export default function PreparationReviewPanel({
   const next = review.next_action;
   const clarify = review.needs_clarification ?? [];
   const notAssessed = review.not_assessed ?? [];
+  const confirmedCount = review.confirmed?.length ?? 0;
+  const totalItems = review.item_statuses?.length ?? 0;
 
   return (
     <section className="space-y-4" data-testid="preparation-review">
@@ -63,11 +79,21 @@ export default function PreparationReviewPanel({
         <p className="mt-1 text-sm text-stone-600">
           Based on your vault and goals — not guessed proficiency scores.
         </p>
+        {totalItems > 0 && (
+          <p className="mt-2 text-xs text-stone-500" data-testid="profile-completeness">
+            Profile signals: {confirmedCount} confirmed
+            {clarify.length > 0 ? ` · ${clarify.length} need clarification` : ""}
+            {notAssessed.length > 0
+              ? ` · ${notAssessed.length} not yet interview-assessed`
+              : ""}
+          </p>
+        )}
 
         {next && (
           <div
             className="mt-4 rounded-lg border border-accent/30 bg-white p-4"
             data-testid="next-action"
+            data-kind={next.kind || "recommend_track"}
           >
             <p className="text-sm font-semibold text-stone-900">{next.title}</p>
             {next.reason && (
@@ -77,10 +103,10 @@ export default function PreparationReviewPanel({
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => onStartRecommended()}
+                onClick={() => onNextAction(next)}
                 className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
               >
-                {next.action_label || "Start Recommended Interview"}
+                {next.action_label || "Continue"}
               </button>
               <button
                 type="button"
@@ -219,16 +245,6 @@ export default function PreparationReviewPanel({
               <p className="text-sm text-stone-500">No vault items yet.</p>
             )}
           </div>
-          {(clarify.length > 0 || notAssessed.length > 0) && (
-            <p className="mt-3 text-xs text-stone-500">
-              {clarify.length > 0 && (
-                <span>{clarify.length} need clarification. </span>
-              )}
-              {notAssessed.length > 0 && (
-                <span>{notAssessed.length} not yet interview-assessed.</span>
-              )}
-            </p>
-          )}
         </div>
       </div>
 
@@ -246,9 +262,18 @@ export default function PreparationReviewPanel({
                 key={step.id}
                 className="rounded-lg border border-stone-100 bg-stone-50/60 p-3"
               >
-                <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
-                  Step {index + 1}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                    Stage {step.stage ?? index + 1}
+                  </p>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      COMPLETION_STYLES[step.completion ?? "not_started"]
+                    }`}
+                  >
+                    {COMPLETION_LABELS[step.completion ?? "not_started"]}
+                  </span>
+                </div>
                 <p className="mt-0.5 text-sm font-semibold text-stone-800">
                   {step.title}
                 </p>
