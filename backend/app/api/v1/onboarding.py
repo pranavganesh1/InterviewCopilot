@@ -36,6 +36,23 @@ class StarterRequest(BaseModel):
     starter_id: str = Field(max_length=64)
 
 
+class ReviewItemStatus(BaseModel):
+    item_id: str
+    status: str
+    reason: str | None = None
+
+
+class ReviewPatchRequest(BaseModel):
+    summary: str | None = Field(default=None, max_length=8000)
+    item_statuses: list[ReviewItemStatus] | None = None
+    selected_next_track_id: str | None = None
+
+
+class StartRecommendedRequest(BaseModel):
+    subject: str | None = Field(default=None, max_length=255)
+    track_type: str | None = Field(default=None, max_length=32)
+
+
 def _vault_status(items) -> tuple[bool, list[str]]:
     categories = {i.category for i in items}
     missing = [c for c in _REQUIRED if c not in categories]
@@ -177,8 +194,68 @@ async def complete(
             )
         # Interests chosen but not confirmed — confirm now as part of Start Preparing.
         await onboarding_service.confirm_goals(request.app.state.mongo_db, user)
-    if user.onboarding_completed_at is None:
+    first_finish = user.onboarding_completed_at is None
+    if first_finish:
         user.onboarding_completed_at = datetime.now(UTC)
         await db.commit()
         await db.refresh(user)
+    # Personalized post-onboarding review + roadmap (idempotent refresh).
+    await onboarding_service.ensure_profile_review(
+        db, request.app.state.mongo_db, user, force=first_finish
+    )
     return await _state_payload(request.app.state.mongo_db, db, user)
+
+
+@router.get("/review")
+async def get_review(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await onboarding_service.get_profile_review_payload(
+        db, request.app.state.mongo_db, user, ensure=True
+    )
+
+
+@router.patch("/review")
+async def patch_review(
+    body: ReviewPatchRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    patch = body.model_dump(exclude_none=True)
+    if "item_statuses" in patch:
+        patch["item_statuses"] = [s.model_dump() for s in body.item_statuses or []]
+    return await onboarding_service.patch_profile_review(
+        db, request.app.state.mongo_db, user, patch
+    )
+
+
+@router.post("/review/refresh")
+async def refresh_review(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await onboarding_service.ensure_profile_review(
+        db, request.app.state.mongo_db, user, force=True
+    )
+
+
+@router.post("/review/start-recommended")
+async def start_recommended(
+    request: Request,
+    body: StartRecommendedRequest | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    payload = body.model_dump(exclude_none=True) if body else {}
+    return await onboarding_service.start_recommended_track(
+        db,
+        request.app.state.mongo_db,
+        user,
+        request_id=request.headers.get("x-request-id"),
+        subject=payload.get("subject"),
+        track_type=payload.get("track_type"),
+    )

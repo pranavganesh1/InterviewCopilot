@@ -56,14 +56,30 @@ async def get_items(user: User = Depends(get_current_user), db: AsyncSession = D
     ]
 
 
+async def _refresh_review_after_vault_change(
+    request: Request, db: AsyncSession, user: User
+) -> None:
+    """Keep post-onboarding review aligned with vault corrections."""
+    if user.onboarding_completed_at is None:
+        return
+    mongo = getattr(request.app.state, "mongo_db", None)
+    if mongo is None:
+        return
+    await onboarding_service.ensure_profile_review(db, mongo, user)
+
+
 @router.post("/items")
 async def add_item(
-    body: ManualItem, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    body: ManualItem,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     if body.category not in ITEM_CATEGORIES_SET:
         raise HTTPException(status_code=422, detail=f"Unknown category: {body.category}")
     created = await create_items(db, user.id, [ExtractedItem(**body.model_dump())], "manual")
     i = created[0]
+    await _refresh_review_after_vault_change(request, db, user)
     return {"id": str(i.id), "category": i.category, "title": i.title}
 
 
@@ -71,6 +87,7 @@ async def add_item(
 async def patch_item(
     item_id: uuid.UUID,
     body: VaultItemUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -79,6 +96,7 @@ async def patch_item(
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Vault item not found")
+    await _refresh_review_after_vault_change(request, db, user)
     return {
         "id": str(item.id),
         "category": item.category,
@@ -91,12 +109,14 @@ async def patch_item(
 @router.delete("/items/{item_id}")
 async def remove_item(
     item_id: uuid.UUID,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     ok = await delete_item(db, user.id, item_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Vault item not found")
+    await _refresh_review_after_vault_change(request, db, user)
     return {"status": "ok"}
 
 

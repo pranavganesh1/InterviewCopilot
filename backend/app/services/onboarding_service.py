@@ -18,6 +18,11 @@ from app.services.preparation_goals import (
     recommend_track_seeds,
     summarize_preferences,
 )
+from app.services.preparation_review import (
+    build_review,
+    empty_review,
+    merge_review_patch,
+)
 from app.services.vault_service import (
     build_profile_review_message,
     find_near_duplicates,
@@ -341,6 +346,182 @@ async def ensure_goals_intro(
     return True
 
 
+async def _assessed_subjects(db: AsyncSession, user_id) -> set[str]:
+    """Subjects from completed interview reports — used only as evidence, not scores."""
+    from sqlalchemy import select
+
+    from app.models.feedback import FeedbackReport
+    from app.models.track import Track
+
+    rows = (
+        await db.execute(
+            select(Track.subject)
+            .join(FeedbackReport, FeedbackReport.track_id == Track.id)
+            .where(FeedbackReport.user_id == user_id)
+        )
+    ).all()
+    return {str(r[0]).lower() for r in rows if r and r[0]}
+
+
+async def _improvement_topics(db: AsyncSession, user_id) -> list[str]:
+    """Topics from persisted interview feedback only — no invented proficiency."""
+    from collections import Counter
+
+    from sqlalchemy import select
+
+    from app.models.feedback import FeedbackReport
+    from app.models.track import Track
+
+    rows = (
+        await db.execute(
+            select(FeedbackReport.content, Track.archived_at).join(
+                Track, FeedbackReport.track_id == Track.id
+            ).where(FeedbackReport.user_id == user_id)
+        )
+    ).all()
+    counter: Counter[str] = Counter()
+    for content, archived_at in rows:
+        if archived_at is not None:
+            continue
+        payload = content if isinstance(content, dict) else {}
+        for area in payload.get("improvement_areas") or []:
+            text = str(area).strip()
+            if text:
+                counter[text] += 1
+        for comp in payload.get("competency_assessments") or []:
+            if not isinstance(comp, dict):
+                continue
+            name = str(comp.get("competency_name") or "").strip()
+            level = str(comp.get("level") or "").lower()
+            if name and level in ("weak", "developing"):
+                counter[name] += 2
+    return [name for name, _ in counter.most_common(5)]
+
+
+async def _existing_track_subjects(db: AsyncSession, user_id) -> set[str]:
+    from sqlalchemy import select
+
+    from app.models.track import Track
+
+    rows = (
+        await db.execute(
+            select(Track.subject).where(
+                Track.user_id == user_id, Track.archived_at.is_(None)
+            )
+        )
+    ).all()
+    return {str(r[0]) for r in rows if r and r[0]}
+
+
+async def ensure_profile_review(
+    db: AsyncSession,
+    mongo_db: AsyncIOMotorDatabase,
+    user: User,
+    *,
+    force: bool = False,
+) -> dict:
+    """Build or refresh the post-onboarding review; persist without clobbering edits."""
+    items = await list_items(db, user.id)
+    prefs = await conversation_store.get_preparation_preferences(mongo_db, str(user.id))
+    previous = await conversation_store.get_profile_review(mongo_db, str(user.id)) or {}
+    review = build_review(
+        items,
+        prefs,
+        previous=previous,
+        assessed_subjects=await _assessed_subjects(db, user.id),
+        existing_track_subjects=await _existing_track_subjects(db, user.id),
+        improvement_topics=await _improvement_topics(db, user.id),
+        force_summary=force,
+    )
+    # Refuse to persist an empty wipe over a previously useful review.
+    if (
+        previous.get("summary")
+        and not (review.get("summary") or "").strip()
+        and previous.get("roadmap")
+        and not (review.get("roadmap") or [])
+    ):
+        return previous
+    return await conversation_store.set_profile_review(mongo_db, str(user.id), review)
+
+
+async def get_profile_review_payload(
+    db: AsyncSession,
+    mongo_db: AsyncIOMotorDatabase,
+    user: User,
+    *,
+    ensure: bool = True,
+) -> dict:
+    existing = await conversation_store.get_profile_review(mongo_db, str(user.id))
+    if ensure and (
+        user.onboarding_completed_at is not None
+        or (existing and existing.get("summary"))
+    ):
+        return await ensure_profile_review(db, mongo_db, user)
+    return existing or empty_review()
+
+
+async def patch_profile_review(
+    db: AsyncSession,
+    mongo_db: AsyncIOMotorDatabase,
+    user: User,
+    patch: dict,
+) -> dict:
+    current = await get_profile_review_payload(db, mongo_db, user, ensure=True)
+    merged = merge_review_patch(current, patch)
+    return await conversation_store.set_profile_review(mongo_db, str(user.id), merged)
+
+
+async def start_recommended_track(
+    db: AsyncSession,
+    mongo_db: AsyncIOMotorDatabase,
+    user: User,
+    *,
+    request_id: str | None = None,
+    subject: str | None = None,
+    track_type: str | None = None,
+) -> dict:
+    """Create (or reuse) the recommended track and remember the selection."""
+    from sqlalchemy import select
+
+    from app.models.track import Track
+    from app.services import track_service
+
+    review = await ensure_profile_review(db, mongo_db, user)
+    action = review.get("next_action") or {}
+    use_subject = (subject or action.get("subject") or "").strip()
+    use_type = (track_type or action.get("track_type") or "topic").strip()
+    if not use_subject:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=409, detail="No recommended track is available yet.")
+
+    existing = (
+        await db.execute(
+            select(Track).where(
+                Track.user_id == user.id,
+                Track.archived_at.is_(None),
+                Track.subject == use_subject,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        review["selected_next_track_id"] = str(existing.id)
+        await conversation_store.set_profile_review(mongo_db, str(user.id), review)
+        return {"track": track_service._track_dict(existing), "created": False, "review": review}
+
+    created = await track_service.create_track_with_brief(
+        db,
+        user,
+        track_type=use_type if use_type in ("topic", "role", "company_jd") else "topic",
+        subject=use_subject,
+        request_id=request_id,
+    )
+    track = created["track"]
+    review["selected_next_track_id"] = track["id"]
+    await conversation_store.set_profile_review(mongo_db, str(user.id), review)
+    return {"track": track, "created": True, "review": review}
+
+
 async def state_extras(db: AsyncSession, mongo_db: AsyncIOMotorDatabase, user: User) -> dict:
     summary = await vault_summary(db, user.id)
     prefs = await conversation_store.get_preparation_preferences(mongo_db, str(user.id))
@@ -350,6 +531,9 @@ async def state_extras(db: AsyncSession, mongo_db: AsyncIOMotorDatabase, user: U
     )
     history = await conversation_store.get_messages(mongo_db, str(user.id), limit=40)
     mode = await conversation_store.get_conversation_mode(mongo_db, str(user.id))
+    review = None
+    if finished:
+        review = await get_profile_review_payload(db, mongo_db, user, ensure=True)
     return {
         "phase": phase,
         "show_goal_menu": phase == "goals" and not prefs.get("interests"),
@@ -371,4 +555,5 @@ async def state_extras(db: AsyncSession, mongo_db: AsyncIOMotorDatabase, user: U
         "has_resume_welcome": any(
             message_looks_like_resume_welcome(m.get("content") or "") for m in history
         ),
+        "profile_review": review,
     }

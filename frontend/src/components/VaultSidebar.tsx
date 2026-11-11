@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type VaultItem } from "../lib/api";
 
@@ -39,6 +40,15 @@ const CATEGORY_STYLES: Record<string, string> = {
   other: "bg-stone-100 text-stone-600",
 };
 
+const PROJECT_DETAIL_KEYS = [
+  "purpose",
+  "technologies",
+  "architecture",
+  "contribution",
+  "outcome",
+  "features",
+] as const;
+
 function skillGroup(item: VaultItem): string {
   const d = item.details || {};
   return (
@@ -77,14 +87,38 @@ function detailLines(item: VaultItem): string[] {
   return lines.slice(0, 5);
 }
 
+function invalidateVaultQueries(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["onboarding-state"] });
+  qc.invalidateQueries({ queryKey: ["vault-items"] });
+  qc.invalidateQueries({ queryKey: ["profile-review"] });
+}
+
 export function VaultSidebar({ items }: { items: VaultItem[] }) {
   const qc = useQueryClient();
+  const [editingId, setEditingId] = useState<string | null>(null);
+
   const remove = useMutation({
     mutationFn: (id: string) =>
       api(`/vault/items/${id}`, { method: "DELETE" }),
+    onSuccess: () => invalidateVaultQueries(qc),
+  });
+
+  const save = useMutation({
+    mutationFn: (payload: {
+      id: string;
+      title: string;
+      details?: Record<string, string>;
+    }) =>
+      api<VaultItem>(`/vault/items/${payload.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: payload.title,
+          details: payload.details,
+        }),
+      }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["onboarding-state"] });
-      qc.invalidateQueries({ queryKey: ["vault-items"] });
+      setEditingId(null);
+      invalidateVaultQueries(qc);
     },
   });
 
@@ -92,6 +126,8 @@ export function VaultSidebar({ items }: { items: VaultItem[] }) {
     category,
     items: items.filter((i) => i.category === category),
   })).filter((g) => g.items.length > 0);
+
+  const busy = remove.isPending || save.isPending;
 
   return (
     <div className="rounded-lg border border-stone-200 bg-white p-4">
@@ -102,7 +138,7 @@ export function VaultSidebar({ items }: { items: VaultItem[] }) {
         </span>
       </div>
       <p className="mt-1 text-xs text-stone-500">
-        Extracted profile information — edit in chat or remove items below.
+        Correct titles and details here — changes save through your profile vault.
       </p>
 
       <div className="mt-3 max-h-[28rem] space-y-4 overflow-y-auto pr-0.5">
@@ -121,8 +157,12 @@ export function VaultSidebar({ items }: { items: VaultItem[] }) {
             {category === "skill" ? (
               <SkillGroups
                 items={group}
+                editingId={editingId}
+                onEdit={setEditingId}
+                onCancel={() => setEditingId(null)}
+                onSave={(id, title) => save.mutate({ id, title })}
                 onRemove={(id) => remove.mutate(id)}
-                removing={remove.isPending}
+                busy={busy}
               />
             ) : (
               <ul className="space-y-2">
@@ -130,8 +170,14 @@ export function VaultSidebar({ items }: { items: VaultItem[] }) {
                   <VaultCard
                     key={item.id}
                     item={item}
+                    editing={editingId === item.id}
+                    onEdit={() => setEditingId(item.id)}
+                    onCancel={() => setEditingId(null)}
+                    onSave={(title, details) =>
+                      save.mutate({ id: item.id, title, details })
+                    }
                     onRemove={() => remove.mutate(item.id)}
-                    removing={remove.isPending}
+                    busy={busy}
                   />
                 ))}
               </ul>
@@ -139,18 +185,29 @@ export function VaultSidebar({ items }: { items: VaultItem[] }) {
           </section>
         ))}
       </div>
+      {save.error instanceof Error && (
+        <p className="mt-2 text-xs text-rose-600">{save.error.message}</p>
+      )}
     </div>
   );
 }
 
 function SkillGroups({
   items,
+  editingId,
+  onEdit,
+  onCancel,
+  onSave,
   onRemove,
-  removing,
+  busy,
 }: {
   items: VaultItem[];
+  editingId: string | null;
+  onEdit: (id: string) => void;
+  onCancel: () => void;
+  onSave: (id: string, title: string) => void;
   onRemove: (id: string) => void;
-  removing: boolean;
+  busy: boolean;
 }) {
   const groups = new Map<string, VaultItem[]>();
   for (const item of items) {
@@ -170,23 +227,41 @@ function SkillGroups({
         <div key={label}>
           <p className="mb-1.5 text-[11px] font-medium text-emerald-800">{label}</p>
           <ul className="flex flex-wrap gap-1.5">
-            {(groups.get(label) ?? []).map((item) => (
-              <li
-                key={item.id}
-                className="inline-flex max-w-full items-center gap-1 rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-xs text-emerald-900"
-              >
-                <span className="truncate">{item.title}</span>
-                <button
-                  type="button"
-                  aria-label={`Remove ${item.title}`}
-                  disabled={removing}
-                  onClick={() => onRemove(item.id)}
-                  className="text-emerald-700/70 hover:text-emerald-950 disabled:opacity-40"
+            {(groups.get(label) ?? []).map((item) =>
+              editingId === item.id ? (
+                <li key={item.id} className="w-full">
+                  <SkillEditForm
+                    title={item.title}
+                    busy={busy}
+                    onCancel={onCancel}
+                    onSave={(title) => onSave(item.id, title)}
+                  />
+                </li>
+              ) : (
+                <li
+                  key={item.id}
+                  className="inline-flex max-w-full items-center gap-1 rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-xs text-emerald-900"
                 >
-                  ×
-                </button>
-              </li>
-            ))}
+                  <button
+                    type="button"
+                    onClick={() => onEdit(item.id)}
+                    className="truncate hover:underline"
+                    title="Edit skill name"
+                  >
+                    {item.title}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${item.title}`}
+                    disabled={busy}
+                    onClick={() => onRemove(item.id)}
+                    className="text-emerald-700/70 hover:text-emerald-950 disabled:opacity-40"
+                  >
+                    ×
+                  </button>
+                </li>
+              ),
+            )}
           </ul>
         </div>
       ))}
@@ -194,16 +269,143 @@ function SkillGroups({
   );
 }
 
+function SkillEditForm({
+  title,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  title: string;
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (title: string) => void;
+}) {
+  const [draft, setDraft] = useState(title);
+  return (
+    <form
+      className="flex flex-wrap items-center gap-1.5 rounded-md border border-emerald-200 bg-white p-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!draft.trim() || busy) return;
+        onSave(draft.trim());
+      }}
+    >
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        maxLength={255}
+        className="min-w-0 flex-1 rounded border border-stone-200 px-2 py-1 text-xs outline-none focus:border-accent"
+        aria-label="Skill name"
+      />
+      <button
+        type="submit"
+        disabled={busy || !draft.trim()}
+        className="text-[11px] font-semibold text-accent-strong disabled:opacity-40"
+      >
+        Save
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="text-[11px] text-stone-500"
+      >
+        Cancel
+      </button>
+    </form>
+  );
+}
+
 function VaultCard({
   item,
+  editing,
+  onEdit,
+  onCancel,
+  onSave,
   onRemove,
-  removing,
+  busy,
 }: {
   item: VaultItem;
+  editing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: (title: string, details: Record<string, string>) => void;
   onRemove: () => void;
-  removing: boolean;
+  busy: boolean;
 }) {
   const lines = detailLines(item);
+  const [title, setTitle] = useState(item.title);
+  const [details, setDetails] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!editing) return;
+    const existing = item.details || {};
+    const keys =
+      item.category === "project"
+        ? [...PROJECT_DETAIL_KEYS]
+        : Object.keys(existing);
+    const next: Record<string, string> = {};
+    for (const key of keys) {
+      next[key] = String(existing[key] || "");
+    }
+    setTitle(item.title);
+    setDetails(next);
+  }, [editing, item]);
+
+  if (editing) {
+    return (
+      <li className="rounded-md border border-accent/30 bg-white px-3 py-2.5">
+        <form
+          className="space-y-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!title.trim() || busy) return;
+            const cleaned: Record<string, string> = {};
+            for (const [key, value] of Object.entries(details)) {
+              cleaned[key] = value.trim();
+            }
+            onSave(title.trim(), cleaned);
+          }}
+        >
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={255}
+            className="w-full rounded border border-stone-200 px-2 py-1.5 text-sm outline-none focus:border-accent"
+            aria-label="Item title"
+          />
+          {Object.keys(details).map((key) => (
+            <label key={key} className="block text-[11px] text-stone-500">
+              <span className="font-medium capitalize">{key}</span>
+              <input
+                value={details[key] ?? ""}
+                onChange={(e) =>
+                  setDetails((prev) => ({ ...prev, [key]: e.target.value }))
+                }
+                className="mt-0.5 w-full rounded border border-stone-200 px-2 py-1 text-xs text-stone-800 outline-none focus:border-accent"
+              />
+            </label>
+          ))}
+          <div className="flex gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={busy || !title.trim()}
+              className="rounded-md bg-accent px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-40"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-md px-2.5 py-1 text-[11px] text-stone-500"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </li>
+    );
+  }
+
   return (
     <li className="rounded-md border border-stone-100 bg-stone-50/80 px-3 py-2.5">
       <div className="flex items-start justify-between gap-2">
@@ -214,15 +416,24 @@ function VaultCard({
         >
           {item.category}
         </span>
-        <button
-          type="button"
-          aria-label={`Remove ${item.title}`}
-          disabled={removing}
-          onClick={onRemove}
-          className="text-xs text-stone-400 hover:text-rose-600 disabled:opacity-40"
-        >
-          Remove
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-xs font-medium text-accent-strong hover:underline"
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            aria-label={`Remove ${item.title}`}
+            disabled={busy}
+            onClick={onRemove}
+            className="text-xs text-stone-400 hover:text-rose-600 disabled:opacity-40"
+          >
+            Remove
+          </button>
+        </div>
       </div>
       <p className="mt-1.5 text-sm font-medium leading-snug text-stone-800">
         {item.title}
@@ -242,3 +453,5 @@ function VaultCard({
     </li>
   );
 }
+
+export default VaultSidebar;

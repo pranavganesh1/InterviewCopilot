@@ -10,12 +10,15 @@ import UserAvatar from "../components/UserAvatar";
 import StatCard from "../components/ui/StatCard";
 import ProgressRing from "../components/ui/ProgressRing";
 import SectionHeader from "../components/ui/SectionHeader";
+import PreparationReviewPanel from "../components/PreparationReviewPanel";
 import {
   ApiError,
   api,
   type AssessmentSummary,
   type AssessmentsDashboard,
   type OpenSessionRow,
+  type ProfileReview,
+  type RoadmapStep,
   type Track,
   type TrackWeaknesses,
 } from "../lib/api";
@@ -105,7 +108,7 @@ type PendingDelete = {
 };
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
@@ -131,6 +134,52 @@ export default function DashboardPage() {
     queryKey: ["tracks", showDeleted],
     queryFn: () =>
       api<Track[]>(showDeleted ? "/tracks?include_archived=true" : "/tracks"),
+  });
+
+  const profileReview = useQuery({
+    queryKey: ["profile-review"],
+    enabled: Boolean(user?.onboarding_completed),
+    queryFn: () => api<ProfileReview>("/onboarding/review"),
+  });
+
+  const saveReview = useMutation({
+    mutationFn: (body: {
+      summary?: string;
+      item_statuses?: {
+        item_id: string;
+        status: "confirmed" | "needs_clarification" | "not_assessed";
+        reason?: string;
+      }[];
+    }) =>
+      api<ProfileReview>("/onboarding/review", {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(["profile-review"], data);
+      void refresh();
+    },
+  });
+
+  const startRecommended = useMutation({
+    mutationFn: (step?: RoadmapStep) =>
+      api<{ track: Track; created: boolean; review: ProfileReview }>(
+        "/onboarding/review/start-recommended",
+        {
+          method: "POST",
+          body: JSON.stringify(
+            step
+              ? { subject: step.subject, track_type: step.track_type }
+              : {},
+          ),
+        },
+      ),
+    onSuccess: (data) => {
+      qc.setQueryData(["profile-review"], data.review);
+      void qc.invalidateQueries({ queryKey: ["tracks"] });
+      void refresh();
+      navigate(`/tracks/${data.track.id}`);
+    },
   });
 
   const assessments = useQuery({
@@ -330,8 +379,36 @@ export default function DashboardPage() {
     await restore.mutateAsync(target.id);
   }
 
+  const review = profileReview.data ?? user?.profile_review;
+  const reviewBusy = saveReview.isPending || startRecommended.isPending;
+
   return (
     <div className="space-y-6">
+      {user?.onboarding_completed && (
+        <PreparationReviewPanel
+          review={review}
+          userName={user.name}
+          pending={reviewBusy}
+          onSaveSummary={(summary) => saveReview.mutate({ summary })}
+          onSetItemStatus={(itemId, status) =>
+            saveReview.mutate({
+              item_statuses: [
+                {
+                  item_id: itemId,
+                  status,
+                  reason: "Confirmed by you from the dashboard.",
+                },
+              ],
+            })
+          }
+          onStartRecommended={(step) => startRecommended.mutate(step)}
+          onBrowseTracks={() => {
+            setShowForm(true);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
+      )}
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <SectionHeader
           title="Preparation tracks"
