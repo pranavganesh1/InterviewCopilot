@@ -10,9 +10,11 @@ from app.agents.onboarding import (
 )
 from app.models.user import User
 from app.services import conversation_store
+from app.gateway.llm import LLMGatewayError
 from app.services.preparation_goals import (
     GOALS_INTRO,
     GOAL_INTERESTS,
+    goals_followup_reply,
     merge_preferences,
     preferences_ready,
     recommend_track_seeds,
@@ -251,15 +253,49 @@ async def save_goals(
         if labels
         else "I'd like to choose my interview preparation focus."
     )
-    # Run through chat so history + follow-up stay consistent.
-    return await chat(
-        db,
-        mongo_db,
-        user,
-        user_line,
-        request_id=request_id,
-        already_finished=already_finished,
-    )
+    # Prefer the coach LLM; if the gateway is rate-limited/down, keep goals saved.
+    try:
+        return await chat(
+            db,
+            mongo_db,
+            user,
+            user_line,
+            request_id=request_id,
+            already_finished=already_finished,
+        )
+    except LLMGatewayError:
+        history = await conversation_store.get_messages(mongo_db, str(user.id), limit=4)
+        last = history[-1] if history else None
+        if not (
+            last
+            and last.get("role") == "user"
+            and last.get("content") == user_line
+        ):
+            await conversation_store.append_message(
+                mongo_db, str(user.id), "user", user_line
+            )
+        reply = goals_followup_reply(prefs)
+        await conversation_store.append_message(
+            mongo_db, str(user.id), "assistant", reply
+        )
+        summary = await vault_summary(db, user.id)
+        phase = derive_phase(
+            vault_summary=summary,
+            preferences=prefs,
+            already_finished=already_finished,
+        )
+        mode = await conversation_store.get_conversation_mode(mongo_db, str(user.id))
+        return {
+            "reply": reply,
+            "items_created": [],
+            "items_updated": [],
+            "onboarding_complete": preferences_ready(prefs) or already_finished,
+            "phase": phase,
+            "show_goal_menu": phase == "goals" and not prefs.get("interests"),
+            "preparation_preferences": prefs,
+            "conversation_mode": mode,
+            "show_starters": False,
+        }
 
 
 async def confirm_goals(
