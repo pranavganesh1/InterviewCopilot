@@ -55,3 +55,23 @@ async def set_preparation_preferences(
         upsert=True,
     )
     return prefs
+
+
+async def get_conversation_mode(mongo_db: AsyncIOMotorDatabase, user_id: str) -> str | None:
+    doc = await mongo_db[CONVERSATIONS].find_one({"user_id": user_id}, {"conversation_mode": 1})
+    mode = (doc or {}).get("conversation_mode")
+    return str(mode) if mode else None
+
+
+async def set_conversation_mode(
+    mongo_db: AsyncIOMotorDatabase, user_id: str, mode: str | None
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    await mongo_db[CONVERSATIONS].update_one(
+        {"user_id": user_id},
+        {
+            "$set": {"conversation_mode": mode, "updated_at": now},
+            "$setOnInsert": {"created_at": now, "messages": []},
+        },
+        upsert=True,
+    )

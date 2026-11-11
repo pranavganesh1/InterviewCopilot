@@ -231,6 +231,12 @@ export interface PreparationPreferences {
   confirmed?: boolean;
 }
 
+export interface ConversationStarter {
+  id: string;
+  label: string;
+  description: string;
+}
+
 export interface OnboardingState {
   messages: { role: string; content: string; created_at?: string }[];
   vault_items: VaultItem[];
@@ -247,6 +253,10 @@ export interface OnboardingState {
   recommended_tracks?: { track_type: string; subject: string }[];
   preparation_summary?: string;
   goals_ready?: boolean;
+  conversation_mode?: string | null;
+  show_starters?: boolean;
+  conversation_starters?: ConversationStarter[];
+  has_resume_welcome?: boolean;
 }
 
 export interface ChatResult {
@@ -257,6 +267,8 @@ export interface ChatResult {
   phase?: "profile" | "goals" | "ready";
   show_goal_menu?: boolean;
   preparation_preferences?: PreparationPreferences;
+  conversation_mode?: string | null;
+  show_starters?: boolean;
 }
 
 export interface Track {

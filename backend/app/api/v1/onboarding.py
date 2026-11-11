@@ -32,6 +32,10 @@ class GoalsRequest(BaseModel):
     confirmed: bool | None = None
 
 
+class StarterRequest(BaseModel):
+    starter_id: str = Field(max_length=64)
+
+
 def _vault_status(items) -> tuple[bool, list[str]]:
     categories = {i.category for i in items}
     missing = [c for c in _REQUIRED if c not in categories]
@@ -86,6 +90,25 @@ async def chat(
         body.message,
         request_id=request.headers.get("x-request-id"),
         already_finished=user.onboarding_completed_at is not None,
+    )
+
+
+@router.post("/starter")
+async def conversation_starter(
+    body: StarterRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Kick off a focused onboarding conversation from a starter card."""
+    await onboarding_service.ensure_review_opener(db, request.app.state.mongo_db, user)
+    return await onboarding_service.start_conversation_starter(
+        db,
+        request.app.state.mongo_db,
+        user,
+        body.starter_id,
+        already_finished=user.onboarding_completed_at is not None,
+        request_id=request.headers.get("x-request-id"),
     )
 
 

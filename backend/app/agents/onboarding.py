@@ -31,6 +31,7 @@ You receive:
 - known_vault_summary: existing profile items with details, source, and missing_details
 - possible_duplicates: near-duplicate titles that need confirmation (do not merge silently)
 - profile_gaps: categories still missing or projects missing detail fields
+- conversation_mode: optional focus (ai_interview | explore_projects | test_skills | career_goal)
 - conversation_so_far / new_user_message
 
 Hard rules:
@@ -56,6 +57,14 @@ Hard rules:
    preparation goals (the UI shows the choices).
 9. extracted_items: use the taxonomy; details hold short factual keys.
 10. Leave preparation_update empty during profile phase unless the user volunteers goals.
+11. conversation_mode guidance (still onboarding — never invent scores/assessments):
+   - ai_interview: natural warm-up interview; introduce yourself briefly then ask about
+     education/skills/projects from the vault one question at a time; dig into architecture,
+     decisions, challenges, and personal contribution.
+   - explore_projects: deep-dive a vault project; never invent tech/results.
+   - test_skills: explore available_skills only; ask which to practise.
+   - career_goal: discover role/placement/skills/projects/behavioral prep; fill
+     preparation_update when stated.
 """
 
 GOALS_SYSTEM_PROMPT = """You are the InterviewCopilot preparation coach (goals phase).
@@ -133,6 +142,7 @@ class OnboardingState(TypedDict, total=False):
     preparation_preferences: dict
     available_skills: list[str]
     available_projects: list[str]
+    conversation_mode: str
     already_finished: bool
     phase: str
     meta: dict
@@ -185,6 +195,7 @@ async def run_onboarding_turn(
     preparation_preferences: dict | None = None,
     available_skills: list[str] | None = None,
     available_projects: list[str] | None = None,
+    conversation_mode: str | None = None,
     phase: str | None = None,
     meta: dict | None = None,
 ) -> OnboardingTurn:
@@ -194,11 +205,19 @@ async def run_onboarding_turn(
         prior = prior[:-1]
 
     prefs = normalize_preferences(preparation_preferences)
+    mode = (conversation_mode or "").strip() or None
     current_phase = phase or derive_phase(
         vault_summary=vault_summary,
         preferences=prefs,
         already_finished=already_finished,
     )
+    # Starters choose the coach: career goals vs exploratory warm-up.
+    if not already_finished:
+        if mode == "career_goal":
+            current_phase = "goals"
+        elif mode in ("ai_interview", "explore_projects", "test_skills"):
+            # Keep the profile/exploration coach even when the vault is already ready.
+            current_phase = "profile"
 
     payload = {
         "known_vault_summary": vault_summary,
@@ -208,6 +227,7 @@ async def run_onboarding_turn(
         "available_skills": available_skills or [],
         "available_projects": available_projects or [],
         "goal_interest_labels": GOAL_INTEREST_LABELS,
+        "conversation_mode": mode,
         "conversation_so_far": prior[-18:],
         "new_user_message": message,
         "already_finished": already_finished,
@@ -248,7 +268,12 @@ async def run_onboarding_turn(
         turn.phase = "ready"
         turn.onboarding_complete = True
         turn.show_goal_menu = False
-    elif vault_ready:
+    elif mode in ("ai_interview", "explore_projects", "test_skills"):
+        # Exploration starters stay in conversational profile mode; goals UI waits.
+        turn.phase = "profile"
+        turn.onboarding_complete = False
+        turn.show_goal_menu = False
+    elif vault_ready or mode == "career_goal":
         turn.phase = "goals"
         turn.onboarding_complete = False
         if not merged_prefs["interests"]:
@@ -275,6 +300,7 @@ def build_onboarding_graph(turn_runner=run_onboarding_turn):
             preparation_preferences=state.get("preparation_preferences") or EMPTY_PREFERENCES,
             available_skills=state.get("available_skills"),
             available_projects=state.get("available_projects"),
+            conversation_mode=state.get("conversation_mode"),
             phase=state.get("phase"),
             meta=state.get("meta"),
         )

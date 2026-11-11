@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -9,6 +9,7 @@ import {
   type PreparationPreferences,
 } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import ConversationStarters from "../components/ConversationStarters";
 import GoalDiscovery from "../components/GoalDiscovery";
 import { VaultSidebar } from "../components/VaultSidebar";
 
@@ -42,6 +43,83 @@ const REQUIRED_LABELS: Record<string, string> = {
   education: "education",
 };
 
+const DEFAULT_STARTERS = [
+  {
+    id: "ai_interview",
+    label: "Start AI Interview",
+    description: "A friendly warm-up using your resume — one question at a time.",
+  },
+  {
+    id: "explore_projects",
+    label: "Explore My Projects",
+    description: "Deep-dive a project from your vault with smart follow-ups.",
+  },
+  {
+    id: "test_skills",
+    label: "Test My Skills",
+    description: "Pick skills from your profile and practise them conversationally.",
+  },
+  {
+    id: "career_goal",
+    label: "Set My Career Goal",
+    description: "Choose roles, placement focus, and interview preparation goals.",
+  },
+];
+
+function ProgressSteps({
+  phase,
+  hasVault,
+  hasWelcome,
+  finished,
+}: {
+  phase: string;
+  hasVault: boolean;
+  hasWelcome: boolean;
+  finished: boolean;
+}) {
+  const steps = [
+    { id: "resume", label: "Resume", done: hasVault || hasWelcome || finished },
+    {
+      id: "explore",
+      label: "Explore",
+      done: finished || phase === "goals" || phase === "ready",
+    },
+    { id: "goals", label: "Goals", done: finished || phase === "ready" },
+    { id: "ready", label: "Ready", done: finished },
+  ];
+  return (
+    <ol
+      className="flex flex-wrap items-center gap-2"
+      data-testid="onboarding-progress"
+      aria-label="Onboarding progress"
+    >
+      {steps.map((step, index) => (
+        <li key={step.id} className="flex items-center gap-2">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+              step.done
+                ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+                : "bg-white text-stone-500 ring-1 ring-stone-200"
+            }`}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                step.done ? "bg-emerald-500" : "bg-stone-300"
+              }`}
+            />
+            {step.label}
+          </span>
+          {index < steps.length - 1 && (
+            <span className="hidden text-stone-300 sm:inline" aria-hidden>
+              →
+            </span>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 export default function OnboardingPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -49,6 +127,7 @@ export default function OnboardingPage() {
   const [input, setInput] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [showStartersOverride, setShowStartersOverride] = useState(true);
   const resumeInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -68,6 +147,18 @@ export default function OnboardingPage() {
     },
   });
 
+  const starter = useMutation({
+    mutationFn: (starterId: string) =>
+      api<ChatResult>("/onboarding/starter", {
+        method: "POST",
+        body: JSON.stringify({ starter_id: starterId }),
+      }),
+    onSuccess: () => {
+      setShowStartersOverride(true);
+      qc.invalidateQueries({ queryKey: ["onboarding-state"] });
+    },
+  });
+
   const saveGoals = useMutation({
     mutationFn: (body: Partial<PreparationPreferences> & { interests?: string[] }) =>
       api<ChatResult>("/onboarding/goals", {
@@ -81,12 +172,16 @@ export default function OnboardingPage() {
     mutationFn: (file: File) => {
       const form = new FormData();
       form.append("file", file);
-      return api<{ items_created: { title: string }[]; items_skipped?: number }>(
-        "/vault/resume",
-        { method: "POST", body: form },
-      );
+      return api<{
+        items_created: { title: string }[];
+        items_skipped?: number;
+        welcome_seeded?: boolean;
+      }>("/vault/resume", { method: "POST", body: form });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding-state"] }),
+    onSuccess: () => {
+      setShowStartersOverride(true);
+      qc.invalidateQueries({ queryKey: ["onboarding-state"] });
+    },
   });
 
   function pickResume(file: File | undefined | null) {
@@ -115,15 +210,17 @@ export default function OnboardingPage() {
     },
   });
 
-  const goalsBusy = chat.isPending || saveGoals.isPending || finish.isPending;
+  const busy =
+    chat.isPending || starter.isPending || saveGoals.isPending || finish.isPending;
+  const goalsBusy = busy;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [state.data?.messages.length, chat.isPending]);
+  }, [state.data?.messages.length, chat.isPending, starter.isPending]);
 
   const send = () => {
     const message = input.trim();
-    if (!message || chat.isPending) return;
+    if (!message || busy) return;
     setInput("");
     chat.mutate(message);
   };
@@ -148,15 +245,46 @@ export default function OnboardingPage() {
     (prefs?.interests?.length ?? 0) > 0 &&
     !finish.isPending;
 
+  const starters = state.data?.conversation_starters?.length
+    ? state.data.conversation_starters
+    : DEFAULT_STARTERS;
+  const canShowStarters =
+    !finished &&
+    (state.data?.show_starters === true ||
+      state.data?.has_resume_welcome === true ||
+      (vaultItems.length > 0 && (state.data?.messages?.length ?? 0) > 0));
+  const startersVisible = canShowStarters && showStartersOverride;
+
+  const suggestedReplies = useMemo(() => {
+    const mode = state.data?.conversation_mode;
+    if (mode === "test_skills" && (state.data?.suggested_skills?.length ?? 0) > 0) {
+      return (state.data?.suggested_skills ?? []).slice(0, 4).map((s) => `Let's practise ${s}`);
+    }
+    if (mode === "explore_projects" && (state.data?.suggested_projects?.length ?? 0) > 0) {
+      return (state.data?.suggested_projects ?? [])
+        .slice(0, 3)
+        .map((p) => `Tell me more about ${p}`);
+    }
+    if (mode === "ai_interview") {
+      return ["I'm ready — ask me about my background", "Start with my strongest project"];
+    }
+    if (mode === "career_goal") {
+      return ["I want a software engineering internship", "Help me prepare for technical rounds"];
+    }
+    return [];
+  }, [state.data?.conversation_mode, state.data?.suggested_skills, state.data?.suggested_projects]);
+
   const messages = [
     ...(state.data?.messages ?? []),
-    ...(chat.isPending || saveGoals.isPending
+    ...(chat.isPending || starter.isPending || saveGoals.isPending
       ? [
           {
             role: "pending",
             content: finished
               ? "Updating your profile…"
-              : "Your onboarding coach is thinking…",
+              : starter.isPending
+                ? "Opening that conversation…"
+                : "Your onboarding coach is thinking…",
           },
         ]
       : []),
@@ -164,16 +292,26 @@ export default function OnboardingPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-accent">
-          Profile setup
-        </p>
-        <h1 className="text-xl font-semibold tracking-tight">Onboarding</h1>
-        <p className="mt-0.5 text-sm text-stone-500">
-          {finished
-            ? "Your profile is saved. Edit anything below — Tracks stays your home."
-            : "Share projects, internships, skills, and education so interviews stay grounded in your story."}
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-accent">
+            Profile setup
+          </p>
+          <h1 className="text-xl font-semibold tracking-tight">
+            {finished ? "Your profile vault" : "Meet your onboarding coach"}
+          </h1>
+          <p className="mt-0.5 text-sm text-stone-500">
+            {finished
+              ? "Your profile is saved. Edit anything below — Tracks stays your home."
+              : "Upload a resume or chat — we'll build your vault through conversation."}
+          </p>
+        </div>
+        <ProgressSteps
+          phase={phase}
+          hasVault={vaultItems.length > 0}
+          hasWelcome={state.data?.has_resume_welcome === true}
+          finished={finished}
+        />
       </div>
 
       {finished && (
@@ -190,58 +328,131 @@ export default function OnboardingPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <section className="flex min-h-[28rem] flex-col overflow-hidden rounded-lg border border-stone-200 bg-white md:min-h-[calc(100vh-11rem)]">
-          <div className="flex items-center justify-between gap-3 border-b border-stone-100 bg-page px-4 py-3 sm:px-5">
-            <div>
-              <h2 className="text-sm font-semibold text-stone-800">
-                Conversation
-              </h2>
-              <p className="text-xs text-stone-500">
-                {finished
-                  ? "Add or correct details — we won’t restart intake questions"
-                  : "Chat with your coach · vault updates as you share"}
-              </p>
+        <section className="flex min-h-[28rem] flex-col overflow-hidden rounded-xl border border-stone-200 bg-gradient-to-b from-white to-stone-50/40 shadow-sm md:min-h-[calc(100vh-11rem)]">
+          <div className="flex items-center justify-between gap-3 border-b border-stone-100 bg-page/80 px-4 py-3 sm:px-5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-xs font-bold text-white shadow-sm">
+                AI
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-stone-800">
+                  Onboarding assistant
+                </h2>
+                <p className="text-xs text-stone-500">
+                  {finished
+                    ? "Add or correct details — we won’t restart intake questions"
+                    : state.data?.has_resume_welcome
+                      ? "Resume reviewed · choose a starter or keep chatting"
+                      : "Chat with your coach · vault updates as you share"}
+                </p>
+              </div>
             </div>
-            <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-stone-500 ring-1 ring-stone-200">
-              {messages.filter((m) => m.role !== "pending").length} messages
-            </span>
+            <div className="flex items-center gap-2">
+              {canShowStarters && (
+                <button
+                  type="button"
+                  className="hidden rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-stone-600 ring-1 ring-stone-200 hover:bg-stone-50 sm:inline"
+                  onClick={() => setShowStartersOverride((v) => !v)}
+                >
+                  {showStartersOverride ? "Hide starters" : "Show starters"}
+                </button>
+              )}
+              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-stone-500 ring-1 ring-stone-200">
+                {messages.filter((m) => m.role !== "pending").length} messages
+              </span>
+            </div>
           </div>
 
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5">
             {messages.length === 0 && (
-              <div className="rounded-md border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center">
+              <div className="rounded-xl border border-dashed border-stone-200 bg-white/80 px-4 py-8 text-center">
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-accent-soft text-sm font-bold text-accent-strong">
+                  AI
+                </div>
                 <p className="text-sm font-medium text-stone-700">
                   {finished
                     ? "Tell us what you’d like to update"
                     : vaultItems.length > 0
                       ? "Review the profile we already found"
-                      : "Start with a project you’ve built"}
+                      : "Upload a resume or start chatting"}
                 </p>
-                <p className="mt-1 text-xs text-stone-500">
+                <p className="mx-auto mt-1 max-w-sm text-xs text-stone-500">
                   {finished
                     ? "New skills, projects, or education details go straight into your vault."
                     : vaultItems.length > 0
                       ? "Confirm what’s right, fix duplicates, and fill only the missing details."
-                      : "Include stack, your role, and one concrete outcome — or upload a resume."}
+                      : "Include stack, your role, and one concrete outcome — or drop a PDF on the right."}
                 </p>
               </div>
             )}
             {messages.map((m, i) => (
               <div
                 key={i}
-                className={`max-w-[min(100%,36rem)] rounded-lg px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+                className={`max-w-[min(100%,36rem)] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
                   m.role === "user"
-                    ? "ml-auto bg-accent-soft text-ink"
+                    ? "ml-auto bg-accent text-white shadow-sm"
                     : m.role === "pending"
                       ? "bg-stone-100 italic text-stone-400"
-                      : "bg-stone-100 text-stone-800"
+                      : "border border-stone-100 bg-white text-stone-800 shadow-sm"
                 }`}
               >
-                {m.content}
+                {m.role === "pending" ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span
+                      className="h-3.5 w-3.5 motion-safe:animate-spin rounded-full border-2 border-stone-300 border-t-accent"
+                      aria-hidden
+                    />
+                    {m.content}
+                  </span>
+                ) : (
+                  m.content
+                )}
               </div>
             ))}
-            {chat.error instanceof Error && (
-              <p className="text-sm text-red-600">{chat.error.message}</p>
+
+            {startersVisible && !busy && (
+              <ConversationStarters
+                starters={starters}
+                skills={state.data?.suggested_skills ?? []}
+                projects={state.data?.suggested_projects ?? []}
+                vaultItems={vaultItems}
+                activeMode={state.data?.conversation_mode}
+                pending={busy}
+                onSelectStarter={(id) => starter.mutate(id)}
+                onExploreSkill={(skill) =>
+                  chat.mutate(
+                    `I'd like to explore my skill in ${skill}. Ask me one question about how I've used it.`,
+                  )
+                }
+                onExploreProject={(project) =>
+                  chat.mutate(
+                    `Let's explore my project “${project}”. Ask follow-ups based only on what's in my vault.`,
+                  )
+                }
+              />
+            )}
+
+            {suggestedReplies.length > 0 && !busy && !finished && (
+              <div className="flex flex-wrap gap-2" data-testid="suggested-replies">
+                {suggestedReplies.map((reply) => (
+                  <button
+                    key={reply}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => chat.mutate(reply)}
+                    className="rounded-full border border-accent/30 bg-accent-soft/60 px-3 py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-soft disabled:opacity-50"
+                  >
+                    {reply}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {(chat.error instanceof Error || starter.error instanceof Error) && (
+              <p className="text-sm text-red-600">
+                {(chat.error as Error | null)?.message ||
+                  (starter.error as Error | null)?.message}
+              </p>
             )}
             <div ref={bottomRef} />
           </div>
@@ -264,7 +475,42 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          <div className="border-t border-stone-100 bg-stone-50/60 p-3 sm:p-4">
+          <div className="border-t border-stone-100 bg-white/90 p-3 sm:p-4">
+            <div className="mb-2 flex flex-wrap gap-2">
+              {!finished && (
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+                  onClick={() => setShowStartersOverride(true)}
+                >
+                  Change topic
+                </button>
+              )}
+              {!finished && phase !== "profile" && (
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+                  onClick={() =>
+                    chat.mutate(
+                      "Let's go back to reviewing my vault profile for a moment.",
+                    )
+                  }
+                >
+                  Return to profile review
+                </button>
+              )}
+              {!finished && (
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+                  onClick={() =>
+                    chat.mutate("I'd like to skip this question and move on.")
+                  }
+                >
+                  Skip this question
+                </button>
+              )}
+            </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
               <input
                 value={input}
@@ -273,15 +519,17 @@ export default function OnboardingPage() {
                 placeholder={
                   finished
                     ? "Add or correct a project, skill, or education detail…"
-                    : "Describe a project, internship, or skill…"
+                    : state.data?.has_resume_welcome
+                      ? "Type your own reply anytime…"
+                      : "Describe a project, internship, or skill…"
                 }
-                className="min-w-0 flex-1 rounded-md border border-stone-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
-                disabled={chat.isPending}
+                className="min-w-0 flex-1 rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                disabled={busy}
               />
               <button
                 onClick={send}
-                disabled={chat.isPending || !input.trim()}
-                className="rounded-md bg-accent px-5 py-2.5 text-sm font-medium text-white hover:bg-accent-strong disabled:opacity-40 sm:self-auto"
+                disabled={busy || !input.trim()}
+                className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white hover:bg-accent-strong disabled:opacity-40 sm:self-auto"
               >
                 Send
               </button>
@@ -308,7 +556,7 @@ export default function OnboardingPage() {
           <div className="rounded-lg border border-stone-200 bg-white p-4">
             <h2 className="text-sm font-semibold text-stone-800">Resume</h2>
             <p className="mt-1 text-xs text-stone-500">
-              Optional — PDF up to 10 MB.
+              Optional — PDF up to 10 MB. Successful upload starts the AI conversation.
             </p>
             <div
               role="button"
@@ -386,6 +634,9 @@ export default function OnboardingPage() {
                   : `Added ${upload.data.items_created.length} vault item${
                       upload.data.items_created.length === 1 ? "" : "s"
                     } from your resume.`}
+                {upload.data.welcome_seeded
+                  ? " Your coach started the conversation."
+                  : ""}
               </p>
             )}
             {uploadError && (

@@ -214,8 +214,12 @@ async def vault_probe_ready(db: AsyncSession, user_id) -> bool:
     )
 
 
+# Fingerprint used to avoid duplicate automatic welcome messages.
+RESUME_WELCOME_MARKER = "I've reviewed your resume"
+
+
 def build_profile_review_message(items: list[VaultItem]) -> str:
-    """Welcome / review opener when the vault already has resume (or other) data."""
+    """Personalized conversational welcome from extracted vault data (no hardcoded bios)."""
     if not items:
         return (
             "Welcome! I don't have your background yet. "
@@ -226,47 +230,59 @@ def build_profile_review_message(items: list[VaultItem]) -> str:
     for item in items:
         by_cat.setdefault(item.category, []).append(item.title)
 
-    lines = [
-        "Welcome back — I already pulled these details from your profile/resume. "
-        "Please review them; we'll only fill what's missing.",
-        "",
-    ]
-    labels = {
-        "education": "Education",
-        "skill": "Skills",
-        "project": "Projects",
-        "internship": "Internships",
-        "achievement": "Achievements",
-        "other": "Other",
-    }
-    for cat, label in labels.items():
-        titles = by_cat.get(cat) or []
-        if not titles:
-            continue
-        preview = ", ".join(titles[:6])
-        if len(titles) > 6:
-            preview += f" (+{len(titles) - 6} more)"
-        lines.append(f"{label}: {preview}")
+    skills = by_cat.get("skill") or []
+    projects = by_cat.get("project") or []
+    education = by_cat.get("education") or []
+    internships = by_cat.get("internship") or []
 
-    incomplete = [
-        i.title
-        for i in items
-        if i.category == "project" and missing_project_details(i.details or {})
+    found_bits: list[str] = []
+    if skills:
+        preview = ", ".join(skills[:5])
+        if len(skills) > 5:
+            preview += f", and {len(skills) - 5} more"
+        found_bits.append(preview)
+    if projects:
+        proj = ", ".join(f"“{p}”" for p in projects[:3])
+        if len(projects) > 3:
+            proj += f", and {len(projects) - 3} more"
+        found_bits.append(f"projects like {proj}")
+    if education:
+        found_bits.append(f"education in {education[0]}")
+    if internships:
+        found_bits.append(f"internship experience ({internships[0]})")
+
+    if found_bits:
+        if len(found_bits) == 1:
+            found_clause = found_bits[0]
+        elif len(found_bits) == 2:
+            found_clause = f"{found_bits[0]}, and {found_bits[1]}"
+        else:
+            found_clause = ", ".join(found_bits[:-1]) + f", and {found_bits[-1]}"
+        opener = (
+            f"Hey! {RESUME_WELCOME_MARKER}. I found your experience in {found_clause}."
+        )
+    else:
+        opener = (
+            f"Hey! {RESUME_WELCOME_MARKER} and saved what I could find into your vault."
+        )
+
+    lines = [
+        opener,
+        "Instead of filling out a long form, let's explore your experience through a conversation!",
+        "",
+        "Pick a starter below — or type anything you want to share.",
     ]
+
     near = find_near_duplicates(items)
-    lines.append("")
     if near:
         pair = near[0]
         lines.append(
-            f"I noticed possible duplicates — “{pair['a']['title']}” and "
-            f"“{pair['b']['title']}”. Are these the same, or should I keep both?"
-        )
-    elif incomplete:
-        lines.append(
-            f"Let's deepen “{incomplete[0]}”: what was its main purpose?"
-        )
-    else:
-        lines.append(
-            "Does this look right? Reply yes to confirm, or tell me what to add or fix."
+            f"Quick check: “{pair['a']['title']}” and “{pair['b']['title']}” look similar — "
+            "same item, or keep both?"
         )
     return "\n".join(lines)
+
+
+def message_looks_like_resume_welcome(content: str) -> bool:
+    text = content or ""
+    return RESUME_WELCOME_MARKER in text or text.startswith("Welcome back — I already pulled")

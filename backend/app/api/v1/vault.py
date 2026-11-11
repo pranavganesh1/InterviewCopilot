@@ -13,9 +13,8 @@ from app.gateway.llm import LLMGatewayError
 from app.models.user import User
 from app.services import readiness as readiness_service
 from app.services.resume_service import ResumeUploadError, process_resume
-from app.services import conversation_store
+from app.services import onboarding_service
 from app.services.vault_service import (
-    build_profile_review_message,
     create_items,
     delete_item,
     list_items,
@@ -121,16 +120,12 @@ async def upload_resume(
             content_type=file.content_type,
             request_id=request_id,
         )
-        # Seed coach review message so onboarding starts from extracted profile.
+        # Personalized welcome once — never duplicate on re-upload/refresh.
         items = await list_items(db, user.id)
-        if items:
-            await conversation_store.append_message(
-                request.app.state.mongo_db,
-                str(user.id),
-                "assistant",
-                build_profile_review_message(items),
-            )
-        return result
+        welcome_seeded = await onboarding_service.seed_resume_welcome(
+            request.app.state.mongo_db, str(user.id), items
+        )
+        return {**result, "welcome_seeded": welcome_seeded}
     except ResumeUploadError as exc:
         raise HTTPException(
             status_code=exc.status,
