@@ -89,6 +89,55 @@ export async function api<T>(
 
 // ---------- types ----------
 
+export type ProfileItemStatus =
+  | "confirmed"
+  | "needs_clarification"
+  | "not_assessed";
+
+export interface ProfileReviewItem {
+  item_id: string;
+  category: string;
+  title: string;
+  status: ProfileItemStatus;
+  reason: string;
+  user_set?: boolean;
+}
+
+export interface RoadmapStep {
+  id: string;
+  title: string;
+  why: string;
+  topics: string[];
+  practise: string;
+  track_type: string;
+  subject: string;
+  action_label: string;
+}
+
+export interface ProfileReview {
+  summary: string;
+  summary_user_edit?: string | null;
+  item_statuses: ProfileReviewItem[];
+  needs_clarification?: ProfileReviewItem[];
+  not_assessed?: ProfileReviewItem[];
+  confirmed?: ProfileReviewItem[];
+  roadmap: RoadmapStep[];
+  next_action?: {
+    title: string;
+    reason?: string;
+    track_type: string;
+    subject: string;
+    step_id?: string;
+    action_label?: string;
+    reuse_existing?: boolean;
+  } | null;
+  selected_next_track_id?: string | null;
+  preparation_summary?: string;
+  goal_labels?: string[];
+  vault_fingerprint?: string;
+  generated_at?: string | null;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -103,6 +152,7 @@ export interface User {
   is_admin?: boolean;
   preparation_preferences?: PreparationPreferences;
   recommended_tracks?: { track_type: string; subject: string }[];
+  profile_review?: ProfileReview;
 }
 
 export interface ProfileUpdate {
@@ -257,6 +307,7 @@ export interface OnboardingState {
   show_starters?: boolean;
   conversation_starters?: ConversationStarter[];
   has_resume_welcome?: boolean;
+  profile_review?: ProfileReview;
 }
 
 export interface ChatResult {

@@ -75,3 +75,28 @@ async def set_conversation_mode(
         },
         upsert=True,
     )
+
+
+async def get_profile_review(mongo_db: AsyncIOMotorDatabase, user_id: str) -> dict | None:
+    doc = await mongo_db[CONVERSATIONS].find_one(
+        {"user_id": user_id}, {"profile_review": 1}
+    )
+    review = (doc or {}).get("profile_review")
+    return review if isinstance(review, dict) else None
+
+
+async def set_profile_review(
+    mongo_db: AsyncIOMotorDatabase, user_id: str, review: dict
+) -> dict:
+    now = datetime.now(UTC).isoformat()
+    payload = dict(review or {})
+    payload["updated_at"] = now
+    await mongo_db[CONVERSATIONS].update_one(
+        {"user_id": user_id},
+        {
+            "$set": {"profile_review": payload, "updated_at": now},
+            "$setOnInsert": {"created_at": now, "messages": []},
+        },
+        upsert=True,
+    )
+    return payload
