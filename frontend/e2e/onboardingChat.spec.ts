@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const USER = {
   id: "u1",
@@ -129,7 +129,8 @@ test("chat failure shows friendly retry and preserves typed message", async ({
       status: 503,
       contentType: "application/json",
       body: JSON.stringify({
-        detail: "The interview coach is temporarily busy. Please retry in about a minute.",
+        detail:
+          "The interview coach is temporarily busy. Please retry in about a minute.",
       }),
     });
   });
@@ -147,9 +148,7 @@ test("chat failure shows friendly retry and preserves typed message", async ({
   expect(chatCalls).toBe(1);
 
   await page.getByTestId("onboarding-chat-retry").click();
-  await expect
-    .poll(() => chatCalls)
-    .toBe(2);
+  await expect.poll(() => chatCalls).toBe(2);
   await expect(input).toHaveValue("I want to practice Python");
 });
 
@@ -183,17 +182,14 @@ test("sending with long history scrolls message list; window stays at 0", async 
   await page.goto("/onboarding");
   const list = page.getByTestId("onboarding-messages");
   await expect(list).toBeVisible();
-
   await expect
     .poll(async () =>
       list.evaluate((el) => el.scrollHeight - el.clientHeight > 40),
     )
     .toBe(true);
 
-  const input = page.getByTestId("onboarding-chat-input");
-  await input.fill("My next answer");
+  await page.getByTestId("onboarding-chat-input").fill("My next answer");
   await page.getByTestId("onboarding-chat-send").click();
-
   await expect(list).toContainText("Great — let's keep going");
   await expect
     .poll(async () =>
@@ -202,7 +198,6 @@ test("sending with long history scrolls message list; window stays at 0", async 
       ),
     )
     .toBe(true);
-
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
   await expect(page.getByTestId("onboarding-chat-composer")).toBeInViewport();
 });
@@ -211,16 +206,16 @@ test("scrolled-up user sees New message pill instead of jump", async ({
   page,
 }) => {
   let state = longHistoryState(30);
-  let releaseChat: (() => void) | null = null;
-  const chatGate = new Promise<void>((resolve) => {
-    releaseChat = resolve;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
   });
 
   await page.route("**/api/v1/onboarding/state", (route) =>
     route.fulfill({ json: state }),
   );
   await page.route("**/api/v1/onboarding/chat", async (route) => {
-    await chatGate;
+    await gate;
     const body = route.request().postDataJSON() as { message: string };
     state = {
       ...state,
@@ -243,23 +238,14 @@ test("scrolled-up user sees New message pill instead of jump", async ({
   await page.goto("/onboarding");
   const list = page.getByTestId("onboarding-messages");
   await expect(list).toBeVisible();
-  await list.evaluate((el) => {
-    el.scrollTop = 0;
-  });
 
-  // Send via forceScroll would scroll — so we inject an assistant-only update path:
-  // fill + send after scrolling up, but release after we confirm stickiness broke.
   await page.getByTestId("onboarding-chat-input").fill("ping");
-  // User send always force-scrolls; instead mutate state via a delayed assistant
-  // by using starter-less invalidate: click send then immediately scroll up again
-  // before the reply lands.
-  const sendPromise = page.getByTestId("onboarding-chat-send").click();
-  await page.getByTestId("typing-indicator").waitFor({ state: "visible" });
+  await page.getByTestId("onboarding-chat-send").click();
+  await expect(page.getByTestId("typing-indicator")).toBeVisible();
   await list.evaluate((el) => {
     el.scrollTop = 0;
   });
-  releaseChat?.();
-  await sendPromise;
+  release();
   await expect(list).toContainText("fresh reply from up high");
 
   const nearBottom = await list.evaluate(
@@ -277,22 +263,36 @@ test("scrolled-up user sees New message pill instead of jump", async ({
     .toBe(true);
 });
 
-test("typing indicator shows while reply pending then disappears", async ({
+test("typing indicator shows while pending then disappears; vault chip appears", async ({
   page,
 }) => {
-  let resolveChat: ((route: Route) => void) | null = null;
-  const pending = new Promise<Route>((resolve) => {
-    resolveChat = resolve;
+  let state = { ...BASE_STATE };
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
   });
 
   await page.route("**/api/v1/onboarding/state", (route) =>
-    route.fulfill({ json: BASE_STATE }),
+    route.fulfill({ json: state }),
   );
   await page.route("**/api/v1/onboarding/chat", async (route) => {
-    await pending;
+    await gate;
+    const body = route.request().postDataJSON() as { message: string };
+    state = {
+      ...state,
+      messages: [
+        ...state.messages,
+        { role: "user", content: body.message },
+        { role: "assistant", content: "Saved Excel to your vault." },
+      ],
+      vault_items: [
+        ...state.vault_items,
+        { id: "9", category: "skill", title: "Excel", source: "chat" },
+      ],
+    };
     await route.fulfill({
       json: {
-        reply: "Done thinking.",
+        reply: "Saved Excel to your vault.",
         items_created: [{ id: "9", category: "skill", title: "Excel" }],
         items_updated: [],
         onboarding_complete: true,
@@ -302,10 +302,129 @@ test("typing indicator shows while reply pending then disappears", async ({
   });
 
   await page.goto("/onboarding");
-  await page.getByTestId("onboarding-chat-input").fill("hello coach");
+  await page.getByTestId("onboarding-chat-input").fill("I know Excel");
   await page.getByTestId("onboarding-chat-send").click();
   await expect(page.getByTestId("typing-indicator")).toBeVisible();
-  resolveChat?.(await pending);
-  // fulfill already waiting — resolve the gate by fulfilling via second tick
-  // The promise above resolves with Route when route handler runs — fix approach:
+  release();
+  await expect(page.getByTestId("typing-indicator")).toHaveCount(0);
+  await expect(page.getByTestId("vault-add-chips")).toContainText(
+    "Added to your profile: Excel",
+  );
+});
+
+test("Enter sends, Shift+Enter newlines, send disabled when empty/loading, textarea caps at 5 lines", async ({
+  page,
+}) => {
+  let state = { ...BASE_STATE };
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    await gate;
+    const body = route.request().postDataJSON() as { message: string };
+    state = {
+      ...state,
+      messages: [
+        ...state.messages,
+        { role: "user", content: body.message },
+        { role: "assistant", content: "Got your note." },
+      ],
+    };
+    await route.fulfill({
+      json: {
+        reply: "Got your note.",
+        items_created: [],
+        onboarding_complete: true,
+        phase: "goals",
+      },
+    });
+  });
+
+  await page.goto("/onboarding");
+  const input = page.getByTestId("onboarding-chat-input");
+  const send = page.getByTestId("onboarding-chat-send");
+  await expect(send).toBeDisabled();
+
+  await input.press("Shift+Enter");
+  await input.type("line two");
+  await expect(input).toHaveValue(/\nline two/);
+
+  await input.fill("one\ntwo\nthree\nfour\nfive\nsix");
+  const height = await input.evaluate((el) => (el as HTMLTextAreaElement).offsetHeight);
+  const line = await input.evaluate((el) => {
+    const lh = Number.parseFloat(getComputedStyle(el).lineHeight) || 20;
+    return lh * 5 + 24;
+  });
+  expect(height).toBeLessThanOrEqual(line + 4);
+
+  await input.fill("Send with enter");
+  await expect(send).toBeEnabled();
+  await input.press("Enter");
+  await expect(page.getByTestId("typing-indicator")).toBeVisible();
+  await expect(send).toBeDisabled();
+  release();
+  await expect(page.getByTestId("onboarding-messages")).toContainText(
+    "Got your note",
+  );
+});
+
+test("emoji picker inserts at cursor and closes on Escape", async ({ page }) => {
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: BASE_STATE }),
+  );
+  await page.goto("/onboarding");
+  const input = page.getByTestId("onboarding-chat-input");
+  await input.fill("Hi ");
+  await page.getByTestId("emoji-picker-button").click();
+  await expect(page.getByTestId("emoji-picker")).toBeVisible();
+  await page.getByRole("option", { name: "Insert 🚀" }).click();
+  await expect(input).toHaveValue("Hi 🚀");
+  await expect(page.getByTestId("emoji-picker")).toHaveCount(0);
+
+  await page.getByTestId("emoji-picker-button").click();
+  await expect(page.getByTestId("emoji-picker")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("emoji-picker")).toHaveCount(0);
+});
+
+test("reduced motion skips bubble animation; history loads at bottom; no horizontal overflow at 375", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 375, height: 720 });
+
+  const state = longHistoryState(24);
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: state }),
+  );
+
+  await page.goto("/onboarding");
+  const list = page.getByTestId("onboarding-messages");
+  await expect(list).toBeVisible();
+
+  await expect
+    .poll(async () =>
+      list.evaluate(
+        (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 140,
+      ),
+    )
+    .toBe(true);
+
+  const animated = await list.evaluate(
+    (el) => el.querySelectorAll(".coach-bubble-enter-assistant, .coach-bubble-enter-user").length,
+  );
+  // History should not be marked as entering on load.
+  expect(animated).toBe(0);
+
+  const overflowX = await page.evaluate(() => {
+    const doc = document.documentElement;
+    return doc.scrollWidth > doc.clientWidth + 1;
+  });
+  expect(overflowX).toBe(false);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
 });
