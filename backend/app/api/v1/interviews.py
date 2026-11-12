@@ -212,6 +212,11 @@ async def request_assistance(
 ):
     try:
         return await interview_service.request_assistance(db, user, session_id)
+    except LLMGatewayError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The LLM provider is rate-limited right now — please retry in a minute.",
+        ) from exc
     except LookupError as exc:
         detail = {
             "session_not_found": ("Session not found", 404),

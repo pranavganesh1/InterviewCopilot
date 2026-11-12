@@ -219,66 +219,114 @@ RESUME_WELCOME_MARKER = "I've reviewed your resume"
 
 
 def build_profile_review_message(items: list[VaultItem]) -> str:
-    """Personalized conversational welcome from extracted vault data (no hardcoded bios)."""
+    """Field-aware welcome — 1–2 hooks from the resume, never a CS-only assumption."""
+    from app.services.preparation_goals import infer_candidate_background
+
     if not items:
         return (
-            "Welcome! I don't have your background yet. "
-            "Upload a resume or tell me about a project you've built."
+            "Hey! 👋 I don't have your background yet. "
+            "Upload a resume or tell me what you're interested in — "
+            "we'll shape your prep from there. No degree or project required to start."
         )
 
-    by_cat: dict[str, list[str]] = {}
-    for item in items:
-        by_cat.setdefault(item.category, []).append(item.title)
+    summary = [
+        {
+            "category": item.category,
+            "title": item.title,
+            "details": item.details or {},
+        }
+        for item in items
+    ]
+    bg = infer_candidate_background(summary)
+    field = bg["field_family"]
+    education = bg["education_titles"]
+    skills = bg["skill_titles"]
+    projects = bg["project_titles"]
+    internships = bg["internship_titles"]
 
-    skills = by_cat.get("skill") or []
-    projects = by_cat.get("project") or []
-    education = by_cat.get("education") or []
-    internships = by_cat.get("internship") or []
-
-    found_bits: list[str] = []
-    if skills:
-        preview = ", ".join(skills[:5])
-        if len(skills) > 5:
-            preview += f", and {len(skills) - 5} more"
-        found_bits.append(preview)
-    if projects:
-        proj = ", ".join(f"“{p}”" for p in projects[:3])
-        if len(projects) > 3:
-            proj += f", and {len(projects) - 3} more"
-        found_bits.append(f"projects like {proj}")
-    if education:
-        found_bits.append(f"education in {education[0]}")
-    if internships:
-        found_bits.append(f"internship experience ({internships[0]})")
-
-    if found_bits:
-        if len(found_bits) == 1:
-            found_clause = found_bits[0]
-        elif len(found_bits) == 2:
-            found_clause = f"{found_bits[0]}, and {found_bits[1]}"
-        else:
-            found_clause = ", ".join(found_bits[:-1]) + f", and {found_bits[-1]}"
+    if field == "commerce" and education:
         opener = (
-            f"Hey! {RESUME_WELCOME_MARKER}. I found your experience in {found_clause}."
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed your background in "
+            f"{education[0]}. We can explore finance, accounting, business analytics, "
+            "or roles connected to your experience."
+        )
+    elif field == "physics" and (education or projects):
+        hook = education[0] if education else f"your “{projects[0]}” work"
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I see {hook}. "
+            "Your analytical background could fit research, technical roles, "
+            "or broader interview prep."
+        )
+    elif field in ("life_sciences", "mathematics", "arts", "engineering") and education:
+        hook = ""
+        if projects:
+            hook = f" Your “{projects[0]}” work stood out."
+        elif skills:
+            hook = f" I also noticed {skills[0]} in your profile."
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed your background in "
+            f"{education[0]}.{hook} We can explore roles and prep paths that match "
+            "your interests — not only software."
+        )
+    elif field == "computer_science" and (skills or projects):
+        if projects and skills:
+            opener = (
+                f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed {skills[0]}"
+                + (f" and your “{projects[0]}” project" if projects else "")
+                + ". We can explore technical skills, projects, or career goals next."
+            )
+        elif projects:
+            opener = (
+                f"Hey! 👋 {RESUME_WELCOME_MARKER}. Your “{projects[0]}” project looks "
+                "like a strong interview story — happy to dig in when you're ready."
+            )
+        else:
+            opener = (
+                f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed {skills[0]} in your profile. "
+                "We can practise skills, talk goals, or explore projects."
+            )
+    elif projects:
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. Your “{projects[0]}” work stood out — "
+            "we can build interview prep around that or explore other goals."
+        )
+    elif internships:
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed your {internships[0]} experience. "
+            "We can turn that into interview stories or explore new directions."
+        )
+    elif skills:
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed {skills[0]} in your profile. "
+            "We can practise that skill or explore what you'd like to prepare for."
+        )
+    elif education:
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed your background in {education[0]}. "
+            "What are you currently interested in exploring?"
         )
     else:
         opener = (
-            f"Hey! {RESUME_WELCOME_MARKER} and saved what I could find into your vault."
+            f"Hey! 👋 {RESUME_WELCOME_MARKER} and saved a few notes. "
+            "Tell me what you'd like to work toward — any direction is welcome."
         )
 
     lines = [
         opener,
-        "Instead of filling out a long form, let's explore your experience through a conversation!",
         "",
-        "Pick a starter below — or type anything you want to share.",
+        "What would you like to work on first? Pick a starter below, choose a prep focus, "
+        "or just type — you can skip anything that doesn't apply.",
     ]
 
     near = find_near_duplicates(items)
     if near:
         pair = near[0]
-        lines.append(
-            f"Quick check: “{pair['a']['title']}” and “{pair['b']['title']}” look similar — "
-            "same item, or keep both?"
+        lines.extend(
+            [
+                "",
+                f"Quick check: “{pair['a']['title']}” and “{pair['b']['title']}” look similar — "
+                "same item, or keep both?",
+            ]
         )
     return "\n".join(lines)
 

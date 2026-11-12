@@ -11,16 +11,25 @@ export class ApiError extends Error {
   status: number;
   code?: string;
   sessionId?: string;
+  causeCode?: string;
+  retryAfterSeconds?: number;
   constructor(
     status: number,
     message: string,
-    extra?: { code?: string; sessionId?: string },
+    extra?: {
+      code?: string;
+      sessionId?: string;
+      causeCode?: string;
+      retryAfterSeconds?: number;
+    },
   ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = extra?.code;
     this.sessionId = extra?.sessionId;
+    this.causeCode = extra?.causeCode;
+    this.retryAfterSeconds = extra?.retryAfterSeconds;
   }
 }
 
@@ -66,6 +75,8 @@ export async function api<T>(
       const record = detail as {
         message?: string;
         code?: string;
+        cause?: string;
+        retry_after_seconds?: number;
         session_id?: string;
         correlation_id?: string;
       };
@@ -77,6 +88,11 @@ export async function api<T>(
       throw new ApiError(res.status, message, {
         code: record.code,
         sessionId: record.session_id || record.correlation_id,
+        causeCode: record.cause || record.code,
+        retryAfterSeconds:
+          typeof record.retry_after_seconds === "number"
+            ? record.retry_after_seconds
+            : undefined,
       });
     }
     throw new ApiError(res.status, typeof detail === "string" ? detail : res.statusText);
@@ -293,10 +309,18 @@ export interface PreparationPreferences {
   technical_areas?: string[];
   focus_skills?: string[];
   focus_projects?: string[];
+  project_aspects?: string[];
   placement_target?: string | null;
   experience_level?: string | null;
   behavioral_goals?: string | null;
   confirmed?: boolean;
+}
+
+export interface GoalOptionCard {
+  id: string;
+  label: string;
+  subtitle?: string;
+  technologies?: string[];
 }
 
 export interface ConversationStarter {
@@ -318,6 +342,29 @@ export interface OnboardingState {
   goal_interest_options?: { id: string; label: string }[];
   suggested_skills?: string[];
   suggested_projects?: string[];
+  suggested_roles?: string[];
+  suggested_technical_areas?: string[];
+  project_options?: GoalOptionCard[];
+  project_aspect_options?: { id: string; label: string }[];
+  resume_highlights?: {
+    skills?: string[];
+    projects?: string[];
+    education?: string[];
+    internships?: string[];
+  };
+  next_goal_followup?: string | null;
+  followups_complete?: boolean;
+  optional_categories?: boolean;
+  candidate_background?: {
+    field_family?: string;
+    education_titles?: string[];
+    skill_titles?: string[];
+    project_titles?: string[];
+    suggested_prep_topics?: string[];
+    role_hints?: string[];
+  };
+  suggested_prep_topics?: string[];
+  coach_context?: Record<string, unknown>;
   recommended_tracks?: { track_type: string; subject: string }[];
   preparation_summary?: string;
   goals_ready?: boolean;
@@ -326,6 +373,12 @@ export interface OnboardingState {
   conversation_starters?: ConversationStarter[];
   has_resume_welcome?: boolean;
   profile_review?: ProfileReview;
+}
+
+export interface StartInterviewOffer {
+  subject: string;
+  track_type?: string;
+  reason?: string;
 }
 
 export interface ChatResult {
@@ -338,6 +391,7 @@ export interface ChatResult {
   preparation_preferences?: PreparationPreferences;
   conversation_mode?: string | null;
   show_starters?: boolean;
+  offer_start_interview?: StartInterviewOffer | null;
 }
 
 export interface Track {

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.sqlalchemy import get_db
+from app.gateway.llm import LLMGatewayError
 from app.models.user import User
 from app.services import conversation_store, onboarding_service
 from app.services.preparation_goals import preferences_ready
@@ -13,11 +14,14 @@ from app.services.vault_service import list_items
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
-_REQUIRED = ("project", "skill", "education")
+# Suggested vault sections — informational only; never block Start Preparing.
+_SUGGESTED = ("project", "skill", "education")
 
 
 class ChatRequest(BaseModel):
     message: str = Field(max_length=20000)
+    # Client-generated id for idempotent retries (additive; optional).
+    message_id: str | None = Field(default=None, max_length=80)
 
 
 class GoalsRequest(BaseModel):
@@ -26,6 +30,7 @@ class GoalsRequest(BaseModel):
     technical_areas: list[str] | None = None
     focus_skills: list[str] | None = None
     focus_projects: list[str] | None = None
+    project_aspects: list[str] | None = None
     placement_target: str | None = None
     experience_level: str | None = None
     behavioral_goals: str | None = None
@@ -54,9 +59,11 @@ class StartRecommendedRequest(BaseModel):
 
 
 def _vault_status(items) -> tuple[bool, list[str]]:
+    """Return (ready_for_goals, optional_missing). Ready if any vault signal exists."""
     categories = {i.category for i in items}
-    missing = [c for c in _REQUIRED if c not in categories]
-    return len(missing) == 0, missing
+    missing = [c for c in _SUGGESTED if c not in categories]
+    # Any extracted item unlocks goals; empty vault still OK via proceed_to_goals.
+    return True, missing
 
 
 async def _state_payload(mongo_db, db: AsyncSession, user: User) -> dict:
@@ -66,7 +73,9 @@ async def _state_payload(mongo_db, db: AsyncSession, user: User) -> dict:
     items = await list_items(db, user.id)
     vault_ready, missing = _vault_status(items)
     finished = user.onboarding_completed_at is not None
-    extras = await onboarding_service.state_extras(db, mongo_db, user)
+    extras = await onboarding_service.state_extras(
+        db, mongo_db, user, vault_items=items, history=messages
+    )
     return {
         "messages": messages,
         "vault_items": [
@@ -79,9 +88,11 @@ async def _state_payload(mongo_db, db: AsyncSession, user: User) -> dict:
             }
             for i in items
         ],
-        # Vault criteria (coach / readiness).
-        "onboarding_complete": vault_ready or finished,
+        # Preferences (or finished) mark onboarding complete — vault sections are optional.
+        "onboarding_complete": finished or preferences_ready(extras.get("preparation_preferences")),
         "missing_categories": [] if finished else missing,
+        "optional_categories": True,
+        "vault_ready": vault_ready,
         # Explicit user finish — survives refresh/login.
         "onboarding_finished": finished,
         "onboarding_completed_at": (
@@ -100,14 +111,42 @@ async def chat(
 ):
     await onboarding_service.ensure_review_opener(db, request.app.state.mongo_db, user)
     await onboarding_service.ensure_goals_intro(db, request.app.state.mongo_db, user)
-    return await onboarding_service.chat(
-        db,
-        request.app.state.mongo_db,
-        user,
-        body.message,
-        request_id=request.headers.get("x-request-id"),
-        already_finished=user.onboarding_completed_at is not None,
-    )
+    try:
+        return await onboarding_service.chat(
+            db,
+            request.app.state.mongo_db,
+            user,
+            body.message,
+            request_id=request.headers.get("x-request-id"),
+            already_finished=user.onboarding_completed_at is not None,
+            message_id=body.message_id,
+        )
+    except LLMGatewayError as exc:
+        retry = exc.retry_after_seconds
+        hint = (
+            f"Please retry in about {int(retry)} seconds."
+            if retry and retry < 90
+            else "Please retry in about a minute."
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": f"The interview coach is temporarily busy. {hint}",
+                "cause": getattr(exc.cause, "value", "unknown"),
+                "retry_after_seconds": int(retry) if retry else 60,
+            },
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Something went wrong saving your reply. Please try again.",
+                "cause": "unknown",
+                "retry_after_seconds": 15,
+            },
+        ) from exc
 
 
 @router.post("/starter")
@@ -119,14 +158,30 @@ async def conversation_starter(
 ):
     """Kick off a focused onboarding conversation from a starter card."""
     await onboarding_service.ensure_review_opener(db, request.app.state.mongo_db, user)
-    return await onboarding_service.start_conversation_starter(
-        db,
-        request.app.state.mongo_db,
-        user,
-        body.starter_id,
-        already_finished=user.onboarding_completed_at is not None,
-        request_id=request.headers.get("x-request-id"),
-    )
+    try:
+        return await onboarding_service.start_conversation_starter(
+            db,
+            request.app.state.mongo_db,
+            user,
+            body.starter_id,
+            already_finished=user.onboarding_completed_at is not None,
+            request_id=request.headers.get("x-request-id"),
+        )
+    except LLMGatewayError as exc:
+        retry = exc.retry_after_seconds
+        hint = (
+            f"Please retry in about {int(retry)} seconds."
+            if retry and retry < 90
+            else "Please retry in about a minute."
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": f"The interview coach is temporarily busy. {hint}",
+                "cause": getattr(exc.cause, "value", "unknown"),
+                "retry_after_seconds": int(retry) if retry else 60,
+            },
+        ) from exc
 
 
 @router.get("/state")
@@ -174,15 +229,8 @@ async def complete(
 ):
     """Mark onboarding finished and return refreshed state (idempotent).
 
-    Requires a ready vault and confirmed preparation goals (unless already finished).
+    Requires preparation goals (vault sections are optional).
     """
-    items = await list_items(db, user.id)
-    vault_ready, missing = _vault_status(items)
-    if not vault_ready and user.onboarding_completed_at is None:
-        raise HTTPException(
-            status_code=409,
-            detail=("Onboarding is not ready yet. Still needed: " + ", ".join(missing)),
-        )
     prefs = await conversation_store.get_preparation_preferences(
         request.app.state.mongo_db, str(user.id)
     )
@@ -203,7 +251,25 @@ async def complete(
     await onboarding_service.ensure_profile_review(
         db, request.app.state.mongo_db, user, force=first_finish
     )
-    return await _state_payload(request.app.state.mongo_db, db, user)
+    payload = await _state_payload(request.app.state.mongo_db, db, user)
+    # Offer the start-interview popup once on first finish (additive field).
+    if first_finish and not await conversation_store.get_start_offer_shown(
+        request.app.state.mongo_db, str(user.id)
+    ):
+        seeds = payload.get("recommended_tracks") or []
+        seed = seeds[0] if seeds else {}
+        subject = (
+            (seed.get("subject") if isinstance(seed, dict) else None)
+            or (prefs.get("target_role") if isinstance(prefs, dict) else None)
+            or "your focus area"
+        )
+        payload["offer_start_interview"] = {
+            "subject": str(subject),
+            "track_type": (seed.get("track_type") if isinstance(seed, dict) else None) or "topic",
+            "reason": "onboarding_finished",
+        }
+        await conversation_store.mark_start_offer_shown(request.app.state.mongo_db, str(user.id))
+    return payload
 
 
 @router.get("/review")

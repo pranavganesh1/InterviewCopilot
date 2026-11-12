@@ -108,6 +108,11 @@ async def test_onboarding_state_reports_completion(clean_users_table):
     from app.core.config import get_settings
 
     app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    from app.services import conversation_store
+
+    await conversation_store.set_preparation_preferences(
+        app.state.mongo_db, user_id, {"interests": ["technical"], "confirmed": True}
+    )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get(
@@ -116,6 +121,7 @@ async def test_onboarding_state_reports_completion(clean_users_table):
         )
     assert resp.status_code == 200
     body = resp.json()
+    assert body["vault_ready"] is True
     assert body["onboarding_complete"] is True
     assert body["onboarding_finished"] is False
     assert body["missing_categories"] == []

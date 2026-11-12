@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 GOAL_INTERESTS: list[tuple[str, str]] = [
-    ("technical", "Technical Interview Preparation"),
-    ("skill", "Skill-Based Practice"),
-    ("project", "Project-Based Interviews"),
-    ("placement", "Internship & Placement Preparation"),
-    ("behavioral", "HR and Behavioral Interviews"),
+    ("technical", "💻 Technical Interviews"),
+    ("skill", "🧠 Skill Practice"),
+    ("project", "🚀 Project Deep Dive"),
+    ("placement", "🎯 Internship & Placements"),
+    ("behavioral", "💬 HR & Behavioral"),
 ]
 
 GOAL_INTEREST_IDS = {i for i, _ in GOAL_INTERESTS}
 GOAL_INTEREST_LABELS = dict(GOAL_INTERESTS)
+
+# Stable substring used to detect that the goals intro was already seeded.
+GOALS_INTRO_MARKER = "What would you like to focus on"
+
+PROJECT_ASPECT_OPTIONS: list[tuple[str, str]] = [
+    ("architecture", "Project architecture"),
+    ("implementation", "Technical implementation"),
+    ("challenges", "Challenges and solutions"),
+    ("technologies", "Technologies used"),
+    ("research", "Research contributions"),
+    ("deep_dive", "Complete project deep dive"),
+]
 
 EMPTY_PREFERENCES: dict = {
     "interests": [],
@@ -19,11 +31,24 @@ EMPTY_PREFERENCES: dict = {
     "technical_areas": [],
     "focus_skills": [],
     "focus_projects": [],
+    "project_aspects": [],
     "placement_target": None,
     "experience_level": None,
     "behavioral_goals": None,
     "confirmed": False,
 }
+
+_SKILL_ROLE_HINTS: list[tuple[tuple[str, ...], str]] = [
+    (("machine learning", "ml", "deep learning", "pytorch", "tensorflow", "nlp"), "ML Engineer"),
+    (("data science", "pandas", "numpy", "statistics"), "Data Scientist"),
+    (("react", "frontend", "javascript", "typescript", "next.js"), "Frontend Developer"),
+    (("node", "django", "flask", "fastapi", "spring", "backend"), "Backend Developer"),
+    (("full stack", "mern", "mean"), "Full Stack Developer"),
+    (("android", "kotlin", "swift", "ios", "flutter", "react native"), "Mobile Developer"),
+    (("aws", "azure", "gcp", "devops", "docker", "kubernetes"), "Cloud / DevOps Engineer"),
+    (("sql", "postgres", "mongodb", "database"), "Software Engineer"),
+    (("python", "java", "c++", "golang", "go"), "Software Engineer"),
+]
 
 
 def normalize_preferences(raw: dict | None) -> dict:
@@ -61,6 +86,12 @@ def normalize_preferences(raw: dict | None) -> dict:
         s = str(v).strip()
         return s[:255] if s else None
 
+    # Prefer known aspect ids; still allow free-text labels the UI may send.
+    clean_aspects: list[str] = []
+    for a in _str_list("project_aspects"):
+        if a not in clean_aspects:
+            clean_aspects.append(a)
+
     base.update(
         {
             "interests": clean_interests,
@@ -68,6 +99,7 @@ def normalize_preferences(raw: dict | None) -> dict:
             "technical_areas": _str_list("technical_areas"),
             "focus_skills": _str_list("focus_skills"),
             "focus_projects": _str_list("focus_projects"),
+            "project_aspects": clean_aspects[:12],
             "placement_target": _opt_str("placement_target"),
             "experience_level": _opt_str("experience_level"),
             "behavioral_goals": _opt_str("behavioral_goals"),
@@ -83,7 +115,13 @@ def merge_preferences(existing: dict | None, update: dict | None) -> dict:
         return cur
     nxt = normalize_preferences({**cur, **{k: v for k, v in update.items() if v is not None}})
     # Empty lists in update should clear only when explicitly provided as list.
-    for key in ("interests", "technical_areas", "focus_skills", "focus_projects"):
+    for key in (
+        "interests",
+        "technical_areas",
+        "focus_skills",
+        "focus_projects",
+        "project_aspects",
+    ):
         if key in update and isinstance(update[key], list):
             nxt[key] = normalize_preferences({key: update[key]})[key]
     if "confirmed" in update:
@@ -94,6 +132,39 @@ def merge_preferences(existing: dict | None, update: dict | None) -> dict:
 def preferences_ready(prefs: dict | None) -> bool:
     p = normalize_preferences(prefs)
     return bool(p["interests"]) and bool(p["confirmed"])
+
+
+def next_goal_followup(prefs: dict | None) -> str | None:
+    """Next resume-aware follow-up step id, or None when details are complete."""
+    p = normalize_preferences(prefs)
+    interests = p["interests"]
+    if not interests:
+        return "interests"
+    if "technical" in interests and not p["target_role"]:
+        return "technical_role"
+    if "technical" in interests and not p["technical_areas"]:
+        return "technical_areas"
+    if "skill" in interests and not p["focus_skills"]:
+        return "skills"
+    if "project" in interests and not p["focus_projects"]:
+        return "projects"
+    if "project" in interests and p["focus_projects"] and not p["project_aspects"]:
+        return "project_aspects"
+    if "placement" in interests and not p["placement_target"]:
+        return "placement_target"
+    if "placement" in interests and not p["target_role"]:
+        return "placement_role"
+    if "behavioral" in interests and not (
+        p["experience_level"] or p["behavioral_goals"]
+    ):
+        return "behavioral"
+    return None
+
+
+def followups_complete(prefs: dict | None) -> bool:
+    return next_goal_followup(prefs) is None and bool(
+        normalize_preferences(prefs)["interests"]
+    )
 
 
 def summarize_preferences(prefs: dict | None) -> str:
@@ -112,6 +183,12 @@ def summarize_preferences(prefs: dict | None) -> str:
         lines.append("Skills to practice: " + ", ".join(p["focus_skills"]))
     if p["focus_projects"]:
         lines.append("Projects to discuss: " + ", ".join(p["focus_projects"]))
+    if p["project_aspects"]:
+        label_map = dict(PROJECT_ASPECT_OPTIONS)
+        lines.append(
+            "Project focus: "
+            + ", ".join(label_map.get(a, a) for a in p["project_aspects"])
+        )
     if p["placement_target"]:
         lines.append(f"Placement target: {p['placement_target']}")
     if p["experience_level"]:
@@ -126,7 +203,9 @@ def recommend_track_seeds(prefs: dict | None) -> list[dict]:
     p = normalize_preferences(prefs)
     seeds: list[dict] = []
     if "technical" in p["interests"]:
-        subject = p["target_role"] or (p["technical_areas"][0] if p["technical_areas"] else "Technical Interview")
+        subject = p["target_role"] or (
+            p["technical_areas"][0] if p["technical_areas"] else "Technical Interview"
+        )
         seeds.append({"track_type": "role" if p["target_role"] else "topic", "subject": subject})
     if "skill" in p["interests"]:
         for skill in p["focus_skills"][:3]:
@@ -155,7 +234,550 @@ def recommend_track_seeds(prefs: dict | None) -> list[dict]:
     return out[:6]
 
 
-GOALS_INTRO = (
-    "Your profile looks good! Now let's personalize your interview preparation. "
-    "What would you like to focus on first? You can pick more than one."
-)
+def _titles(summary: list[dict], category: str) -> list[str]:
+    out: list[str] = []
+    for item in summary or []:
+        if item.get("category") != category:
+            continue
+        title = str(item.get("title") or "").strip()
+        if title and title not in out:
+            out.append(title)
+    return out
+
+
+def _split_techs(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        vals = [str(v).strip() for v in raw]
+    else:
+        text = str(raw).replace(";", ",").replace("/", ",")
+        vals = [p.strip() for p in text.split(",")]
+    out: list[str] = []
+    for v in vals:
+        if v and v not in out:
+            out.append(v[:80])
+    return out
+
+
+def _project_techs(item: dict) -> list[str]:
+    details = item.get("details") or {}
+    if not isinstance(details, dict):
+        return []
+    for key in ("technologies", "tech_stack", "stack", "tools"):
+        techs = _split_techs(details.get(key))
+        if techs:
+            return techs
+    return []
+
+
+def skill_titles(summary: list[dict]) -> list[str]:
+    return _titles(summary, "skill")
+
+
+def project_titles(summary: list[dict]) -> list[str]:
+    return _titles(summary, "project")
+
+
+# Field families inferred from education/skill/project text — never a judgment.
+_FIELD_HINTS: list[tuple[str, tuple[str, ...]]] = [
+    (
+        "commerce",
+        (
+            "commerce",
+            "b.com",
+            "bcom",
+            "m.com",
+            "accounting",
+            "finance",
+            "ca ",
+            "chartered",
+            "business administration",
+            "bba",
+            "mba",
+            "economics",
+        ),
+    ),
+    (
+        "physics",
+        ("physics", "astrophysics", "optics", "condensed matter", "particle physics"),
+    ),
+    (
+        "life_sciences",
+        (
+            "biology",
+            "biotech",
+            "biotechnology",
+            "microbiology",
+            "biochemistry",
+            "life science",
+            "pharmacy",
+            "nursing",
+            "medicine",
+            "mbbs",
+        ),
+    ),
+    (
+        "mathematics",
+        ("mathematics", "maths", "statistics", "actuarial", "pure math"),
+    ),
+    (
+        "arts",
+        (
+            "arts",
+            "ba ",
+            "b.a",
+            "literature",
+            "history",
+            "sociology",
+            "psychology",
+            "philosophy",
+            "journalism",
+            "media",
+        ),
+    ),
+    (
+        "computer_science",
+        (
+            "computer science",
+            "computer engineering",
+            "information technology",
+            "software",
+            "cse",
+            "b.tech cse",
+            "btech cse",
+            "mca",
+            "data science",
+            "artificial intelligence",
+        ),
+    ),
+    (
+        "engineering",
+        (
+            "engineering",
+            "mechanical",
+            "electrical",
+            "civil",
+            "electronics",
+            "chemical eng",
+            "b.tech",
+            "btech",
+            "be ",
+            "b.e",
+        ),
+    ),
+]
+
+_FIELD_PREP: dict[str, list[str]] = {
+    "commerce": [
+        "Business analytics",
+        "Excel for analysis",
+        "SQL for business",
+        "Accounting fundamentals",
+        "Finance interviews",
+        "HR & behavioral",
+    ],
+    "physics": [
+        "Analytical reasoning",
+        "Research interviews",
+        "Scientific projects",
+        "Technical problem solving",
+        "HR & behavioral",
+    ],
+    "life_sciences": [
+        "Domain knowledge interviews",
+        "Research / lab projects",
+        "Analytical reasoning",
+        "HR & behavioral",
+    ],
+    "mathematics": [
+        "Quantitative aptitude",
+        "Analytical reasoning",
+        "Statistics interviews",
+        "Data analysis",
+        "HR & behavioral",
+    ],
+    "arts": [
+        "Communication interviews",
+        "HR & behavioral",
+        "Role-specific prep",
+        "Portfolio / projects",
+    ],
+    "computer_science": [
+        "Data Structures & Algorithms",
+        "Programming practice",
+        "DBMS / SQL",
+        "System Design",
+        "Project deep dive",
+        "HR & behavioral",
+    ],
+    "engineering": [
+        "Core engineering concepts",
+        "Project deep dive",
+        "Aptitude & reasoning",
+        "HR & behavioral",
+    ],
+    "general": [
+        "Skill practice",
+        "Project / experience stories",
+        "HR & behavioral",
+        "Role exploration",
+    ],
+}
+
+_FIELD_ROLES: dict[str, list[str]] = {
+    "commerce": [
+        "Business Analyst",
+        "Financial Analyst",
+        "Accountant",
+        "Operations Associate",
+    ],
+    "physics": [
+        "Research Assistant",
+        "Data Analyst",
+        "Technical Specialist",
+        "Graduate Trainee",
+    ],
+    "life_sciences": [
+        "Research Associate",
+        "Lab Analyst",
+        "Clinical Research Associate",
+        "Quality Analyst",
+    ],
+    "mathematics": [
+        "Data Analyst",
+        "Quantitative Analyst",
+        "Business Analyst",
+        "Actuarial Analyst",
+    ],
+    "arts": [
+        "Content Associate",
+        "HR Associate",
+        "Marketing Associate",
+        "Operations Associate",
+    ],
+    "computer_science": [
+        "Software Engineer Intern",
+        "Software Engineer",
+        "Backend Developer",
+        "Data Analyst",
+    ],
+    "engineering": [
+        "Graduate Engineer Trainee",
+        "Design Engineer",
+        "Operations Engineer",
+        "Software Engineer Intern",
+    ],
+    "general": [
+        "Graduate Trainee",
+        "Operations Associate",
+        "Business Analyst",
+        "I'm still exploring",
+    ],
+}
+
+
+def _vault_blob(summary: list[dict]) -> str:
+    parts: list[str] = []
+    for item in summary or []:
+        parts.append(str(item.get("title") or ""))
+        details = item.get("details") or {}
+        if isinstance(details, dict):
+            parts.extend(str(v) for v in details.values())
+    return " ".join(parts).lower()
+
+
+def infer_candidate_background(summary: list[dict]) -> dict:
+    """Lightweight field/experience signals from vault text — never a verdict."""
+    education = _titles(summary, "education")
+    skills = skill_titles(summary)
+    projects = project_titles(summary)
+    internships = _titles(summary, "internship")
+    achievements = _titles(summary, "achievement")
+    blob = _vault_blob(summary)
+
+    field_family = "general"
+    for family, keywords in _FIELD_HINTS:
+        if any(k in blob for k in keywords):
+            field_family = family
+            break
+
+    # B.Tech + programming skills → treat as CS even when degree text is generic.
+    cs_skill_signals = (
+        "python",
+        "java",
+        "javascript",
+        "typescript",
+        "react",
+        "django",
+        "node",
+        "c++",
+        "golang",
+        "rust",
+        "pytorch",
+        "tensorflow",
+    )
+    if field_family in ("engineering", "general") and any(
+        k in blob for k in cs_skill_signals
+    ):
+        field_family = "computer_science"
+
+    if internships and not projects and not skills:
+        experience_signal = "internship"
+    elif internships and (projects or skills):
+        experience_signal = "mixed"
+    elif projects or skills:
+        experience_signal = "skills_projects"
+    else:
+        experience_signal = "none"
+
+    return {
+        "field_family": field_family,
+        "education_titles": education[:4],
+        "skill_titles": skills[:8],
+        "project_titles": projects[:6],
+        "internship_titles": internships[:4],
+        "achievement_titles": achievements[:4],
+        "has_education": bool(education),
+        "has_skills": bool(skills),
+        "has_projects": bool(projects),
+        "has_internships": bool(internships),
+        "experience_signal": experience_signal,
+        "suggested_prep_topics": list(_FIELD_PREP.get(field_family, _FIELD_PREP["general"])),
+        "role_hints": list(_FIELD_ROLES.get(field_family, _FIELD_ROLES["general"])),
+    }
+
+
+def suggest_technical_areas(summary: list[dict]) -> list[str]:
+    """Resume-derived practice areas — field-aware, not CS-only."""
+    bg = infer_candidate_background(summary)
+    areas: list[str] = []
+    for skill in skill_titles(summary):
+        if skill not in areas:
+            areas.append(skill)
+    for item in summary or []:
+        if item.get("category") != "project":
+            continue
+        for tech in _project_techs(item):
+            if tech not in areas:
+                areas.append(tech)
+    blob = " ".join(a.lower() for a in areas)
+    extras: list[str] = []
+    if bg["field_family"] == "computer_science" or any(
+        k in blob for k in ("python", "java", "c++", "dsa", "algorithm", "react")
+    ):
+        if any(k in blob for k in ("python", "java", "c++", "dsa", "algorithm")):
+            extras.append("Data Structures & Algorithms")
+        if any(k in blob for k in ("system", "distributed", "backend", "microservice")):
+            extras.append("System Design")
+        if any(k in blob for k in ("sql", "postgres", "mysql", "mongodb", "database")):
+            extras.append("Databases / SQL")
+        if any(k in blob for k in ("ml", "machine learning", "pytorch", "tensorflow")):
+            extras.append("ML fundamentals")
+    for topic in bg["suggested_prep_topics"]:
+        if topic not in areas and topic not in extras:
+            extras.append(topic)
+    for e in extras:
+        if e not in areas:
+            areas.append(e)
+    return areas[:16]
+
+
+def suggest_roles(summary: list[dict]) -> list[str]:
+    """Cautious role suggestions — match field family; never force SWE."""
+    bg = infer_candidate_background(summary)
+    roles: list[str] = []
+    for title in _titles(summary, "internship"):
+        cleaned = title.strip()
+        if cleaned and cleaned not in roles:
+            roles.append(cleaned[:80])
+
+    skills_blob = " ".join(s.lower() for s in skill_titles(summary))
+    for item in summary or []:
+        if item.get("category") == "project":
+            skills_blob += " " + " ".join(t.lower() for t in _project_techs(item))
+            purpose = str((item.get("details") or {}).get("purpose") or "").lower()
+            skills_blob += " " + purpose
+
+    for keywords, role in _SKILL_ROLE_HINTS:
+        if any(k in skills_blob for k in keywords) and role not in roles:
+            roles.append(role)
+        if len(roles) >= 8:
+            break
+
+    for fallback in bg["role_hints"]:
+        if fallback not in roles:
+            roles.append(fallback)
+    if "I'm still exploring" not in roles:
+        roles.append("I'm still exploring")
+    return roles[:8]
+
+
+def project_option_cards(summary: list[dict]) -> list[dict]:
+    """Structured project chips for the UI (label + optional subtitle from tech)."""
+    cards: list[dict] = []
+    for item in summary or []:
+        if item.get("category") != "project":
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        techs = _project_techs(item)
+        purpose = str((item.get("details") or {}).get("purpose") or "").strip()
+        subtitle = ", ".join(techs[:4]) if techs else (purpose[:100] if purpose else "")
+        cards.append(
+            {
+                "id": title,
+                "label": title,
+                "subtitle": subtitle,
+                "technologies": techs,
+            }
+        )
+    return cards
+
+
+def build_resume_goal_options(vault_summary: list[dict]) -> dict:
+    """Structured dynamic options for GET /onboarding/state (no new routes)."""
+    skills = skill_titles(vault_summary)
+    projects = project_titles(vault_summary)
+    bg = infer_candidate_background(vault_summary)
+    return {
+        "goal_interest_options": [
+            {"id": i, "label": label} for i, label in GOAL_INTERESTS
+        ],
+        "suggested_skills": skills,
+        "suggested_projects": projects,
+        "suggested_roles": suggest_roles(vault_summary),
+        "suggested_technical_areas": suggest_technical_areas(vault_summary),
+        "suggested_prep_topics": bg["suggested_prep_topics"],
+        "project_options": project_option_cards(vault_summary),
+        "project_aspect_options": [
+            {"id": i, "label": label} for i, label in PROJECT_ASPECT_OPTIONS
+        ],
+        "candidate_background": bg,
+        "resume_highlights": {
+            "skills": skills[:6],
+            "projects": projects[:4],
+            "education": _titles(vault_summary, "education")[:2],
+            "internships": _titles(vault_summary, "internship")[:2],
+            "field_family": bg["field_family"],
+        },
+    }
+
+
+def goals_intro_message(vault_summary: list[dict] | None = None) -> str:
+    """Warm goal-discovery opener — 1–2 resume hooks, one question."""
+    summary = vault_summary or []
+    skills = skill_titles(summary)
+    projects = project_titles(summary)
+
+    if projects and skills:
+        return (
+            f"Your “{projects[0]}” project caught my eye — and {skills[0]} shows up a lot "
+            f"in your profile. 🚀 Let's personalize your prep.\n\n"
+            f"{GOALS_INTRO_MARKER} first?"
+        )
+    if projects:
+        return (
+            f"Your “{projects[0]}” project looks like a great interview story. 🚀 "
+            f"Let's personalize your prep.\n\n{GOALS_INTRO_MARKER} first?"
+        )
+    if skills:
+        preview = " and ".join(skills[:2])
+        return (
+            f"Nice — I see {preview} in your profile. "
+            f"Let's personalize your prep.\n\n{GOALS_INTRO_MARKER} first?"
+        )
+    return (
+        "Your profile looks solid! Let's personalize your interview prep.\n\n"
+        f"{GOALS_INTRO_MARKER} first?"
+    )
+
+
+# Backward-compatible alias used by older checks / imports.
+GOALS_INTRO = goals_intro_message([])
+
+
+def goals_followup_reply(
+    prefs: dict | None,
+    vault_summary: list[dict] | None = None,
+) -> str:
+    """Deterministic coach follow-up when the LLM is unavailable."""
+    p = normalize_preferences(prefs)
+    summary = vault_summary or []
+    skills = skill_titles(summary)
+    projects = project_titles(summary)
+    areas = suggest_technical_areas(summary)
+    roles = suggest_roles(summary)
+
+    if not p["interests"]:
+        return "Pick a focus above and I’ll tailor the next question to your resume. 🙂"
+
+    if "technical" in p["interests"] and not p.get("target_role"):
+        if roles:
+            return (
+                f"Awesome! 💻 Which role are you aiming for — "
+                f"{', '.join(roles[:2])}, or something else?"
+            )
+        return "Awesome! 💻 Which role are you aiming for?"
+    if "technical" in p["interests"] and not p.get("technical_areas"):
+        if areas:
+            preview = " and ".join(areas[:2])
+            return (
+                f"Nice — I noticed {preview} in your resume. "
+                "Which area would you like to sharpen first?"
+            )
+        return "Which technical area should we sharpen first?"
+    if "skill" in p["interests"] and not p.get("focus_skills"):
+        if skills:
+            preview = " and ".join(skills[:2])
+            return (
+                f"Awesome! 🧠 I noticed {preview} in your resume. "
+                "Which one would you like to practice first?"
+            )
+        return "Which skill would you like to practice first?"
+    if "project" in p["interests"] and not p.get("focus_projects"):
+        if projects:
+            return (
+                f"Your “{projects[0]}” project caught my attention! 🚀 "
+                "Want to prep that one, or another project from your resume?"
+            )
+        return "Which project should we deep-dive for interviews?"
+    if (
+        "project" in p["interests"]
+        and p.get("focus_projects")
+        and not p.get("project_aspects")
+    ):
+        chosen = p["focus_projects"][0]
+        card = next(
+            (c for c in project_option_cards(summary) if c["label"] == chosen),
+            None,
+        )
+        if card and card.get("technologies"):
+            tech = ", ".join(card["technologies"][:2])
+            return (
+                f"Love it — “{chosen}” with {tech}. 🚀 "
+                "Want to practice architecture, implementation, or the challenges you solved?"
+            )
+        return (
+            f"Great choice — “{chosen}”! "
+            "Want to practice architecture, implementation, or the challenges you solved?"
+        )
+    if "placement" in p["interests"] and not p.get("placement_target"):
+        return "Nice! 🎯 Internship, full-time, or both?"
+    if "placement" in p["interests"] and not p.get("target_role"):
+        if roles:
+            return (
+                f"Got it. Which role are you targeting — "
+                f"{', '.join(roles[:2])}, or type your own?"
+            )
+        return "Which role are you targeting? You can also type a custom one."
+    if "behavioral" in p["interests"] and not (
+        p.get("experience_level") or p.get("behavioral_goals")
+    ):
+        return "Cool 💬 What HR/behavioral scenarios should we practice for?"
+    focus = ", ".join(GOAL_INTEREST_LABELS.get(i, i) for i in p["interests"])
+    return (
+        f"You're set — {focus}. "
+        "Hit Start Preparing when you're ready, or tell me if you want to tweak anything."
+    )

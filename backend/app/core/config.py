@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     litellm_url: str = "http://localhost:4000"
     litellm_master_key: str = "sk-local-master"
     llm_client_timeout: int = 90
+    # Soft per-user cap for onboarding chat turns (rolling window).
+    onboarding_chat_rpm: int = 20
+    onboarding_chat_rpm_window_seconds: int = 60
     interview_max_turns: int = 15
     # Answers shorter than this (after strip) skip the LLM and score as none.
     eval_min_answer_chars: int = 12

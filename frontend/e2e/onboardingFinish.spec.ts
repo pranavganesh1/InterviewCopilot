@@ -100,7 +100,7 @@ test("completed onboarding shows Go to Tracks, not Finish", async ({
   );
 
   await page.goto("/onboarding");
-  await expect(page.getByTestId("onboarding-finished-banner")).toBeVisible();
+  await expect(page.getByTestId("onboarding-status-chip")).toContainText("Onboarding complete");
   await expect(page.getByTestId("finish-onboarding")).toHaveCount(0);
   await expect(page.getByTestId("go-to-tracks")).toBeVisible();
   await page.getByRole("link", { name: "Onboarding" }).click();
