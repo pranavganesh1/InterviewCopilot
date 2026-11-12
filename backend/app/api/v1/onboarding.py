@@ -122,6 +122,13 @@ async def chat(
             status_code=503,
             detail="The interview coach is temporarily busy. Please retry in about a minute.",
         ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Something went wrong saving your reply. Please try again.",
+        ) from exc
 
 
 @router.post("/starter")

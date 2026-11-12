@@ -16,6 +16,24 @@ import { VaultSidebar } from "../components/VaultSidebar";
 
 const NEAR_BOTTOM_PX = 120;
 const TEXTAREA_MAX_LINES = 5;
+const CHAT_TIMEOUT_MS = 30_000;
+const STILL_THINKING_MS = 8_000;
+const IDLE_NUDGE_MS = 45_000;
+const IDLE_NUDGE_SECOND_MS = 120_000;
+const EMPTY_REPLY_FALLBACK =
+  "I didn't catch that. Could you say it a different way?";
+const DEFAULT_DOC_TITLE = "InterviewCopilot";
+
+type ToastKind = "info" | "success" | "error";
+type ToastItem = {
+  id: string;
+  kind: ToastKind;
+  title: string;
+  detail?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  ms: number;
+};
 
 function isNearBottom(el: HTMLElement, threshold = NEAR_BOTTOM_PX): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
@@ -179,6 +197,65 @@ export default function OnboardingPage() {
   const [vaultChips, setVaultChips] = useState<
     { id: string; title: string }[]
   >([]);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [stillThinking, setStillThinking] = useState(false);
+  const [pendingUser, setPendingUser] = useState<{
+    content: string;
+    status: "sending" | "failed";
+  } | null>(null);
+  const [emptyFallback, setEmptyFallback] = useState<string | null>(null);
+  const [nudge, setNudge] = useState<{
+    text: string;
+    chips: string[];
+  } | null>(null);
+  const [nudgeCount, setNudgeCount] = useState(0);
+  const [activityEpoch, setActivityEpoch] = useState(0);
+  const lastActivityRef = useRef(Date.now());
+  const baseTitleRef = useRef(
+    typeof document !== "undefined" ? document.title || DEFAULT_DOC_TITLE : DEFAULT_DOC_TITLE,
+  );
+  const toastTimers = useRef<Map<string, number>>(new Map());
+
+  const bumpActivity = () => {
+    lastActivityRef.current = Date.now();
+    setActivityEpoch((n) => n + 1);
+  };
+
+  const pushToast = (
+    kind: ToastKind,
+    title: string,
+    detail?: string,
+    action?: { label: string; onAction: () => void },
+  ) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const ms = kind === "error" ? 8000 : 5000;
+    setToasts((prev) =>
+      [
+        ...prev,
+        {
+          id,
+          kind,
+          title,
+          detail,
+          actionLabel: action?.label,
+          onAction: action?.onAction,
+          ms,
+        },
+      ].slice(-3),
+    );
+    const timer = window.setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+      toastTimers.current.delete(id);
+    }, ms);
+    toastTimers.current.set(id, timer);
+  };
+
+  const dismissToast = (id: string) => {
+    const t = toastTimers.current.get(id);
+    if (t) window.clearTimeout(t);
+    toastTimers.current.delete(id);
+    setToasts((prev) => prev.filter((x) => x.id !== id));
+  };
 
   const state = useQuery({
     queryKey: ["onboarding-state"],
@@ -190,10 +267,16 @@ export default function OnboardingPage() {
       api<ChatResult>("/onboarding/chat", {
         method: "POST",
         body: JSON.stringify({ message }),
+        signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
       }),
     onSuccess: (data) => {
       setFailedMessage(null);
+      setPendingUser(null);
+      setStillThinking(false);
       setInput("");
+      setEmptyFallback(
+        (data.reply || "").trim() ? null : EMPTY_REPLY_FALLBACK,
+      );
       const added = [
         ...(data.items_created ?? []),
         ...(data.items_updated ?? []),
@@ -202,12 +285,33 @@ export default function OnboardingPage() {
         .map((item) => ({ id: item.id, title: item.title }));
       if (added.length) {
         setVaultChips(added.slice(0, 4));
+        pushToast(
+          "success",
+          `Saved to your profile: ${added[0].title}`,
+        );
       }
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        document.title = "(1) New reply from Aiko";
+      }
+      setNudge(null);
+      bumpActivity();
       qc.invalidateQueries({ queryKey: ["onboarding-state"] });
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    onError: (_err, message) => {
+    onError: (err, message) => {
       setFailedMessage(message);
+      setPendingUser({ content: message, status: "failed" });
+      setStillThinking(false);
+      const detail =
+        err instanceof Error ? err.message : "Please try again.";
+      pushToast("error", "Message failed", detail, {
+        label: "Retry",
+        onAction: () => {
+          setPendingUser({ content: message, status: "sending" });
+          setFailedMessage(null);
+          chat.mutate(message);
+        },
+      });
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
   });
@@ -217,6 +321,7 @@ export default function OnboardingPage() {
       api<ChatResult>("/onboarding/starter", {
         method: "POST",
         body: JSON.stringify({ starter_id: starterId }),
+        signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
       }),
     onSuccess: () => {
       setShowStartersOverride(true);
@@ -247,9 +352,21 @@ export default function OnboardingPage() {
         welcome_seeded?: boolean;
       }>("/vault/resume", { method: "POST", body: form });
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       setShowStartersOverride(true);
       qc.invalidateQueries({ queryKey: ["onboarding-state"] });
+      const n = data.items_created?.length ?? 0;
+      pushToast(
+        "success",
+        n ? `Resume uploaded · ${n} item${n === 1 ? "" : "s"}` : "Resume uploaded",
+      );
+    },
+    onError: (err) => {
+      pushToast(
+        "error",
+        "Resume upload failed",
+        err instanceof Error ? err.message : undefined,
+      );
     },
   });
 
@@ -274,10 +391,87 @@ export default function OnboardingPage() {
       api<OnboardingState>("/onboarding/complete", { method: "POST" }),
     onSuccess: async (data) => {
       qc.setQueryData(["onboarding-state"], data);
+      pushToast("success", "Onboarding finished");
       await refresh();
       navigate("/", { replace: true });
     },
   });
+
+  useEffect(() => {
+    if (!chat.isPending) {
+      setStillThinking(false);
+      return;
+    }
+    const t = window.setTimeout(() => setStillThinking(true), STILL_THINKING_MS);
+    return () => window.clearTimeout(t);
+  }, [chat.isPending]);
+
+  useEffect(() => {
+    const onOnline = () => pushToast("success", "Connection restored");
+    const onOffline = () =>
+      pushToast("error", "Connection lost", "Messages may not send until you're back online.");
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        document.title = baseTitleRef.current;
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  const suggestedProjectsRef = useRef<string[]>([]);
+  const suggestedSkillsRef = useRef<string[]>([]);
+  useEffect(() => {
+    suggestedProjectsRef.current = state.data?.suggested_projects ?? [];
+    suggestedSkillsRef.current = state.data?.suggested_skills ?? [];
+  }, [state.data?.suggested_projects, state.data?.suggested_skills]);
+
+  useEffect(() => {
+    if (nudgeCount >= 2 || nudge) return;
+    if (chat.isPending || starter.isPending) return;
+
+    const wait = nudgeCount === 0 ? IDLE_NUDGE_MS : IDLE_NUDGE_SECOND_MS;
+    let cancelled = false;
+
+    const showNudge = () => {
+      if (cancelled) return;
+      if (document.visibilityState === "hidden") return;
+      if (chat.isPending || starter.isPending) return;
+      const projects = suggestedProjectsRef.current;
+      const skills = suggestedSkillsRef.current;
+      const chips: string[] = [];
+      if (projects[0]) chips.push(`Tell me about my ${projects[0]} project`);
+      if (skills[0]) chips.push(`I'd like to practise ${skills[0]}`);
+      if (chips.length < 2) chips.push("Add a project");
+      if (chips.length < 2) chips.push("Add a skill");
+      setNudge({
+        text: "Still here — want a gentle prompt?",
+        chips: chips.slice(0, 2),
+      });
+      setNudgeCount((c) => c + 1);
+    };
+
+    const id = window.setTimeout(showNudge, wait);
+    const onVis = () => {
+      if (document.visibilityState !== "visible" || cancelled) return;
+      if (Date.now() - lastActivityRef.current >= wait) showNudge();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [activityEpoch, chat.isPending, starter.isPending, nudge, nudgeCount]);
 
   const busy =
     chat.isPending || starter.isPending || saveGoals.isPending || finish.isPending;
@@ -373,9 +567,13 @@ export default function OnboardingPage() {
     if (!message || busy) return;
     chat.reset();
     setFailedMessage(null);
+    setEmptyFallback(null);
+    setNudge(null);
+    bumpActivity();
     forceScrollRef.current = true;
     stickToBottomRef.current = true;
     setShowNewPill(false);
+    setPendingUser({ content: message, status: "sending" });
     // Keep the message visible until success so failures can retry without retyping.
     setInput(message);
     chat.mutate(message);
@@ -483,8 +681,19 @@ export default function OnboardingPage() {
   ]);
 
   const baseMessages = state.data?.messages ?? [];
+  const serverHasPendingUser =
+    pendingUser &&
+    baseMessages.some(
+      (m) => m.role === "user" && m.content === pendingUser.content,
+    );
   const messages = [
     ...baseMessages,
+    ...(pendingUser && !serverHasPendingUser
+      ? [{ role: "user", content: pendingUser.content, _local: true }]
+      : []),
+    ...(emptyFallback && !chat.isPending
+      ? [{ role: "assistant", content: emptyFallback, _fallback: true }]
+      : []),
     ...(chat.isPending || starter.isPending || saveGoals.isPending
       ? [
           {
@@ -850,16 +1059,42 @@ export default function OnboardingPage() {
                         ) : null}
                       </div>
                     )}
-                    <div
-                      className={`min-w-0 break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm [overflow-wrap:anywhere] ${
-                        m.role === "user"
-                          ? "rounded-br-md bg-accent text-white"
-                          : m.role === "pending"
-                            ? "rounded-bl-md border border-line bg-accent-soft/50 text-ink-soft"
-                            : "rounded-bl-md border border-line bg-page/80 text-ink"
-                      }`}
-                    >
-                      {m.role === "pending" ? <TypingIndicator /> : m.content}
+                    <div className="min-w-0">
+                      <div
+                        className={`min-w-0 break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm [overflow-wrap:anywhere] ${
+                          m.role === "user"
+                            ? "rounded-br-md bg-accent text-white"
+                            : m.role === "pending"
+                              ? "rounded-bl-md border border-line bg-accent-soft/50 text-ink-soft"
+                              : "rounded-bl-md border border-line bg-page/80 text-ink"
+                        }`}
+                      >
+                        {m.role === "pending" ? (
+                          <div>
+                            <TypingIndicator />
+                            {stillThinking && chat.isPending && (
+                              <p
+                                className="mt-1.5 text-[11px] text-ink-soft"
+                                data-testid="still-thinking"
+                              >
+                                Still thinking… this can take a moment
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          m.content
+                        )}
+                      </div>
+                      {m.role === "user" &&
+                        pendingUser?.status === "failed" &&
+                        pendingUser.content === m.content && (
+                          <p
+                            className="mt-1 text-right text-[11px] font-medium text-amber-700"
+                            data-testid="message-not-delivered"
+                          >
+                            Not delivered
+                          </p>
+                        )}
                     </div>
                   </div>
                 );
@@ -979,6 +1214,42 @@ export default function OnboardingPage() {
             data-testid="onboarding-chat-composer"
             className="shrink-0 border-t border-line/70 bg-surface/90 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"
           >
+            {nudge && !busy && (
+              <div
+                data-testid="idle-nudge"
+                className="mb-2 rounded-2xl border border-accent/20 bg-accent-soft/60 px-3 py-2"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-xs text-ink">{nudge.text}</p>
+                  <button
+                    type="button"
+                    aria-label="Dismiss suggestion"
+                    className="text-ink-faint hover:text-ink"
+                    onClick={() => setNudge(null)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {nudge.chips.map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      data-testid="idle-nudge-chip"
+                      className="min-h-9 rounded-full border border-accent/25 bg-surface px-2.5 text-[11px] font-medium text-accent-strong focus-visible:outline-2 focus-visible:outline-accent"
+                      onClick={() => {
+                        setInput(chip);
+                        setNudge(null);
+                        bumpActivity();
+                        requestAnimationFrame(() => textareaRef.current?.focus());
+                      }}
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {showQuickChips && (
               <div className="mb-2 space-y-2">
                 {startersVisible && (
@@ -1084,8 +1355,13 @@ export default function OnboardingPage() {
                 ref={textareaRef}
                 rows={1}
                 value={input}
-                onChange={(e) => setInput(e.target.value.slice(0, 4000))}
+                onChange={(e) => {
+                  setInput(e.target.value.slice(0, 4000));
+                  if (nudge) setNudge(null);
+                  bumpActivity();
+                }}
                 onKeyDown={(e) => {
+                  bumpActivity();
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     send();
@@ -1150,6 +1426,59 @@ export default function OnboardingPage() {
             resumePanel={resumePanel}
           />
         </aside>
+      </div>
+
+      <div
+        className="pointer-events-none fixed inset-x-3 top-[max(0.75rem,env(safe-area-inset-top))] z-50 flex flex-col items-stretch gap-2 sm:inset-x-auto sm:right-4 sm:left-auto sm:w-80 lg:top-16"
+        data-testid="toast-stack"
+      >
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            role={t.kind === "error" ? "alert" : "status"}
+            aria-live={t.kind === "error" ? "assertive" : "polite"}
+            data-testid={`toast-${t.kind}`}
+            className="coach-toast pointer-events-auto flex items-start gap-2 rounded-2xl border border-line/80 bg-surface/90 px-3 py-2.5 text-sm shadow-card backdrop-blur-md"
+            onMouseEnter={() => {
+              const timer = toastTimers.current.get(t.id);
+              if (timer) window.clearTimeout(timer);
+            }}
+            onMouseLeave={() => {
+              const timer = window.setTimeout(() => dismissToast(t.id), t.ms);
+              toastTimers.current.set(t.id, timer);
+            }}
+          >
+            <span className="mt-0.5 text-base" aria-hidden>
+              {t.kind === "success" ? "✓" : t.kind === "error" ? "!" : "i"}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-ink">{t.title}</p>
+              {t.detail && (
+                <p className="mt-0.5 text-xs text-ink-soft">{t.detail}</p>
+              )}
+              {t.actionLabel && t.onAction && (
+                <button
+                  type="button"
+                  className="mt-1 text-xs font-semibold text-accent-strong underline-offset-2 hover:underline"
+                  onClick={() => {
+                    t.onAction?.();
+                    dismissToast(t.id);
+                  }}
+                >
+                  {t.actionLabel}
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              aria-label="Dismiss notification"
+              className="text-ink-faint hover:text-ink"
+              onClick={() => dismissToast(t.id)}
+            >
+              ×
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );
