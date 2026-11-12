@@ -8,16 +8,23 @@ from app.agents.onboarding import (
     derive_phase,
     vault_is_ready,
 )
+from app.core.logging import get_logger
 from app.models.user import User
 from app.services import conversation_store
 from app.gateway.llm import LLMGatewayError
 from app.services.preparation_goals import (
-    GOALS_INTRO,
+    GOALS_INTRO_MARKER,
     GOAL_INTERESTS,
+    build_resume_goal_options,
+    followups_complete,
     goals_followup_reply,
+    goals_intro_message,
     merge_preferences,
+    next_goal_followup,
     preferences_ready,
+    project_titles,
     recommend_track_seeds,
+    skill_titles,
     summarize_preferences,
 )
 from app.services.preparation_review import (
@@ -33,6 +40,8 @@ from app.services.vault_service import (
     upsert_extracted_items,
     vault_summary,
 )
+
+log = get_logger(__name__)
 
 CONVERSATION_STARTERS: dict[str, dict[str, str]] = {
     "ai_interview": {
@@ -78,11 +87,11 @@ async def run_onboarding_turn(**kwargs):
 
 
 def _skill_titles(summary: list[dict]) -> list[str]:
-    return [i["title"] for i in summary if i.get("category") == "skill"]
+    return skill_titles(summary)
 
 
 def _project_titles(summary: list[dict]) -> list[str]:
-    return [i["title"] for i in summary if i.get("category") == "project"]
+    return project_titles(summary)
 
 
 async def chat(
@@ -108,6 +117,7 @@ async def chat(
         vault_summary=summary, preferences=prefs, already_finished=already_finished
     )
 
+    resume_options = build_resume_goal_options(summary)
     graph = build_onboarding_graph(turn_runner=run_onboarding_turn)
     result = await graph.ainvoke(
         {
@@ -117,8 +127,11 @@ async def chat(
             "possible_duplicates": duplicates,
             "profile_gaps": gaps,
             "preparation_preferences": prefs,
-            "available_skills": _skill_titles(summary),
-            "available_projects": _project_titles(summary),
+            "available_skills": resume_options.get("suggested_skills")
+            or _skill_titles(summary),
+            "available_projects": resume_options.get("suggested_projects")
+            or _project_titles(summary),
+            "resume_goal_options": resume_options,
             "conversation_mode": mode,
             "already_finished": already_finished,
             "phase": phase,
@@ -147,15 +160,6 @@ async def chat(
     phase_out = turn.get("phase") or derive_phase(
         vault_summary=refreshed, preferences=prefs, already_finished=already_finished
     )
-    # Seed goals intro once when entering goals with empty interests.
-    if (
-        phase_out == "goals"
-        and not prefs.get("interests")
-        and GOALS_INTRO not in turn["reply"]
-    ):
-        # UI also shows the menu; keep agent reply as-is.
-        pass
-
     return {
         "reply": turn["reply"],
         "items_created": [
@@ -263,7 +267,15 @@ async def save_goals(
             request_id=request_id,
             already_finished=already_finished,
         )
-    except LLMGatewayError:
+    except Exception as exc:
+        if not isinstance(exc, LLMGatewayError):
+            log.error(
+                "save_goals_coach_failed",
+                request_id=request_id,
+                user_id=str(user.id),
+                error=str(exc)[:200],
+                exc_info=True,
+            )
         history = await conversation_store.get_messages(mongo_db, str(user.id), limit=4)
         last = history[-1] if history else None
         if not (
@@ -274,11 +286,11 @@ async def save_goals(
             await conversation_store.append_message(
                 mongo_db, str(user.id), "user", user_line
             )
-        reply = goals_followup_reply(prefs)
+        summary = await vault_summary(db, user.id)
+        reply = goals_followup_reply(prefs, summary)
         await conversation_store.append_message(
             mongo_db, str(user.id), "assistant", reply
         )
-        summary = await vault_summary(db, user.id)
         phase = derive_phase(
             vault_summary=summary,
             preferences=prefs,
@@ -376,9 +388,10 @@ async def ensure_goals_intro(
     if prefs.get("interests") or prefs.get("confirmed"):
         return False
     messages = await conversation_store.get_messages(mongo_db, str(user.id), limit=30)
-    if any(GOALS_INTRO in (m.get("content") or "") for m in messages):
+    if any(GOALS_INTRO_MARKER in (m.get("content") or "") for m in messages):
         return False
-    await conversation_store.append_message(mongo_db, str(user.id), "assistant", GOALS_INTRO)
+    intro = goals_intro_message(summary)
+    await conversation_store.append_message(mongo_db, str(user.id), "assistant", intro)
     return True
 
 
@@ -584,15 +597,14 @@ async def state_extras(db: AsyncSession, mongo_db: AsyncIOMotorDatabase, user: U
     review = None
     if finished:
         review = await get_profile_review_payload(db, mongo_db, user, ensure=True)
+    resume_options = build_resume_goal_options(summary)
     return {
         "phase": phase,
         "show_goal_menu": phase == "goals" and not prefs.get("interests"),
         "preparation_preferences": prefs,
-        "goal_interest_options": [
-            {"id": i, "label": label} for i, label in GOAL_INTERESTS
-        ],
-        "suggested_skills": _skill_titles(summary),
-        "suggested_projects": _project_titles(summary),
+        **resume_options,
+        "next_goal_followup": next_goal_followup(prefs),
+        "followups_complete": followups_complete(prefs),
         "recommended_tracks": recommend_track_seeds(prefs),
         "preparation_summary": summarize_preferences(prefs),
         "goals_ready": preferences_ready(prefs) or finished,

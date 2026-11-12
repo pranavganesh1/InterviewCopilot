@@ -269,10 +269,29 @@ export default function OnboardingPage() {
       return ["I'm ready — ask me about my background", "Start with my strongest project"];
     }
     if (mode === "career_goal") {
+      const roles = (state.data?.suggested_roles ?? []).slice(0, 2);
+      if (roles.length) {
+        return [
+          ...roles.map((r) => `I'm targeting ${r}`),
+          "Help me prepare for technical rounds",
+        ];
+      }
+      const skills = (state.data?.suggested_skills ?? []).slice(0, 2);
+      if (skills.length) {
+        return [
+          `I want to practice ${skills.join(" and ")}`,
+          "Help me prepare for technical rounds",
+        ];
+      }
       return ["I want a software engineering internship", "Help me prepare for technical rounds"];
     }
     return [];
-  }, [state.data?.conversation_mode, state.data?.suggested_skills, state.data?.suggested_projects]);
+  }, [
+    state.data?.conversation_mode,
+    state.data?.suggested_skills,
+    state.data?.suggested_projects,
+    state.data?.suggested_roles,
+  ]);
 
   const messages = [
     ...(state.data?.messages ?? []),
@@ -448,10 +467,13 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {(chat.error instanceof Error || starter.error instanceof Error) && (
+            {(chat.error instanceof Error ||
+              starter.error instanceof Error ||
+              saveGoals.error instanceof Error) && (
               <p className="text-sm text-red-600">
                 {(chat.error as Error | null)?.message ||
-                  (starter.error as Error | null)?.message}
+                  (starter.error as Error | null)?.message ||
+                  (saveGoals.error as Error | null)?.message}
               </p>
             )}
             <div ref={bottomRef} />
@@ -464,6 +486,13 @@ export default function OnboardingPage() {
                 preferences={prefs}
                 suggestedSkills={state.data?.suggested_skills ?? []}
                 suggestedProjects={state.data?.suggested_projects ?? []}
+                suggestedRoles={state.data?.suggested_roles ?? []}
+                suggestedTechnicalAreas={state.data?.suggested_technical_areas ?? []}
+                projectOptions={state.data?.project_options ?? []}
+                projectAspectOptions={state.data?.project_aspect_options ?? []}
+                resumeHighlights={state.data?.resume_highlights}
+                nextGoalFollowup={state.data?.next_goal_followup}
+                followupsComplete={state.data?.followups_complete}
                 phase={phase}
                 showGoalMenu={Boolean(state.data?.show_goal_menu) || !prefs?.interests?.length}
                 goalsReady={goalsReady}

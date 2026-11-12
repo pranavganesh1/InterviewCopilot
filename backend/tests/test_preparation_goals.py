@@ -11,7 +11,13 @@ from app.main import create_app
 from app.models.user import User
 from app.models.vault import VaultItem
 from app.services.preparation_goals import (
+    GOALS_INTRO_MARKER,
+    build_resume_goal_options,
+    followups_complete,
+    goals_followup_reply,
+    goals_intro_message,
     merge_preferences,
+    next_goal_followup,
     recommend_track_seeds,
     preferences_ready,
 )
@@ -32,6 +38,56 @@ def test_merge_and_recommend():
     subjects = [s["subject"] for s in seeds]
     assert "Python" in subjects
     assert any("QCGNN" in s for s in subjects)
+
+
+def test_resume_goal_options_and_followups():
+    summary = [
+        {
+            "category": "skill",
+            "title": "Python",
+            "details": {},
+        },
+        {
+            "category": "skill",
+            "title": "SQL",
+            "details": {},
+        },
+        {
+            "category": "project",
+            "title": "QCGNN",
+            "details": {
+                "technologies": "quantum computing, graph neural networks, Python",
+                "purpose": "research prototype",
+            },
+        },
+        {"category": "education", "title": "B.Tech CSE", "details": {}},
+        {"category": "internship", "title": "ML Intern", "details": {}},
+    ]
+    opts = build_resume_goal_options(summary)
+    assert "Python" in opts["suggested_skills"]
+    assert "QCGNN" in opts["suggested_projects"]
+    assert any(p["label"] == "QCGNN" for p in opts["project_options"])
+    assert "ML Intern" in opts["suggested_roles"]
+    assert opts["project_aspect_options"]
+    assert GOALS_INTRO_MARKER in goals_intro_message(summary)
+    assert "QCGNN" in goals_intro_message(summary)
+
+    prefs = merge_preferences(None, {"interests": ["project"]})
+    reply = goals_followup_reply(prefs, summary)
+    assert "QCGNN" in reply
+    assert next_goal_followup(prefs) == "projects"
+    assert followups_complete(prefs) is False
+
+    prefs = merge_preferences(
+        prefs, {"focus_projects": ["QCGNN"], "project_aspects": []}
+    )
+    reply2 = goals_followup_reply(prefs, summary)
+    assert "architecture" in reply2.lower() or "challenges" in reply2.lower()
+    assert next_goal_followup(prefs) == "project_aspects"
+
+    prefs = merge_preferences(prefs, {"project_aspects": ["architecture"]})
+    assert next_goal_followup(prefs) is None
+    assert followups_complete(prefs) is True
 
 
 @pytest.mark.asyncio

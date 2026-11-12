@@ -686,7 +686,7 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <label className="relative min-w-0 flex-1">
@@ -895,52 +895,55 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          <div className="rounded-lg border border-line bg-white p-5">
-            <h2 className="text-sm font-semibold text-ink">
+          <div className="rounded-xl border border-line bg-white p-3 shadow-sm">
+            <h2 className="text-[13px] font-semibold tracking-tight text-ink">
               Interview Progress
             </h2>
-            <div className="mt-4 flex items-center gap-4">
-              <ProgressRing value={avgScore} />
-              <ul className="space-y-1.5 text-sm text-ink-soft">
-                <li>
-                  <span className="font-semibold text-ink">
-                    {interviewsTaken}
-                  </span>{" "}
-                  Assessments
-                </li>
-                <li>
-                  <span className="font-semibold text-ink">
-                    {openSessions.isLoading ? "…" : inProgressCount}
-                  </span>{" "}
-                  In Progress
-                </li>
-                <li>
-                  <span className="font-semibold text-ink">
-                    {activeTrackCount}
-                  </span>{" "}
-                  Track{activeTrackCount === 1 ? "" : "s"}
-                </li>
-                <li>
-                  <span className="font-semibold text-ink">
-                    {weaknesses.isLoading
+            <div className="mt-2.5 flex items-center gap-3">
+              <ProgressRing value={avgScore} size="xs" />
+              <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-2 gap-y-1">
+                {[
+                  { label: "Assessments", value: interviewsTaken },
+                  {
+                    label: "In Progress",
+                    value: openSessions.isLoading ? "…" : inProgressCount,
+                  },
+                  {
+                    label: activeTrackCount === 1 ? "Track" : "Tracks",
+                    value: activeTrackCount,
+                  },
+                  {
+                    label: "Weak Areas",
+                    value: weaknesses.isLoading
                       ? "…"
-                      : weaknesses.data?.top_weak?.length ?? 0}
-                  </span>{" "}
-                  Weak areas
-                </li>
-              </ul>
+                      : weaknesses.data?.top_weak?.length ?? 0,
+                  },
+                ].map((stat) => (
+                  <div
+                    key={stat.label}
+                    className="min-w-0 rounded-md bg-page/80 px-2 py-1"
+                  >
+                    <p className="text-[11px] font-semibold tabular-nums leading-none text-ink">
+                      {stat.value}
+                    </p>
+                    <p className="mt-0.5 truncate text-[10px] leading-none text-ink-soft">
+                      {stat.label}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
             {(weaknesses.data?.top_weak?.length ?? 0) > 0 && (
-              <ul className="mt-3 space-y-1.5">
-                {weaknesses.data!.top_weak.map((row) => (
+              <ul className="mt-2 space-y-0.5 border-t border-line/70 pt-2">
+                {weaknesses.data!.top_weak.slice(0, 3).map((row) => (
                   <li
                     key={row.concept}
-                    className="flex min-w-0 items-center justify-between gap-2 text-xs text-ink-soft"
+                    className="flex min-w-0 items-center justify-between gap-2 text-[10px] text-ink-soft"
                   >
                     <span className="truncate" title={row.concept}>
                       {row.concept}
                     </span>
-                    <span className="shrink-0 font-semibold uppercase text-violet-700">
+                    <span className="shrink-0 font-medium uppercase tracking-wide text-ink-faint">
                       {row.status}
                     </span>
                   </li>
@@ -948,57 +951,65 @@ export default function DashboardPage() {
               </ul>
             )}
             {finishError && (
-              <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+              <p
+                role="alert"
+                className="mt-2 rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-700"
+              >
                 {finishError}
               </p>
             )}
             {openSessions.isLoading ? (
-              <p className="mt-3 text-xs text-ink-faint">Loading open interviews…</p>
+              <p className="mt-2 text-[11px] text-ink-faint">Loading open interviews…</p>
             ) : openList.length === 0 ? (
-              <p className="mt-3 text-[11px] text-ink-faint">
+              <p className="mt-2 text-[11px] text-ink-faint">
                 No unfinished interviews right now.
               </p>
             ) : (
-              <ul className="mt-3 space-y-3">
+              <ul className="mt-2 max-h-52 space-y-1.5 overflow-y-auto">
                 {openList.map((row) => {
                   const finishing =
                     finishOpen.isPending &&
                     finishOpen.variables?.session_id === row.session_id;
+                  const modeLabel =
+                    row.mode?.toLowerCase() === "guided"
+                      ? "Guided Mode"
+                      : "Strict Mode";
                   return (
                     <li
                       key={row.session_id}
-                      className="min-w-0 rounded-md border border-line bg-page/60 p-3"
+                      className="min-w-0 rounded-lg border border-line bg-white px-2.5 py-2"
                     >
-                      <p className="truncate text-sm font-medium text-ink">
+                      <p className="truncate text-[13px] font-medium leading-tight text-ink">
                         {row.track_subject}
                       </p>
-                      <p className="mt-0.5 text-xs text-ink-soft">
-                        Q{row.question_index}/{row.max_turns}
+                      <p className="mt-0.5 text-[10px] leading-tight text-ink-soft">
+                        Question {row.question_index}/{row.max_turns}
                         {" · "}
                         {row.answered_count} answered
                         {" · "}
-                        {row.mode}
+                        {modeLabel}
                       </p>
-                      <div className="mt-2 flex flex-wrap gap-2">
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         <Link
                           to={`/tracks/${row.track_id}/interview/${row.session_id}`}
-                          className="inline-flex rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-strong"
+                          className="inline-flex h-6 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-white hover:bg-accent-strong"
                         >
                           Resume
                         </Link>
                         <button
                           type="button"
                           disabled={finishOpen.isPending}
+                          title="Finish and get feedback"
                           onClick={() => {
                             setFinishError(null);
                             finishOpen.mutate(row);
                           }}
-                          className="inline-flex items-center gap-1.5 rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-page disabled:opacity-60"
+                          className="inline-flex h-6 max-w-full items-center gap-1 rounded-md border border-line bg-white px-2 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink disabled:opacity-60"
                         >
                           {finishing && (
                             <svg
                               viewBox="0 0 24 24"
-                              className="h-3.5 w-3.5 animate-spin"
+                              className="h-3 w-3 shrink-0 animate-spin"
                               fill="none"
                               aria-hidden="true"
                             >
@@ -1018,7 +1029,7 @@ export default function DashboardPage() {
                               />
                             </svg>
                           )}
-                          Finish and get feedback
+                          <span className="truncate">Finish and get feedback</span>
                         </button>
                       </div>
                     </li>

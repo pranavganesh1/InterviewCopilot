@@ -293,10 +293,18 @@ export interface PreparationPreferences {
   technical_areas?: string[];
   focus_skills?: string[];
   focus_projects?: string[];
+  project_aspects?: string[];
   placement_target?: string | null;
   experience_level?: string | null;
   behavioral_goals?: string | null;
   confirmed?: boolean;
+}
+
+export interface GoalOptionCard {
+  id: string;
+  label: string;
+  subtitle?: string;
+  technologies?: string[];
 }
 
 export interface ConversationStarter {
@@ -318,6 +326,18 @@ export interface OnboardingState {
   goal_interest_options?: { id: string; label: string }[];
   suggested_skills?: string[];
   suggested_projects?: string[];
+  suggested_roles?: string[];
+  suggested_technical_areas?: string[];
+  project_options?: GoalOptionCard[];
+  project_aspect_options?: { id: string; label: string }[];
+  resume_highlights?: {
+    skills?: string[];
+    projects?: string[];
+    education?: string[];
+    internships?: string[];
+  };
+  next_goal_followup?: string | null;
+  followups_complete?: boolean;
   recommended_tracks?: { track_type: string; subject: string }[];
   preparation_summary?: string;
   goals_ready?: boolean;

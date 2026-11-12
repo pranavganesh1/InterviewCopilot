@@ -27,6 +27,7 @@ class GoalsRequest(BaseModel):
     technical_areas: list[str] | None = None
     focus_skills: list[str] | None = None
     focus_projects: list[str] | None = None
+    project_aspects: list[str] | None = None
     placement_target: str | None = None
     experience_level: str | None = None
     behavioral_goals: str | None = None
@@ -126,14 +127,20 @@ async def conversation_starter(
 ):
     """Kick off a focused onboarding conversation from a starter card."""
     await onboarding_service.ensure_review_opener(db, request.app.state.mongo_db, user)
-    return await onboarding_service.start_conversation_starter(
-        db,
-        request.app.state.mongo_db,
-        user,
-        body.starter_id,
-        already_finished=user.onboarding_completed_at is not None,
-        request_id=request.headers.get("x-request-id"),
-    )
+    try:
+        return await onboarding_service.start_conversation_starter(
+            db,
+            request.app.state.mongo_db,
+            user,
+            body.starter_id,
+            already_finished=user.onboarding_completed_at is not None,
+            request_id=request.headers.get("x-request-id"),
+        )
+    except LLMGatewayError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The interview coach is temporarily busy. Please retry in about a minute.",
+        ) from exc
 
 
 @router.get("/state")
