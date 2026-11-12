@@ -219,51 +219,103 @@ RESUME_WELCOME_MARKER = "I've reviewed your resume"
 
 
 def build_profile_review_message(items: list[VaultItem]) -> str:
-    """Warm, short welcome — mention 1–2 resume highlights, not a full dump."""
+    """Field-aware welcome — 1–2 hooks from the resume, never a CS-only assumption."""
+    from app.services.preparation_goals import infer_candidate_background
+
     if not items:
         return (
             "Hey! 👋 I don't have your background yet. "
-            "Upload a resume or tell me about a project you've built — "
-            "we'll shape your prep from there."
+            "Upload a resume or tell me what you're interested in — "
+            "we'll shape your prep from there. No degree or project required to start."
         )
 
-    by_cat: dict[str, list[str]] = {}
-    for item in items:
-        by_cat.setdefault(item.category, []).append(item.title)
+    summary = [
+        {
+            "category": item.category,
+            "title": item.title,
+            "details": item.details or {},
+        }
+        for item in items
+    ]
+    bg = infer_candidate_background(summary)
+    field = bg["field_family"]
+    education = bg["education_titles"]
+    skills = bg["skill_titles"]
+    projects = bg["project_titles"]
+    internships = bg["internship_titles"]
 
-    skills = by_cat.get("skill") or []
-    projects = by_cat.get("project") or []
-    internships = by_cat.get("internship") or []
-
-    # Prefer a standout project; fall back to a skill or internship — never list everything.
-    highlight: str | None = None
-    if len(projects) >= 2:
-        highlight = (
-            f"especially your “{projects[0]}” and “{projects[1]}” projects"
-        )
-    elif projects:
-        highlight = f"especially your “{projects[0]}” project"
-    elif skills:
-        preview = " and ".join(skills[:2])
-        highlight = f"especially your work with {preview}"
-    elif internships:
-        highlight = f"especially your {internships[0]} experience"
-
-    if highlight:
+    if field == "commerce" and education:
         opener = (
-            f"Hey! 👋 {RESUME_WELCOME_MARKER}. "
-            f"You've got some really interesting experience — {highlight}! 🚀"
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed your background in "
+            f"{education[0]}. We can explore finance, accounting, business analytics, "
+            "or roles connected to your experience."
+        )
+    elif field == "physics" and (education or projects):
+        hook = education[0] if education else f"your “{projects[0]}” work"
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I see {hook}. "
+            "Your analytical background could fit research, technical roles, "
+            "or broader interview prep."
+        )
+    elif field in ("life_sciences", "mathematics", "arts", "engineering") and education:
+        hook = ""
+        if projects:
+            hook = f" Your “{projects[0]}” work stood out."
+        elif skills:
+            hook = f" I also noticed {skills[0]} in your profile."
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed your background in "
+            f"{education[0]}.{hook} We can explore roles and prep paths that match "
+            "your interests — not only software."
+        )
+    elif field == "computer_science" and (skills or projects):
+        if projects and skills:
+            opener = (
+                f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed {skills[0]}"
+                + (f" and your “{projects[0]}” project" if projects else "")
+                + ". We can explore technical skills, projects, or career goals next."
+            )
+        elif projects:
+            opener = (
+                f"Hey! 👋 {RESUME_WELCOME_MARKER}. Your “{projects[0]}” project looks "
+                "like a strong interview story — happy to dig in when you're ready."
+            )
+        else:
+            opener = (
+                f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed {skills[0]} in your profile. "
+                "We can practise skills, talk goals, or explore projects."
+            )
+    elif projects:
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. Your “{projects[0]}” work stood out — "
+            "we can build interview prep around that or explore other goals."
+        )
+    elif internships:
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed your {internships[0]} experience. "
+            "We can turn that into interview stories or explore new directions."
+        )
+    elif skills:
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed {skills[0]} in your profile. "
+            "We can practise that skill or explore what you'd like to prepare for."
+        )
+    elif education:
+        opener = (
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. I noticed your background in {education[0]}. "
+            "What are you currently interested in exploring?"
         )
     else:
         opener = (
-            f"Hey! 👋 {RESUME_WELCOME_MARKER} and saved a few notes into your vault."
+            f"Hey! 👋 {RESUME_WELCOME_MARKER} and saved a few notes. "
+            "Tell me what you'd like to work toward — any direction is welcome."
         )
 
     lines = [
         opener,
         "",
-        "Let's get to know your goals a little better.",
-        "What would you like to work on first? Pick a starter below — or just type.",
+        "What would you like to work on first? Pick a starter below, choose a prep focus, "
+        "or just type — you can skip anything that doesn't apply.",
     ]
 
     near = find_near_duplicates(items)

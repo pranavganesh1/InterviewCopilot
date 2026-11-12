@@ -219,7 +219,12 @@ export default function GoalDiscovery({
           subtitle: p.subtitle,
         }))
       : suggestedProjects.map((p) => ({ id: p, label: p }));
-  const roleItems = suggestedRoles.map((r) => ({ id: r, label: r }));
+  const roleItems = [
+    ...suggestedRoles.map((r) => ({ id: r, label: r })),
+    ...(!suggestedRoles.includes("I'm still exploring")
+      ? [{ id: "I'm still exploring", label: "I'm not sure yet" }]
+      : []),
+  ];
   const aspectItems =
     projectAspectOptions.length > 0
       ? projectAspectOptions

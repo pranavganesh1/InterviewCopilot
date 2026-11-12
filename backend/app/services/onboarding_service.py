@@ -19,6 +19,7 @@ from app.services.preparation_goals import (
     followups_complete,
     goals_followup_reply,
     goals_intro_message,
+    infer_candidate_background,
     merge_preferences,
     next_goal_followup,
     preferences_ready,
@@ -94,6 +95,30 @@ def _project_titles(summary: list[dict]) -> list[str]:
     return project_titles(summary)
 
 
+def _message_signals_skip(message: str) -> bool:
+    text = (message or "").lower()
+    return any(
+        p in text
+        for p in (
+            "skip",
+            "not sure",
+            "don't know",
+            "dont know",
+            "i'm not sure",
+            "im not sure",
+            "move on",
+            "later",
+            "doesn't apply",
+            "does not apply",
+            "not applicable",
+            "n/a",
+            "no degree",
+            "no project",
+            "no experience",
+        )
+    )
+
+
 async def chat(
     db: AsyncSession,
     mongo_db: AsyncIOMotorDatabase,
@@ -107,14 +132,29 @@ async def chat(
     history = await conversation_store.get_messages(mongo_db, str(user.id), limit=24)
     items = await list_items(db, user.id)
     summary = await vault_summary(db, user.id)
+    coach_ctx = await conversation_store.get_coach_context(mongo_db, str(user.id))
+    bg = infer_candidate_background(summary)
+    if _message_signals_skip(message):
+        coach_ctx = await conversation_store.merge_coach_context(
+            mongo_db,
+            str(user.id),
+            {
+                "proceed_to_goals": True,
+                "answers_received": (coach_ctx.get("answers_received") or [])
+                + [message.strip()[:180]],
+            },
+        )
     duplicates = find_near_duplicates(items)
-    gaps = compute_profile_gaps(summary)
+    gaps = compute_profile_gaps(summary, coach_context=coach_ctx)
     prefs = await conversation_store.get_preparation_preferences(mongo_db, str(user.id))
     mode = conversation_mode or await conversation_store.get_conversation_mode(
         mongo_db, str(user.id)
     )
     phase = derive_phase(
-        vault_summary=summary, preferences=prefs, already_finished=already_finished
+        vault_summary=summary,
+        preferences=prefs,
+        already_finished=already_finished,
+        coach_context=coach_ctx,
     )
 
     resume_options = build_resume_goal_options(summary)
@@ -132,6 +172,8 @@ async def chat(
             "available_projects": resume_options.get("suggested_projects")
             or _project_titles(summary),
             "resume_goal_options": resume_options,
+            "candidate_background": bg,
+            "coach_context": coach_ctx,
             "conversation_mode": mode,
             "already_finished": already_finished,
             "phase": phase,
@@ -156,9 +198,40 @@ async def chat(
 
     await conversation_store.append_message(mongo_db, str(user.id), "assistant", turn["reply"])
 
+    # Persist structured coach context across refreshes.
+    asked = list(coach_ctx.get("asked_questions") or [])
+    fp = turn.get("_question_fingerprint") or ""
+    if fp and fp not in asked:
+        asked.append(fp)
+    confirmed = list(coach_ctx.get("confirmed_facts") or [])
+    for item in created + updated:
+        title = f"{item.category}:{item.title}"
+        if title not in confirmed:
+            confirmed.append(title)
+    answers = list(coach_ctx.get("answers_received") or [])
+    if message.strip():
+        answers.append(message.strip()[:180])
+    await conversation_store.merge_coach_context(
+        mongo_db,
+        str(user.id),
+        {
+            "background": bg,
+            "asked_questions": asked[-40:],
+            "confirmed_facts": confirmed[-40:],
+            "answers_received": answers[-40:],
+            "current_topic": turn.get("phase"),
+            "proceed_to_goals": bool(coach_ctx.get("proceed_to_goals"))
+            or turn.get("phase") in ("goals", "ready"),
+        },
+    )
+
     refreshed = await vault_summary(db, user.id)
+    coach_ctx = await conversation_store.get_coach_context(mongo_db, str(user.id))
     phase_out = turn.get("phase") or derive_phase(
-        vault_summary=refreshed, preferences=prefs, already_finished=already_finished
+        vault_summary=refreshed,
+        preferences=prefs,
+        already_finished=already_finished,
+        coach_context=coach_ctx,
     )
     return {
         "reply": turn["reply"],
@@ -175,6 +248,8 @@ async def chat(
         "preparation_preferences": prefs,
         "conversation_mode": mode,
         "show_starters": _should_show_starters(history, phase_out, already_finished),
+        "candidate_background": bg,
+        "coach_context": coach_ctx,
     }
 
 
@@ -231,12 +306,11 @@ async def save_goals(
 ) -> dict:
     """Persist goal chip selections, then ask one coach follow-up."""
     summary = await vault_summary(db, user.id)
-    if not vault_is_ready(summary) and not already_finished:
-        from fastapi import HTTPException
-
-        raise HTTPException(
-            status_code=409,
-            detail="Finish your profile vault before choosing preparation goals.",
+    coach_ctx = await conversation_store.get_coach_context(mongo_db, str(user.id))
+    if not vault_is_ready(summary, coach_ctx) and not already_finished:
+        # Choosing goals is always allowed — mark proceed so empty/optional vaults unlock.
+        coach_ctx = await conversation_store.merge_coach_context(
+            mongo_db, str(user.id), {"proceed_to_goals": True}
         )
 
     current = await conversation_store.get_preparation_preferences(mongo_db, str(user.id))
@@ -372,6 +446,22 @@ async def seed_resume_welcome(
     await conversation_store.append_message(
         mongo_db, user_id, "assistant", build_profile_review_message(items)
     )
+    summary = [
+        {
+            "category": getattr(i, "category", ""),
+            "title": getattr(i, "title", ""),
+            "details": getattr(i, "details", None) or {},
+        }
+        for i in items
+    ]
+    await conversation_store.merge_coach_context(
+        mongo_db,
+        user_id,
+        {
+            "background": infer_candidate_background(summary),
+            "proceed_to_goals": True,
+        },
+    )
     return True
 
 
@@ -382,7 +472,8 @@ async def ensure_goals_intro(
 ) -> bool:
     """When vault is ready and goals are unset, seed the goals transition once."""
     summary = await vault_summary(db, user.id)
-    if not vault_is_ready(summary):
+    coach_ctx = await conversation_store.get_coach_context(mongo_db, str(user.id))
+    if not vault_is_ready(summary, coach_ctx):
         return False
     prefs = await conversation_store.get_preparation_preferences(mongo_db, str(user.id))
     if prefs.get("interests") or prefs.get("confirmed"):
@@ -588,9 +679,13 @@ async def start_recommended_track(
 async def state_extras(db: AsyncSession, mongo_db: AsyncIOMotorDatabase, user: User) -> dict:
     summary = await vault_summary(db, user.id)
     prefs = await conversation_store.get_preparation_preferences(mongo_db, str(user.id))
+    coach_ctx = await conversation_store.get_coach_context(mongo_db, str(user.id))
     finished = user.onboarding_completed_at is not None
     phase = derive_phase(
-        vault_summary=summary, preferences=prefs, already_finished=finished
+        vault_summary=summary,
+        preferences=prefs,
+        already_finished=finished,
+        coach_context=coach_ctx,
     )
     history = await conversation_store.get_messages(mongo_db, str(user.id), limit=40)
     mode = await conversation_store.get_conversation_mode(mongo_db, str(user.id))
@@ -598,6 +693,7 @@ async def state_extras(db: AsyncSession, mongo_db: AsyncIOMotorDatabase, user: U
     if finished:
         review = await get_profile_review_payload(db, mongo_db, user, ensure=True)
     resume_options = build_resume_goal_options(summary)
+    gaps = compute_profile_gaps(summary, coach_context=coach_ctx)
     return {
         "phase": phase,
         "show_goal_menu": phase == "goals" and not prefs.get("interests"),
@@ -609,6 +705,9 @@ async def state_extras(db: AsyncSession, mongo_db: AsyncIOMotorDatabase, user: U
         "preparation_summary": summarize_preferences(prefs),
         "goals_ready": preferences_ready(prefs) or finished,
         "conversation_mode": mode,
+        "coach_context": coach_ctx,
+        "profile_gaps": gaps,
+        "optional_categories": True,
         "show_starters": _should_show_starters(history, phase, finished),
         "conversation_starters": [
             {"id": sid, "label": meta["label"], "description": meta["description"]}
