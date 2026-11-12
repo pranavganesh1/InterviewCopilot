@@ -516,73 +516,80 @@ export default function OnboardingPage() {
   const showQuickChips =
     (messages.length === 0 || startersVisible || suggestedReplies.length > 0) &&
     !busy;
+  const hasResumeSignal =
+    state.data?.has_resume_welcome === true ||
+    vaultItems.some((i) => (i.source || "").includes("resume")) ||
+    Boolean(upload.data);
 
-  const resumePanel = (
-    <div className="space-y-3">
-      <div
-        role="button"
-        tabIndex={upload.isPending ? -1 : 0}
-        aria-disabled={upload.isPending}
-        aria-label="Upload resume PDF"
-        data-testid="resume-upload-dropzone"
-        onKeyDown={(event) => {
-          if (upload.isPending) return;
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            resumeInputRef.current?.click();
-          }
-        }}
-        onClick={() => {
-          if (!upload.isPending) resumeInputRef.current?.click();
-        }}
-        onDragEnter={(event) => {
+  const resumeDropzone = (
+    <div
+      role="button"
+      tabIndex={upload.isPending ? -1 : 0}
+      aria-disabled={upload.isPending}
+      aria-label="Upload resume PDF"
+      data-testid="resume-upload-dropzone"
+      onKeyDown={(event) => {
+        if (upload.isPending) return;
+        if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          if (!upload.isPending) setDragOver(true);
-        }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          if (!upload.isPending) setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragOver(false);
-          pickResume(event.dataTransfer.files?.[0]);
-        }}
-        className={`flex min-h-[7.5rem] min-w-0 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-4 py-5 text-center transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-          upload.isPending
-            ? "cursor-not-allowed border-line bg-page opacity-80"
-            : dragOver
-              ? "border-accent bg-accent-soft"
-              : "border-line bg-page/60 hover:border-accent hover:bg-accent-soft/40"
-        }`}
-      >
-        {upload.isPending ? (
-          <span className="inline-flex items-center gap-2 text-sm font-medium text-ink">
-            <span
-              className="h-4 w-4 motion-safe:animate-spin rounded-full border-2 border-accent/30 border-t-accent"
-              aria-hidden="true"
-            />
-            Extracting your experience…
-          </span>
-        ) : (
-          <span className="text-sm font-medium text-ink">Upload resume PDF</span>
-        )}
-        <span className="mt-1 text-[11px] text-ink-soft">
-          Drag and drop or click — PDF up to 10 MB
+          resumeInputRef.current?.click();
+        }
+      }}
+      onClick={() => {
+        if (!upload.isPending) resumeInputRef.current?.click();
+      }}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        if (!upload.isPending) setDragOver(true);
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        if (!upload.isPending) setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragOver(false);
+        pickResume(event.dataTransfer.files?.[0]);
+      }}
+      className={`flex min-w-0 cursor-pointer flex-col justify-center rounded-2xl border border-dashed px-4 py-3 text-center transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+        upload.isPending
+          ? "cursor-not-allowed border-line bg-page opacity-80"
+          : dragOver
+            ? "border-accent bg-accent-soft"
+            : "border-line bg-page/60 hover:border-accent hover:bg-accent-soft/40"
+      }`}
+    >
+      {upload.isPending ? (
+        <span className="inline-flex items-center justify-center gap-2 text-sm font-medium text-ink">
+          <span
+            className="h-4 w-4 motion-safe:animate-spin rounded-full border-2 border-accent/30 border-t-accent"
+            aria-hidden="true"
+          />
+          Extracting your experience…
         </span>
-        <input
-          ref={resumeInputRef}
-          type="file"
-          accept="application/pdf"
-          className="hidden"
-          disabled={upload.isPending}
-          onChange={(e) => {
-            pickResume(e.target.files?.[0]);
-            e.target.value = "";
-          }}
-        />
-      </div>
+      ) : (
+        <span className="text-sm font-medium text-ink">Upload resume PDF</span>
+      )}
+      <span className="mt-0.5 text-[11px] text-ink-soft">
+        Drag and drop or click — PDF up to 10 MB
+      </span>
+      <input
+        ref={resumeInputRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        disabled={upload.isPending}
+        onChange={(e) => {
+          pickResume(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+    </div>
+  );
+
+  const resumeStatus = (
+    <>
       {resumeFile && (
         <p className="truncate text-xs text-ink-soft" title={resumeFile.name}>
           {resumeFile.name} · {formatBytes(resumeFile.size)}
@@ -627,6 +634,16 @@ export default function OnboardingPage() {
           </button>
         </div>
       )}
+    </>
+  );
+
+  const resumePanel = (
+    <div className="space-y-3">
+      <p className="text-xs text-ink-soft">
+        {hasResumeSignal
+          ? "Replace or refresh your resume anytime from the upload bar above."
+          : "Use the upload bar above to add a PDF — Aiko builds your profile from it."}
+      </p>
       <Link
         to="/readiness"
         className="block rounded-2xl border border-accent/25 bg-accent-soft/50 p-3 transition hover:-translate-y-0.5 hover:bg-accent-soft hover:shadow-card"
@@ -656,6 +673,14 @@ export default function OnboardingPage() {
         className="pointer-events-none absolute -right-10 bottom-10 h-64 w-64 rounded-full bg-accent-soft blur-3xl"
         aria-hidden
       />
+
+      <div
+        className="relative z-10 mb-2 shrink-0 space-y-1.5"
+        data-testid="resume-upload-bar"
+      >
+        {resumeDropzone}
+        {resumeStatus}
+      </div>
 
       <div
         role="tablist"

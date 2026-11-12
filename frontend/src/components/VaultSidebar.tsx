@@ -142,7 +142,7 @@ export function VaultSidebar({
   resumePanel: ReactNode;
 }) {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<ProfileTab>("skills");
+  const [tab, setTab] = useState<ProfileTab>("resume");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 

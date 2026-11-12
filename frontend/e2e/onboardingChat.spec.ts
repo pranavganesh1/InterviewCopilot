@@ -118,6 +118,8 @@ test("chat panel keeps a fixed scroll region and friendly coach chrome", async (
   await expect(panel).toBeVisible();
   await expect(page.getByRole("heading", { name: "Aiko" })).toBeVisible();
   await expect(page.getByText("Interview Coach")).toBeVisible();
+  await expect(page.getByTestId("resume-upload-bar")).toBeVisible();
+  await expect(page.getByTestId("resume-upload-dropzone")).toBeVisible();
   await expect(page.getByTestId("onboarding-status-chip")).toContainText(
     "In progress",
   );
@@ -534,8 +536,9 @@ test("workspace is single-screen with profile tabs, ring, and no page scroll", a
       "outcome:",
     );
 
-    await page.getByTestId("profile-tab-resume").click();
+    await expect(page.getByTestId("resume-upload-bar")).toBeVisible();
     await expect(page.getByTestId("resume-upload-dropzone")).toBeVisible();
+    await page.getByTestId("profile-tab-resume").click();
     await expect(page.getByTestId("readiness-onboarding-card")).toBeVisible();
     await expect(page.getByTestId("go-to-tracks")).toBeVisible();
   }
@@ -583,7 +586,7 @@ test("resume drop zone shows error and success; Go to Tracks navigates", async (
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/onboarding");
-  await page.getByTestId("profile-tab-resume").click();
+  await expect(page.getByTestId("resume-upload-dropzone")).toBeVisible();
 
   await page.setInputFiles('input[type="file"][accept="application/pdf"]', {
     name: "empty.pdf",
