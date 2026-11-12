@@ -166,12 +166,61 @@ body {
   animation: coach-chip-pop 220ms ease-out both;
 }
 
+@keyframes profile-ring-in {
+  from {
+    stroke-dashoffset: 100;
+  }
+}
+
+@keyframes profile-item-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes coach-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.profile-ring-progress {
+  transition: stroke-dashoffset 480ms ease;
+}
+
+.profile-item-fade {
+  animation: profile-item-fade 180ms ease-out both;
+}
+
+.profile-tab-indicator {
+  transition: transform 180ms ease;
+}
+
+.coach-status-pulse {
+  animation: coach-status-pulse 1.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .coach-avatar-thinking,
   .coach-typing-dot,
   .coach-bubble-enter-assistant,
   .coach-bubble-enter-user,
-  .coach-vault-chip {
+  .coach-vault-chip,
+  .profile-item-fade,
+  .coach-status-pulse {
     animation: none;
+  }
+
+  .profile-ring-progress {
+    transition: none;
   }
 }
