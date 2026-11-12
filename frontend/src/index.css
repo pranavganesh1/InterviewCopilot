@@ -101,6 +101,43 @@ body {
   }
 }
 
+@keyframes coach-bubble-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes coach-bubble-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes coach-chip-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .coach-avatar-thinking {
   animation: coach-bounce 1.1s ease-in-out infinite;
 }
@@ -117,9 +154,24 @@ body {
   animation-delay: 0.3s;
 }
 
+.coach-bubble-enter-assistant {
+  animation: coach-bubble-in-left 180ms ease-out both;
+}
+
+.coach-bubble-enter-user {
+  animation: coach-bubble-in-right 180ms ease-out both;
+}
+
+.coach-vault-chip {
+  animation: coach-chip-pop 220ms ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .coach-avatar-thinking,
-  .coach-typing-dot {
+  .coach-typing-dot,
+  .coach-bubble-enter-assistant,
+  .coach-bubble-enter-user,
+  .coach-vault-chip {
     animation: none;
   }
 }

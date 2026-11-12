@@ -40,13 +40,19 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col overflow-x-clip bg-page text-ink">
+    <div
+      className={`flex flex-col overflow-x-clip bg-page text-ink ${
+        isOnboarding ? "h-dvh overflow-hidden" : "min-h-dvh"
+      }`}
+    >
       <AppHeader />
       <main
         className={
-          isImmersive
-            ? "mx-auto flex min-h-0 w-full min-w-0 max-w-6xl flex-1 flex-col overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4"
-            : "mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:py-8"
+          isOnboarding
+            ? "mx-auto flex min-h-0 w-full min-w-0 max-w-6xl flex-1 flex-col overflow-hidden px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4 sm:py-3"
+            : isImmersive
+              ? "mx-auto flex min-h-0 w-full min-w-0 max-w-6xl flex-1 flex-col overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4"
+              : "mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:py-8"
         }
       >
         <Routes>
