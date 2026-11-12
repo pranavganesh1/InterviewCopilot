@@ -340,7 +340,6 @@ export default function OnboardingPage() {
   const showGoalMenu = state.data?.show_goal_menu === true || phase === "goals";
   const canStartPreparing =
     !finished &&
-    missing.length === 0 &&
     (prefs?.interests?.length ?? 0) > 0 &&
     !finish.isPending;
 
@@ -860,15 +859,19 @@ export default function OnboardingPage() {
                 </p>
               )}
             </div>
-          ) : missing.length > 0 ? (
-            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-center text-xs text-amber-900">
-              Still needed:{" "}
-              {missing.map((c) => REQUIRED_LABELS[c] ?? c).join(", ")}.
-            </p>
           ) : (
-            <p className="rounded-lg border border-accent/30 bg-accent-soft/50 px-4 py-3 text-center text-xs text-ink">
-              Pick your interview preparation goals above to continue.
-            </p>
+            <div className="space-y-2">
+              <p className="rounded-lg border border-accent/30 bg-accent-soft/50 px-4 py-3 text-center text-xs text-ink">
+                Pick your interview preparation goals above to continue — you can
+                skip optional profile details and add them later.
+              </p>
+              {missing.length > 0 && (
+                <p className="rounded-lg border border-line bg-page px-4 py-2 text-center text-[11px] text-ink-soft">
+                  Optional later:{" "}
+                  {missing.map((c) => REQUIRED_LABELS[c] ?? c).join(", ")}.
+                </p>
+              )}
+            </div>
           )}
         </aside>
       </div>

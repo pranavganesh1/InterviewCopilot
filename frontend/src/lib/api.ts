@@ -338,6 +338,17 @@ export interface OnboardingState {
   };
   next_goal_followup?: string | null;
   followups_complete?: boolean;
+  optional_categories?: boolean;
+  candidate_background?: {
+    field_family?: string;
+    education_titles?: string[];
+    skill_titles?: string[];
+    project_titles?: string[];
+    suggested_prep_topics?: string[];
+    role_hints?: string[];
+  };
+  suggested_prep_topics?: string[];
+  coach_context?: Record<string, unknown>;
   recommended_tracks?: { track_type: string; subject: string }[];
   preparation_summary?: string;
   goals_ready?: boolean;

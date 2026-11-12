@@ -14,7 +14,8 @@ from app.services.vault_service import list_items
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
-_REQUIRED = ("project", "skill", "education")
+# Suggested vault sections — informational only; never block Start Preparing.
+_SUGGESTED = ("project", "skill", "education")
 
 
 class ChatRequest(BaseModel):
@@ -56,9 +57,11 @@ class StartRecommendedRequest(BaseModel):
 
 
 def _vault_status(items) -> tuple[bool, list[str]]:
+    """Return (ready_for_goals, optional_missing). Ready if any vault signal exists."""
     categories = {i.category for i in items}
-    missing = [c for c in _REQUIRED if c not in categories]
-    return len(missing) == 0, missing
+    missing = [c for c in _SUGGESTED if c not in categories]
+    # Any extracted item unlocks goals; empty vault still OK via proceed_to_goals.
+    return True, missing
 
 
 async def _state_payload(mongo_db, db: AsyncSession, user: User) -> dict:
@@ -81,9 +84,12 @@ async def _state_payload(mongo_db, db: AsyncSession, user: User) -> dict:
             }
             for i in items
         ],
-        # Vault criteria (coach / readiness).
-        "onboarding_complete": vault_ready or finished,
+        # Preferences (or finished) mark onboarding complete — vault sections are optional.
+        "onboarding_complete": finished
+        or preferences_ready(extras.get("preparation_preferences")),
         "missing_categories": [] if finished else missing,
+        "optional_categories": True,
+        "vault_ready": vault_ready,
         # Explicit user finish — survives refresh/login.
         "onboarding_finished": finished,
         "onboarding_completed_at": (
@@ -188,15 +194,8 @@ async def complete(
 ):
     """Mark onboarding finished and return refreshed state (idempotent).
 
-    Requires a ready vault and confirmed preparation goals (unless already finished).
+    Requires preparation goals (vault sections are optional).
     """
-    items = await list_items(db, user.id)
-    vault_ready, missing = _vault_status(items)
-    if not vault_ready and user.onboarding_completed_at is None:
-        raise HTTPException(
-            status_code=409,
-            detail=("Onboarding is not ready yet. Still needed: " + ", ".join(missing)),
-        )
     prefs = await conversation_store.get_preparation_preferences(
         request.app.state.mongo_db, str(user.id)
     )

@@ -279,8 +279,278 @@ def project_titles(summary: list[dict]) -> list[str]:
     return _titles(summary, "project")
 
 
+# Field families inferred from education/skill/project text — never a judgment.
+_FIELD_HINTS: list[tuple[str, tuple[str, ...]]] = [
+    (
+        "commerce",
+        (
+            "commerce",
+            "b.com",
+            "bcom",
+            "m.com",
+            "accounting",
+            "finance",
+            "ca ",
+            "chartered",
+            "business administration",
+            "bba",
+            "mba",
+            "economics",
+        ),
+    ),
+    (
+        "physics",
+        ("physics", "astrophysics", "optics", "condensed matter", "particle physics"),
+    ),
+    (
+        "life_sciences",
+        (
+            "biology",
+            "biotech",
+            "biotechnology",
+            "microbiology",
+            "biochemistry",
+            "life science",
+            "pharmacy",
+            "nursing",
+            "medicine",
+            "mbbs",
+        ),
+    ),
+    (
+        "mathematics",
+        ("mathematics", "maths", "statistics", "actuarial", "pure math"),
+    ),
+    (
+        "arts",
+        (
+            "arts",
+            "ba ",
+            "b.a",
+            "literature",
+            "history",
+            "sociology",
+            "psychology",
+            "philosophy",
+            "journalism",
+            "media",
+        ),
+    ),
+    (
+        "computer_science",
+        (
+            "computer science",
+            "computer engineering",
+            "information technology",
+            "software",
+            "cse",
+            "b.tech cse",
+            "btech cse",
+            "mca",
+            "data science",
+            "artificial intelligence",
+        ),
+    ),
+    (
+        "engineering",
+        (
+            "engineering",
+            "mechanical",
+            "electrical",
+            "civil",
+            "electronics",
+            "chemical eng",
+            "b.tech",
+            "btech",
+            "be ",
+            "b.e",
+        ),
+    ),
+]
+
+_FIELD_PREP: dict[str, list[str]] = {
+    "commerce": [
+        "Business analytics",
+        "Excel for analysis",
+        "SQL for business",
+        "Accounting fundamentals",
+        "Finance interviews",
+        "HR & behavioral",
+    ],
+    "physics": [
+        "Analytical reasoning",
+        "Research interviews",
+        "Scientific projects",
+        "Technical problem solving",
+        "HR & behavioral",
+    ],
+    "life_sciences": [
+        "Domain knowledge interviews",
+        "Research / lab projects",
+        "Analytical reasoning",
+        "HR & behavioral",
+    ],
+    "mathematics": [
+        "Quantitative aptitude",
+        "Analytical reasoning",
+        "Statistics interviews",
+        "Data analysis",
+        "HR & behavioral",
+    ],
+    "arts": [
+        "Communication interviews",
+        "HR & behavioral",
+        "Role-specific prep",
+        "Portfolio / projects",
+    ],
+    "computer_science": [
+        "Data Structures & Algorithms",
+        "Programming practice",
+        "DBMS / SQL",
+        "System Design",
+        "Project deep dive",
+        "HR & behavioral",
+    ],
+    "engineering": [
+        "Core engineering concepts",
+        "Project deep dive",
+        "Aptitude & reasoning",
+        "HR & behavioral",
+    ],
+    "general": [
+        "Skill practice",
+        "Project / experience stories",
+        "HR & behavioral",
+        "Role exploration",
+    ],
+}
+
+_FIELD_ROLES: dict[str, list[str]] = {
+    "commerce": [
+        "Business Analyst",
+        "Financial Analyst",
+        "Accountant",
+        "Operations Associate",
+    ],
+    "physics": [
+        "Research Assistant",
+        "Data Analyst",
+        "Technical Specialist",
+        "Graduate Trainee",
+    ],
+    "life_sciences": [
+        "Research Associate",
+        "Lab Analyst",
+        "Clinical Research Associate",
+        "Quality Analyst",
+    ],
+    "mathematics": [
+        "Data Analyst",
+        "Quantitative Analyst",
+        "Business Analyst",
+        "Actuarial Analyst",
+    ],
+    "arts": [
+        "Content Associate",
+        "HR Associate",
+        "Marketing Associate",
+        "Operations Associate",
+    ],
+    "computer_science": [
+        "Software Engineer Intern",
+        "Software Engineer",
+        "Backend Developer",
+        "Data Analyst",
+    ],
+    "engineering": [
+        "Graduate Engineer Trainee",
+        "Design Engineer",
+        "Operations Engineer",
+        "Software Engineer Intern",
+    ],
+    "general": [
+        "Graduate Trainee",
+        "Operations Associate",
+        "Business Analyst",
+        "I'm still exploring",
+    ],
+}
+
+
+def _vault_blob(summary: list[dict]) -> str:
+    parts: list[str] = []
+    for item in summary or []:
+        parts.append(str(item.get("title") or ""))
+        details = item.get("details") or {}
+        if isinstance(details, dict):
+            parts.extend(str(v) for v in details.values())
+    return " ".join(parts).lower()
+
+
+def infer_candidate_background(summary: list[dict]) -> dict:
+    """Lightweight field/experience signals from vault text — never a verdict."""
+    education = _titles(summary, "education")
+    skills = skill_titles(summary)
+    projects = project_titles(summary)
+    internships = _titles(summary, "internship")
+    achievements = _titles(summary, "achievement")
+    blob = _vault_blob(summary)
+
+    field_family = "general"
+    for family, keywords in _FIELD_HINTS:
+        if any(k in blob for k in keywords):
+            field_family = family
+            break
+
+    # B.Tech + programming skills → treat as CS even when degree text is generic.
+    cs_skill_signals = (
+        "python",
+        "java",
+        "javascript",
+        "typescript",
+        "react",
+        "django",
+        "node",
+        "c++",
+        "golang",
+        "rust",
+        "pytorch",
+        "tensorflow",
+    )
+    if field_family in ("engineering", "general") and any(
+        k in blob for k in cs_skill_signals
+    ):
+        field_family = "computer_science"
+
+    if internships and not projects and not skills:
+        experience_signal = "internship"
+    elif internships and (projects or skills):
+        experience_signal = "mixed"
+    elif projects or skills:
+        experience_signal = "skills_projects"
+    else:
+        experience_signal = "none"
+
+    return {
+        "field_family": field_family,
+        "education_titles": education[:4],
+        "skill_titles": skills[:8],
+        "project_titles": projects[:6],
+        "internship_titles": internships[:4],
+        "achievement_titles": achievements[:4],
+        "has_education": bool(education),
+        "has_skills": bool(skills),
+        "has_projects": bool(projects),
+        "has_internships": bool(internships),
+        "experience_signal": experience_signal,
+        "suggested_prep_topics": list(_FIELD_PREP.get(field_family, _FIELD_PREP["general"])),
+        "role_hints": list(_FIELD_ROLES.get(field_family, _FIELD_ROLES["general"])),
+    }
+
+
 def suggest_technical_areas(summary: list[dict]) -> list[str]:
-    """Resume-derived practice areas (skills + project technologies + gentle extras)."""
+    """Resume-derived practice areas — field-aware, not CS-only."""
+    bg = infer_candidate_background(summary)
     areas: list[str] = []
     for skill in skill_titles(summary):
         if skill not in areas:
@@ -291,17 +561,22 @@ def suggest_technical_areas(summary: list[dict]) -> list[str]:
         for tech in _project_techs(item):
             if tech not in areas:
                 areas.append(tech)
-    # Add a few complementary topics when resume signals them — not proficiency claims.
     blob = " ".join(a.lower() for a in areas)
     extras: list[str] = []
-    if any(k in blob for k in ("python", "java", "c++", "dsa", "algorithm")):
-        extras.append("Data Structures & Algorithms")
-    if any(k in blob for k in ("system", "distributed", "backend", "microservice")):
-        extras.append("System Design")
-    if any(k in blob for k in ("sql", "postgres", "mysql", "mongodb", "database")):
-        extras.append("Databases / SQL")
-    if any(k in blob for k in ("ml", "machine learning", "pytorch", "tensorflow")):
-        extras.append("ML fundamentals")
+    if bg["field_family"] == "computer_science" or any(
+        k in blob for k in ("python", "java", "c++", "dsa", "algorithm", "react")
+    ):
+        if any(k in blob for k in ("python", "java", "c++", "dsa", "algorithm")):
+            extras.append("Data Structures & Algorithms")
+        if any(k in blob for k in ("system", "distributed", "backend", "microservice")):
+            extras.append("System Design")
+        if any(k in blob for k in ("sql", "postgres", "mysql", "mongodb", "database")):
+            extras.append("Databases / SQL")
+        if any(k in blob for k in ("ml", "machine learning", "pytorch", "tensorflow")):
+            extras.append("ML fundamentals")
+    for topic in bg["suggested_prep_topics"]:
+        if topic not in areas and topic not in extras:
+            extras.append(topic)
     for e in extras:
         if e not in areas:
             areas.append(e)
@@ -309,10 +584,10 @@ def suggest_technical_areas(summary: list[dict]) -> list[str]:
 
 
 def suggest_roles(summary: list[dict]) -> list[str]:
-    """Cautious role suggestions from internship titles and skill/project keywords."""
+    """Cautious role suggestions — match field family; never force SWE."""
+    bg = infer_candidate_background(summary)
     roles: list[str] = []
     for title in _titles(summary, "internship"):
-        # Internship titles are often already role-like.
         cleaned = title.strip()
         if cleaned and cleaned not in roles:
             roles.append(cleaned[:80])
@@ -330,10 +605,11 @@ def suggest_roles(summary: list[dict]) -> list[str]:
         if len(roles) >= 8:
             break
 
-    # Soft defaults when resume is sparse — still optional chips, not assumptions.
-    for fallback in ("Software Engineer Intern", "Software Engineer"):
+    for fallback in bg["role_hints"]:
         if fallback not in roles:
             roles.append(fallback)
+    if "I'm still exploring" not in roles:
+        roles.append("I'm still exploring")
     return roles[:8]
 
 
@@ -364,6 +640,7 @@ def build_resume_goal_options(vault_summary: list[dict]) -> dict:
     """Structured dynamic options for GET /onboarding/state (no new routes)."""
     skills = skill_titles(vault_summary)
     projects = project_titles(vault_summary)
+    bg = infer_candidate_background(vault_summary)
     return {
         "goal_interest_options": [
             {"id": i, "label": label} for i, label in GOAL_INTERESTS
@@ -372,15 +649,18 @@ def build_resume_goal_options(vault_summary: list[dict]) -> dict:
         "suggested_projects": projects,
         "suggested_roles": suggest_roles(vault_summary),
         "suggested_technical_areas": suggest_technical_areas(vault_summary),
+        "suggested_prep_topics": bg["suggested_prep_topics"],
         "project_options": project_option_cards(vault_summary),
         "project_aspect_options": [
             {"id": i, "label": label} for i, label in PROJECT_ASPECT_OPTIONS
         ],
+        "candidate_background": bg,
         "resume_highlights": {
             "skills": skills[:6],
             "projects": projects[:4],
             "education": _titles(vault_summary, "education")[:2],
             "internships": _titles(vault_summary, "internship")[:2],
+            "field_family": bg["field_family"],
         },
     }
 
