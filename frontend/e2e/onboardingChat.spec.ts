@@ -17,9 +17,25 @@ const BASE_STATE = {
     },
   ],
   vault_items: [
-    { id: "1", category: "project", title: "QCGNN", source: "resume" },
+    {
+      id: "1",
+      category: "project",
+      title: "QCGNN",
+      source: "resume",
+      details: {
+        purpose: "Quantum graph neural network research",
+        technologies: "PyTorch, Python, CUDA",
+        outcome: "Improved accuracy on benchmark graphs",
+      },
+    },
     { id: "2", category: "skill", title: "Python", source: "resume" },
-    { id: "3", category: "education", title: "B.Tech CSE", source: "resume" },
+    {
+      id: "3",
+      category: "education",
+      title: "B.Tech CSE",
+      source: "resume",
+      details: { institution: "Demo University", dates: "2021–2025" },
+    },
   ],
   onboarding_complete: true,
   onboarding_finished: false,
@@ -100,7 +116,11 @@ test("chat panel keeps a fixed scroll region and friendly coach chrome", async (
 
   const panel = page.getByTestId("onboarding-chat-panel");
   await expect(panel).toBeVisible();
-  await expect(page.getByText("Aiko · Interview Coach")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Aiko" })).toBeVisible();
+  await expect(page.getByText("Interview Coach")).toBeVisible();
+  await expect(page.getByTestId("onboarding-status-chip")).toContainText(
+    "In progress",
+  );
 
   const messages = page.getByTestId("onboarding-messages");
   await expect(messages).toBeVisible();
@@ -244,9 +264,14 @@ test("scrolled-up user sees New message pill instead of jump", async ({
   await expect(page.getByTestId("typing-indicator")).toBeVisible();
   await list.evaluate((el) => {
     el.scrollTop = 0;
+    el.dispatchEvent(new Event("scroll"));
   });
   release();
   await expect(list).toContainText("fresh reply from up high");
+  await list.evaluate((el) => {
+    el.scrollTop = 0;
+    el.dispatchEvent(new Event("scroll"));
+  });
 
   const nearBottom = await list.evaluate(
     (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 120,
@@ -416,9 +441,11 @@ test("reduced motion skips bubble animation; history loads at bottom; no horizon
     .toBe(true);
 
   const animated = await list.evaluate(
-    (el) => el.querySelectorAll(".coach-bubble-enter-assistant, .coach-bubble-enter-user").length,
+    (el) =>
+      el.querySelectorAll(
+        ".coach-bubble-enter-assistant, .coach-bubble-enter-user",
+      ).length,
   );
-  // History should not be marked as entering on load.
   expect(animated).toBe(0);
 
   const overflowX = await page.evaluate(() => {
@@ -427,4 +454,155 @@ test("reduced motion skips bubble animation; history loads at bottom; no horizon
   });
   expect(overflowX).toBe(false);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+  await expect(page.getByTestId("mobile-pane-switcher")).toBeVisible();
+  await page.getByTestId("mobile-pane-profile").click();
+  await expect(page.getByTestId("profile-panel")).toBeVisible();
+  await expect(page.getByTestId("onboarding-chat-panel")).toBeHidden();
+  await page.getByTestId("mobile-pane-chat").click();
+  await expect(page.getByTestId("onboarding-chat-input")).toBeVisible();
+});
+
+async function countScrollableContainers(page: Page) {
+  return page.evaluate(() => {
+    const nodes = Array.from(document.querySelectorAll("body *"));
+    return nodes.filter((el) => {
+      const style = getComputedStyle(el);
+      const oy = style.overflowY;
+      if (oy !== "auto" && oy !== "scroll" && oy !== "overlay") return false;
+      return (el as HTMLElement).scrollHeight > (el as HTMLElement).clientHeight + 1;
+    }).length;
+  });
+}
+
+test("workspace is single-screen with profile tabs, ring, and no page scroll", async ({
+  page,
+}) => {
+  const rich = {
+    ...BASE_STATE,
+    onboarding_finished: true,
+    onboarding_completed_at: "2026-11-01T10:00:00Z",
+    show_goal_menu: false,
+    phase: "ready",
+  };
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: rich }),
+  );
+
+  for (const size of [
+    { width: 1440, height: 900 },
+    { width: 1366, height: 768 },
+  ] as const) {
+    await page.setViewportSize(size);
+    await page.goto("/onboarding");
+
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          () => document.documentElement.scrollHeight <= window.innerHeight + 1,
+        ),
+      )
+      .toBe(true);
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+    expect(await countScrollableContainers(page)).toBeLessThanOrEqual(2);
+
+    await expect(page.getByText("Profile setup")).toHaveCount(0);
+    await expect(page.getByText("Your profile vault")).toHaveCount(0);
+    await expect(page.getByTestId("onboarding-progress")).toHaveCount(0);
+    await expect(page.getByTestId("onboarding-finished-banner")).toHaveCount(0);
+    await expect(page.getByTestId("onboarding-status-chip")).toContainText(
+      "Onboarding complete",
+    );
+    await expect(page.getByTestId("profile-completeness-ring")).toBeVisible();
+    await expect(page.getByTestId("profile-tabs")).toBeVisible();
+
+    await page.getByTestId("profile-tab-skills").click();
+    await expect(page.getByTestId("profile-tabpanel-skills")).toContainText(
+      "Python",
+    );
+    await expect(page.getByTestId("profile-tabpanel-projects")).toHaveCount(0);
+
+    await page.getByTestId("profile-tab-projects").click();
+    await expect(page.getByTestId("profile-tabpanel-projects")).toBeVisible();
+    await page.getByTestId("vault-project-card-1").getByLabel("Expand project").click();
+    await expect(page.getByTestId("vault-project-card-1")).toContainText("Problem");
+    await expect(page.getByTestId("vault-project-card-1")).toContainText(
+      "Quantum graph neural network research",
+    );
+    await expect(page.getByTestId("vault-project-card-1")).not.toContainText(
+      "outcome:",
+    );
+
+    await page.getByTestId("profile-tab-resume").click();
+    await expect(page.getByTestId("resume-upload-dropzone")).toBeVisible();
+    await expect(page.getByTestId("readiness-onboarding-card")).toBeVisible();
+    await expect(page.getByTestId("go-to-tracks")).toBeVisible();
+  }
+});
+
+test("resume drop zone shows error and success; Go to Tracks navigates", async ({
+  page,
+}) => {
+  const rich = {
+    ...BASE_STATE,
+    onboarding_finished: true,
+    onboarding_completed_at: "2026-11-01T10:00:00Z",
+    show_goal_menu: false,
+  };
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: rich }),
+  );
+  let resumeCalls = 0;
+  await page.route("**/api/v1/vault/resume", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    resumeCalls += 1;
+    const body = route.request().postData() || "";
+    if (resumeCalls === 1 || body.includes("empty.pdf")) {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          detail: "Empty PDF rejected",
+          code: "empty_file",
+        }),
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        items_created: [{ title: "SQL" }],
+        items_skipped: 0,
+        welcome_seeded: false,
+      },
+    });
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/onboarding");
+  await page.getByTestId("profile-tab-resume").click();
+
+  await page.setInputFiles('input[type="file"][accept="application/pdf"]', {
+    name: "empty.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF"),
+  });
+  await expect(page.getByTestId("resume-upload-error")).toContainText(
+    "Empty PDF rejected",
+  );
+
+  await page.setInputFiles('input[type="file"][accept="application/pdf"]', {
+    name: "resume.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4 " + "x".repeat(80)),
+  });
+  await expect(page.getByTestId("resume-upload-success")).toContainText(
+    "Added 1 vault item",
+  );
+
+  await page.getByTestId("go-to-tracks").click();
+  await expect(page).toHaveURL("/");
 });

@@ -49,12 +49,6 @@ const RESUME_HINTS: Record<string, string[]> = {
   unsupported_media_type: ["Only PDF files are accepted"],
 };
 
-const REQUIRED_LABELS: Record<string, string> = {
-  project: "a project",
-  skill: "skills",
-  education: "education",
-};
-
 const DEFAULT_STARTERS = [
   {
     id: "ai_interview",
@@ -141,58 +135,23 @@ function friendlyCoachError(raw: string | undefined): string {
   return "Oops! My thoughts got interrupted 😅 Let's try that again.";
 }
 
-function ProgressSteps({
-  phase,
-  hasVault,
-  hasWelcome,
-  finished,
-}: {
-  phase: string;
-  hasVault: boolean;
-  hasWelcome: boolean;
-  finished: boolean;
-}) {
-  const steps = [
-    { id: "resume", label: "Resume", done: hasVault || hasWelcome || finished },
-    {
-      id: "explore",
-      label: "Explore",
-      done: finished || phase === "goals" || phase === "ready",
-    },
-    { id: "goals", label: "Goals", done: finished || phase === "ready" },
-    { id: "ready", label: "Ready", done: finished },
-  ];
-  return (
-    <ol
-      className="flex flex-wrap items-center gap-2"
-      data-testid="onboarding-progress"
-      aria-label="Onboarding progress"
-    >
-      {steps.map((step, index) => (
-        <li key={step.id} className="flex items-center gap-2">
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-              step.done
-                ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-                : "bg-white text-stone-500 ring-1 ring-stone-200"
-            }`}
-          >
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                step.done ? "bg-emerald-500" : "bg-stone-300"
-              }`}
-            />
-            {step.label}
-          </span>
-          {index < steps.length - 1 && (
-            <span className="hidden text-stone-300 sm:inline" aria-hidden>
-              →
-            </span>
-          )}
-        </li>
-      ))}
-    </ol>
-  );
+function profileCompleteness(items: { category: string; source?: string }[], hasResumeWelcome: boolean) {
+  const hasSkills = items.some((i) => i.category === "skill");
+  const hasProjects = items.some((i) => i.category === "project");
+  const hasEducation = items.some((i) => i.category === "education");
+  const hasResume =
+    hasResumeWelcome || items.some((i) => (i.source || "").includes("resume"));
+  const score =
+    (hasSkills ? 25 : 0) +
+    (hasProjects ? 25 : 0) +
+    (hasEducation ? 25 : 0) +
+    (hasResume ? 25 : 0);
+  let nextHint = "Your profile looks complete — keep refining anytime.";
+  if (!hasProjects) nextHint = "Add a project to reach 100%";
+  else if (!hasSkills) nextHint = "Add a skill to reach 100%";
+  else if (!hasEducation) nextHint = "Add education to reach 100%";
+  else if (!hasResume) nextHint = "Upload a resume to reach 100%";
+  return { percent: score, nextHint };
 }
 
 export default function OnboardingPage() {
@@ -216,6 +175,7 @@ export default function OnboardingPage() {
   const [showNewPill, setShowNewPill] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [mobilePane, setMobilePane] = useState<"chat" | "profile">("chat");
   const [vaultChips, setVaultChips] = useState<
     { id: string; title: string }[]
   >([]);
@@ -387,10 +347,13 @@ export default function OnboardingPage() {
     const grew = count > prevMsgCountRef.current;
     prevMsgCountRef.current = count;
 
-    if (forceScrollRef.current || stickToBottomRef.current) {
-      const behavior: ScrollBehavior = forceScrollRef.current ? "smooth" : "smooth";
+    const force = forceScrollRef.current;
+    if (force || stickToBottomRef.current) {
       forceScrollRef.current = false;
-      requestAnimationFrame(() => scrollMessagesToBottom(behavior));
+      // Instant jump after send so a later user scroll-up is not fought by smooth scroll.
+      requestAnimationFrame(() =>
+        scrollMessagesToBottom(force ? "auto" : "smooth"),
+      );
       return;
     }
 
@@ -546,84 +509,250 @@ export default function OnboardingPage() {
           ? saveGoals.error
           : null;
 
+  const { percent: profilePercent, nextHint } = profileCompleteness(
+    vaultItems,
+    state.data?.has_resume_welcome === true,
+  );
+  const showQuickChips =
+    (messages.length === 0 || startersVisible || suggestedReplies.length > 0) &&
+    !busy;
+
+  const resumePanel = (
+    <div className="space-y-3">
+      <div
+        role="button"
+        tabIndex={upload.isPending ? -1 : 0}
+        aria-disabled={upload.isPending}
+        aria-label="Upload resume PDF"
+        data-testid="resume-upload-dropzone"
+        onKeyDown={(event) => {
+          if (upload.isPending) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            resumeInputRef.current?.click();
+          }
+        }}
+        onClick={() => {
+          if (!upload.isPending) resumeInputRef.current?.click();
+        }}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          if (!upload.isPending) setDragOver(true);
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!upload.isPending) setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragOver(false);
+          pickResume(event.dataTransfer.files?.[0]);
+        }}
+        className={`flex min-h-[7.5rem] min-w-0 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-4 py-5 text-center transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+          upload.isPending
+            ? "cursor-not-allowed border-line bg-page opacity-80"
+            : dragOver
+              ? "border-accent bg-accent-soft"
+              : "border-line bg-page/60 hover:border-accent hover:bg-accent-soft/40"
+        }`}
+      >
+        {upload.isPending ? (
+          <span className="inline-flex items-center gap-2 text-sm font-medium text-ink">
+            <span
+              className="h-4 w-4 motion-safe:animate-spin rounded-full border-2 border-accent/30 border-t-accent"
+              aria-hidden="true"
+            />
+            Extracting your experience…
+          </span>
+        ) : (
+          <span className="text-sm font-medium text-ink">Upload resume PDF</span>
+        )}
+        <span className="mt-1 text-[11px] text-ink-soft">
+          Drag and drop or click — PDF up to 10 MB
+        </span>
+        <input
+          ref={resumeInputRef}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          disabled={upload.isPending}
+          onChange={(e) => {
+            pickResume(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+      </div>
+      {resumeFile && (
+        <p className="truncate text-xs text-ink-soft" title={resumeFile.name}>
+          {resumeFile.name} · {formatBytes(resumeFile.size)}
+        </p>
+      )}
+      {upload.data && (
+        <p className="text-xs text-emerald-700" data-testid="resume-upload-success">
+          {upload.data.items_created.length === 0
+            ? "No new vault items — those titles were already saved."
+            : `Added ${upload.data.items_created.length} vault item${
+                upload.data.items_created.length === 1 ? "" : "s"
+              } from your resume.`}
+          {upload.data.welcome_seeded
+            ? " Your coach started the conversation."
+            : ""}
+        </p>
+      )}
+      {uploadError && (
+        <div
+          className="rounded-xl bg-red-50 p-3 text-xs text-red-700"
+          data-testid="resume-upload-error"
+          role="alert"
+        >
+          <p>{uploadError.message}</p>
+          {uploadHints && uploadHints.length > 0 && (
+            <ul className="mt-2 list-disc space-y-0.5 pl-4 text-red-600/90">
+              {uploadHints.map((hint) => (
+                <li key={hint}>{hint}</li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            className="mt-2 font-semibold text-accent-strong underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            onClick={() => {
+              upload.reset();
+              if (resumeFile) upload.mutate(resumeFile);
+              else resumeInputRef.current?.click();
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      <Link
+        to="/readiness"
+        className="block rounded-2xl border border-accent/25 bg-accent-soft/50 p-3 transition hover:-translate-y-0.5 hover:bg-accent-soft hover:shadow-card"
+        data-testid="readiness-onboarding-card"
+      >
+        <h2 className="text-sm font-semibold text-accent-strong">
+          Check how ready your resume is for interviews
+        </h2>
+        <p className="mt-1 text-xs text-ink-soft">
+          See which claims interviewers often ask about — without judging honesty.
+        </p>
+      </Link>
+    </div>
+  );
+
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3"
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
       data-testid="onboarding-page"
       style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
     >
-      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-accent">
-            Profile setup
-          </p>
-          <h1 className="text-xl font-semibold tracking-tight">
-            {finished ? "Your profile vault" : "Meet your interview coach"}
-          </h1>
-          <p className="mt-0.5 text-sm text-stone-500">
-            {finished
-              ? "Your profile is saved. Edit anything below — Tracks stays your home."
-              : "Upload a resume or chat — your coach builds your vault with you."}
-          </p>
-        </div>
-        <ProgressSteps
-          phase={phase}
-          hasVault={vaultItems.length > 0}
-          hasWelcome={state.data?.has_resume_welcome === true}
-          finished={finished}
-        />
+      <div
+        className="pointer-events-none absolute -left-16 top-8 h-56 w-56 rounded-full bg-accent/15 blur-3xl"
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute -right-10 bottom-10 h-64 w-64 rounded-full bg-accent-soft blur-3xl"
+        aria-hidden
+      />
+
+      <div
+        role="tablist"
+        aria-label="Onboarding views"
+        data-testid="mobile-pane-switcher"
+        className="relative z-10 mb-2 flex shrink-0 gap-1 rounded-2xl border border-line/80 bg-surface/80 p-1 backdrop-blur-md lg:hidden"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mobilePane === "chat"}
+          data-testid="mobile-pane-chat"
+          onClick={() => setMobilePane("chat")}
+          className={`min-h-11 flex-1 rounded-xl text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+            mobilePane === "chat"
+              ? "bg-accent text-white shadow-card"
+              : "text-ink-soft"
+          }`}
+        >
+          Chat
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mobilePane === "profile"}
+          data-testid="mobile-pane-profile"
+          onClick={() => setMobilePane("profile")}
+          className={`relative min-h-11 flex-1 rounded-xl text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+            mobilePane === "profile"
+              ? "bg-accent text-white shadow-card"
+              : "text-ink-soft"
+          }`}
+        >
+          Profile
+          <span
+            className={`ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-semibold ${
+              mobilePane === "profile"
+                ? "bg-white/20 text-white"
+                : "bg-accent-soft text-accent-strong"
+            }`}
+          >
+            {profilePercent}%
+          </span>
+        </button>
       </div>
 
-      {finished && (
-        <div
-          data-testid="onboarding-finished-banner"
-          className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
-        >
-          Onboarding completed
-          {state.data?.onboarding_completed_at
-            ? ` · ${new Date(state.data.onboarding_completed_at).toLocaleDateString()}`
-            : ""}
-          . You can keep refining your vault anytime.
-        </div>
-      )}
-
-      <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="relative z-10 grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[minmax(0,1.62fr)_minmax(0,1fr)]">
         <section
           data-testid="onboarding-chat-panel"
-          className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-sm"
+          aria-label="Coach chat"
+          className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-3xl border border-line/80 bg-surface/85 shadow-card backdrop-blur-md ${
+            mobilePane === "chat" ? "flex" : "hidden lg:flex"
+          }`}
         >
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-accent-soft/40 px-4 py-3 sm:px-5">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line/70 px-4 py-3 sm:px-5">
             <div className="flex min-w-0 items-center gap-3">
-              <CoachAvatar mood={coachMood} />
+              <div className="relative">
+                <CoachAvatar mood={coachMood} />
+                <span
+                  className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ring-2 ring-surface ${
+                    busy ? "bg-amber-400 coach-status-pulse" : "bg-emerald-500"
+                  }`}
+                  aria-hidden
+                />
+              </div>
               <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-ink">
-                  Aiko · Interview Coach
-                </h2>
-                <p className="truncate text-xs text-ink-soft">
-                  {busy
-                    ? "Thinking…"
-                    : finished
-                      ? "Happy to refine your vault anytime"
-                      : state.data?.has_resume_welcome
-                        ? "Resume reviewed · let's personalize your prep"
-                        : "Friendly coach · vault updates as you share"}
-                </p>
+                <h2 className="truncate text-sm font-semibold text-ink">Aiko</h2>
+                <p className="truncate text-xs text-ink-soft">Interview Coach</p>
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {canShowStarters && (
-                <button
-                  type="button"
-                  className="hidden rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-ink-soft ring-1 ring-line hover:bg-page sm:inline"
-                  onClick={() => setShowStartersOverride((v) => !v)}
-                >
-                  {showStartersOverride ? "Hide starters" : "Show starters"}
-                </button>
-              )}
-              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-ink-faint ring-1 ring-line">
-                {messages.filter((m) => m.role !== "pending").length}
-              </span>
-            </div>
+            <span
+              data-testid="onboarding-status-chip"
+              title={
+                finished && state.data?.onboarding_completed_at
+                  ? `Completed ${new Date(state.data.onboarding_completed_at).toLocaleString()}`
+                  : undefined
+              }
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ${
+                finished
+                  ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
+                  : "bg-accent-soft text-accent-strong ring-accent/20"
+              }`}
+            >
+              {finished ? (
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
+                  <path
+                    d="M3.5 8.2 6.8 11.3 12.5 4.8"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : null}
+              {finished ? "Onboarding complete" : "In progress"}
+            </span>
           </div>
 
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -675,6 +804,10 @@ export default function OnboardingPage() {
                     : isNew
                       ? "coach-bubble-enter-assistant"
                       : "";
+                const prevRole = i > 0 ? messages[i - 1]?.role : null;
+                const showAvatar =
+                  m.role !== "user" &&
+                  (i === 0 || prevRole === "user" || prevRole === undefined);
                 return (
                   <div
                     key={key}
@@ -683,10 +816,14 @@ export default function OnboardingPage() {
                     } ${enterClass}`}
                   >
                     {m.role !== "user" && (
-                      <CoachAvatar
-                        size="sm"
-                        mood={m.role === "pending" ? "thinking" : "idle"}
-                      />
+                      <div className="w-8 shrink-0">
+                        {showAvatar ? (
+                          <CoachAvatar
+                            size="sm"
+                            mood={m.role === "pending" ? "thinking" : "idle"}
+                          />
+                        ) : null}
+                      </div>
                     )}
                     <div
                       className={`min-w-0 break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm [overflow-wrap:anywhere] ${
@@ -694,7 +831,7 @@ export default function OnboardingPage() {
                           ? "rounded-br-md bg-accent text-white"
                           : m.role === "pending"
                             ? "rounded-bl-md border border-line bg-accent-soft/50 text-ink-soft"
-                            : "rounded-bl-md border border-line bg-white text-ink"
+                            : "rounded-bl-md border border-line bg-page/80 text-ink"
                       }`}
                     >
                       {m.role === "pending" ? <TypingIndicator /> : m.content}
@@ -735,47 +872,40 @@ export default function OnboardingPage() {
                 </div>
               )}
 
-              {startersVisible && !busy && (
-                <ConversationStarters
-                  starters={starters}
-                  skills={state.data?.suggested_skills ?? []}
-                  projects={state.data?.suggested_projects ?? []}
-                  vaultItems={vaultItems}
-                  activeMode={state.data?.conversation_mode}
-                  pending={busy}
-                  onSelectStarter={(id) => {
-                    setLastStarterId(id);
-                    forceScrollRef.current = true;
-                    starter.mutate(id);
-                  }}
-                  onExploreSkill={(skill) =>
-                    send(
-                      `I'd like to explore my skill in ${skill}. Ask me one question about how I've used it.`,
-                    )
-                  }
-                  onExploreProject={(project) =>
-                    send(
-                      `Let's explore my project “${project}”. Ask follow-ups based only on what's in my vault.`,
-                    )
-                  }
-                />
-              )}
-
-              {suggestedReplies.length > 0 && !busy && !finished && (
-                <div className="flex flex-wrap gap-2 pl-10" data-testid="suggested-replies">
-                  {suggestedReplies.map((reply) => (
-                    <button
-                      key={reply}
-                      type="button"
-                      disabled={busy}
-                      onClick={() => send(reply)}
-                      className="rounded-full border border-accent/25 bg-accent-soft/70 px-3 py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
-                    >
-                      {reply}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {(phase === "goals" || phase === "ready" || showGoalMenu) &&
+                !finished && (
+                  <div className="rounded-2xl border border-line/80 bg-surface/90 p-3">
+                    <GoalDiscovery
+                      options={state.data?.goal_interest_options ?? []}
+                      preferences={prefs}
+                      suggestedSkills={state.data?.suggested_skills ?? []}
+                      suggestedProjects={state.data?.suggested_projects ?? []}
+                      suggestedRoles={state.data?.suggested_roles ?? []}
+                      suggestedTechnicalAreas={
+                        state.data?.suggested_technical_areas ?? []
+                      }
+                      projectOptions={state.data?.project_options ?? []}
+                      projectAspectOptions={
+                        state.data?.project_aspect_options ?? []
+                      }
+                      resumeHighlights={state.data?.resume_highlights}
+                      nextGoalFollowup={state.data?.next_goal_followup}
+                      followupsComplete={state.data?.followups_complete}
+                      phase={phase}
+                      showGoalMenu={
+                        Boolean(state.data?.show_goal_menu) ||
+                        !prefs?.interests?.length
+                      }
+                      goalsReady={goalsReady}
+                      pending={goalsBusy}
+                      onSaveInterests={(interests) =>
+                        saveGoals.mutate({ interests })
+                      }
+                      onSaveDetails={(patch) => saveGoals.mutate(patch)}
+                      onConfirmAndStart={() => finish.mutate()}
+                    />
+                  </div>
+                )}
 
               {coachError && (
                 <div
@@ -820,35 +950,57 @@ export default function OnboardingPage() {
             )}
           </div>
 
-          {(phase === "goals" || phase === "ready" || showGoalMenu) && !finished && (
-            <div className="max-h-[40%] shrink-0 overflow-y-auto border-t border-line p-3 sm:p-4">
-              <GoalDiscovery
-                options={state.data?.goal_interest_options ?? []}
-                preferences={prefs}
-                suggestedSkills={state.data?.suggested_skills ?? []}
-                suggestedProjects={state.data?.suggested_projects ?? []}
-                suggestedRoles={state.data?.suggested_roles ?? []}
-                suggestedTechnicalAreas={state.data?.suggested_technical_areas ?? []}
-                projectOptions={state.data?.project_options ?? []}
-                projectAspectOptions={state.data?.project_aspect_options ?? []}
-                resumeHighlights={state.data?.resume_highlights}
-                nextGoalFollowup={state.data?.next_goal_followup}
-                followupsComplete={state.data?.followups_complete}
-                phase={phase}
-                showGoalMenu={Boolean(state.data?.show_goal_menu) || !prefs?.interests?.length}
-                goalsReady={goalsReady}
-                pending={goalsBusy}
-                onSaveInterests={(interests) => saveGoals.mutate({ interests })}
-                onSaveDetails={(patch) => saveGoals.mutate(patch)}
-                onConfirmAndStart={() => finish.mutate()}
-              />
-            </div>
-          )}
-
           <div
             data-testid="onboarding-chat-composer"
-            className="shrink-0 border-t border-line bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"
+            className="shrink-0 border-t border-line/70 bg-surface/90 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"
           >
+            {showQuickChips && (
+              <div className="mb-2 space-y-2">
+                {startersVisible && (
+                  <ConversationStarters
+                    starters={starters}
+                    skills={state.data?.suggested_skills ?? []}
+                    projects={state.data?.suggested_projects ?? []}
+                    vaultItems={vaultItems}
+                    activeMode={state.data?.conversation_mode}
+                    pending={busy}
+                    onSelectStarter={(id) => {
+                      setLastStarterId(id);
+                      forceScrollRef.current = true;
+                      starter.mutate(id);
+                    }}
+                    onExploreSkill={(skill) =>
+                      send(
+                        `I'd like to explore my skill in ${skill}. Ask me one question about how I've used it.`,
+                      )
+                    }
+                    onExploreProject={(project) =>
+                      send(
+                        `Let's explore my project “${project}”. Ask follow-ups based only on what's in my vault.`,
+                      )
+                    }
+                  />
+                )}
+                {suggestedReplies.length > 0 && !finished && (
+                  <div
+                    className="flex flex-wrap gap-2"
+                    data-testid="suggested-replies"
+                  >
+                    {suggestedReplies.map((reply) => (
+                      <button
+                        key={reply}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => send(reply)}
+                        className="min-h-9 rounded-full border border-accent/25 bg-accent-soft/70 px-3 py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
+                      >
+                        {reply}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="mb-2 flex flex-wrap gap-2">
               {!finished && (
                 <button
@@ -864,7 +1016,9 @@ export default function OnboardingPage() {
                   type="button"
                   className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                   onClick={() =>
-                    send("Let's go back to reviewing my vault profile for a moment.")
+                    send(
+                      "Let's go back to reviewing my vault profile for a moment.",
+                    )
                   }
                 >
                   Return to profile review
@@ -874,7 +1028,9 @@ export default function OnboardingPage() {
                 <button
                   type="button"
                   className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  onClick={() => send("I'd like to skip this question and move on.")}
+                  onClick={() =>
+                    send("I'd like to skip this question and move on.")
+                  }
                 >
                   Skip this question
                 </button>
@@ -889,7 +1045,7 @@ export default function OnboardingPage() {
                   aria-expanded={emojiOpen}
                   disabled={busy}
                   onClick={() => setEmojiOpen((v) => !v)}
-                  className="rounded-xl border border-line bg-page/40 px-2.5 py-2.5 text-base leading-none hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
+                  className="min-h-11 min-w-11 rounded-xl border border-line bg-page/40 text-base leading-none hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
                 >
                   😊
                 </button>
@@ -917,7 +1073,7 @@ export default function OnboardingPage() {
                       ? "Type your reply…"
                       : "Tell me about a project, internship, or skill…"
                 }
-                className="max-h-[7.5rem] min-h-[2.625rem] min-w-0 flex-1 resize-none overflow-y-auto rounded-xl border border-line bg-page/40 px-4 py-2.5 text-sm leading-5 outline-none transition focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/20 disabled:opacity-60"
+                className="max-h-[7.5rem] min-h-11 min-w-0 flex-1 resize-none overflow-y-auto rounded-xl border border-line bg-page/40 px-4 py-2.5 text-sm leading-5 outline-none transition focus:border-accent focus:bg-surface focus:ring-2 focus:ring-accent/20 disabled:opacity-60"
                 disabled={busy}
                 data-testid="onboarding-chat-input"
                 aria-label="Message your coach"
@@ -928,7 +1084,7 @@ export default function OnboardingPage() {
                 disabled={busy || !input.trim()}
                 data-testid="onboarding-chat-send"
                 aria-label={busy ? "Sending" : "Send message"}
-                className="inline-flex min-w-[4.5rem] items-center justify-center gap-1.5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-xl bg-accent px-4 text-sm font-semibold text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40 sm:min-w-[4.5rem]"
               >
                 {busy ? (
                   <span
@@ -943,177 +1099,31 @@ export default function OnboardingPage() {
           </div>
         </section>
 
-        <aside className="flex min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto overscroll-contain lg:max-h-full">
-          <VaultSidebar items={vaultItems} />
-
-          <Link
-            to="/readiness"
-            className="block rounded-lg border border-accent/30 bg-accent-soft/50 p-4 hover:bg-accent-soft"
-            data-testid="readiness-onboarding-card"
-          >
-            <h2 className="text-sm font-semibold text-accent-strong">
-              Check how ready your resume is for interviews
-            </h2>
-            <p className="mt-1 text-xs text-ink-soft">
-              See which claims interviewers often ask about — without judging honesty.
-            </p>
-          </Link>
-
-          <div className="rounded-lg border border-stone-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-stone-800">Resume</h2>
-            <p className="mt-1 text-xs text-stone-500">
-              Optional — PDF up to 10 MB. Successful upload starts the AI conversation.
-            </p>
-            <div
-              role="button"
-              tabIndex={upload.isPending ? -1 : 0}
-              aria-disabled={upload.isPending}
-              aria-label="Upload resume PDF"
-              data-testid="resume-upload-dropzone"
-              onKeyDown={(event) => {
-                if (upload.isPending) return;
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  resumeInputRef.current?.click();
-                }
-              }}
-              onClick={() => {
-                if (!upload.isPending) resumeInputRef.current?.click();
-              }}
-              onDragEnter={(event) => {
-                event.preventDefault();
-                if (!upload.isPending) setDragOver(true);
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-                if (!upload.isPending) setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(event) => {
-                event.preventDefault();
-                setDragOver(false);
-                pickResume(event.dataTransfer.files?.[0]);
-              }}
-              className={`mt-3 flex min-w-0 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed px-4 py-5 text-center transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-                upload.isPending
-                  ? "cursor-not-allowed border-line bg-stone-50 opacity-80"
-                  : dragOver
-                    ? "border-accent bg-accent-soft"
-                    : "border-line bg-page hover:border-accent hover:bg-surface"
-              }`}
-            >
-              {upload.isPending ? (
-                <span className="inline-flex items-center gap-2 text-sm font-medium text-ink">
-                  <span
-                    className="h-4 w-4 motion-safe:animate-spin rounded-full border-2 border-accent/30 border-t-accent"
-                    aria-hidden="true"
-                  />
-                  Extracting your experience…
-                </span>
-              ) : (
-                <span className="text-sm font-medium text-ink">Upload resume PDF</span>
-              )}
-              <span className="mt-1 text-[11px] text-stone-500">
-                Drag and drop or click — speeds up vault setup
-              </span>
-              <input
-                ref={resumeInputRef}
-                type="file"
-                accept="application/pdf"
-                className="hidden"
-                disabled={upload.isPending}
-                onChange={(e) => {
-                  pickResume(e.target.files?.[0]);
-                  e.target.value = "";
-                }}
-              />
-            </div>
-            {resumeFile && (
-              <p className="mt-2 truncate text-xs text-ink-soft" title={resumeFile.name}>
-                {resumeFile.name} · {formatBytes(resumeFile.size)}
-              </p>
-            )}
-            {upload.data && (
-              <p className="mt-2 text-xs text-emerald-700" data-testid="resume-upload-success">
-                {upload.data.items_created.length === 0
-                  ? "No new vault items — those titles were already saved."
-                  : `Added ${upload.data.items_created.length} vault item${
-                      upload.data.items_created.length === 1 ? "" : "s"
-                    } from your resume.`}
-                {upload.data.welcome_seeded
-                  ? " Your coach started the conversation."
-                  : ""}
-              </p>
-            )}
-            {uploadError && (
-              <div
-                className="mt-2 rounded-md bg-red-50 p-3 text-xs text-red-700"
-                data-testid="resume-upload-error"
-                role="alert"
-              >
-                <p>{uploadError.message}</p>
-                {uploadHints && uploadHints.length > 0 && (
-                  <ul className="mt-2 list-disc space-y-0.5 pl-4 text-red-600/90">
-                    {uploadHints.map((hint) => (
-                      <li key={hint}>{hint}</li>
-                    ))}
-                  </ul>
-                )}
-                <button
-                  type="button"
-                  className="mt-2 font-semibold text-accent-strong underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  onClick={() => {
-                    upload.reset();
-                    if (resumeFile) upload.mutate(resumeFile);
-                    else resumeInputRef.current?.click();
-                  }}
-                >
-                  Try again
-                </button>
-              </div>
-            )}
-          </div>
-
-          {finished ? (
-            <button
-              type="button"
-              data-testid="go-to-tracks"
-              onClick={() => navigate("/", { replace: true })}
-              className="rounded-lg bg-accent px-4 py-3.5 text-center text-sm font-semibold text-white hover:bg-accent-strong"
-            >
-              Go to Tracks
-            </button>
-          ) : canStartPreparing ? (
-            <div className="space-y-2">
-              <button
-                type="button"
-                data-testid="finish-onboarding"
-                onClick={() => finish.mutate()}
-                disabled={finish.isPending}
-                className="w-full rounded-lg bg-accent px-4 py-3.5 text-center text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
-              >
-                {finish.isPending ? "Saving…" : "Start Preparing"}
-              </button>
-              {finish.error instanceof Error && (
-                <p className="text-center text-xs text-red-600">
-                  {finish.error.message}
-                </p>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <p className="rounded-lg border border-accent/30 bg-accent-soft/50 px-4 py-3 text-center text-xs text-ink">
-                Pick your interview preparation goals above to continue — you can
-                skip optional profile details and add them later.
-              </p>
-              {missing.length > 0 && (
-                <p className="rounded-lg border border-line bg-page px-4 py-2 text-center text-[11px] text-ink-soft">
-                  Optional later:{" "}
-                  {missing.map((c) => REQUIRED_LABELS[c] ?? c).join(", ")}.
-                </p>
-              )}
-            </div>
-          )}
+        <aside
+          className={`min-h-0 min-w-0 ${
+            mobilePane === "profile" ? "flex" : "hidden lg:flex"
+          }`}
+          aria-label="Profile vault"
+        >
+          <VaultSidebar
+            items={vaultItems}
+            loading={state.isLoading}
+            errorMessage={
+              state.error instanceof Error ? state.error.message : null
+            }
+            onRetry={() => state.refetch()}
+            percentComplete={profilePercent}
+            nextHint={nextHint}
+            finished={finished}
+            canStartPreparing={canStartPreparing}
+            finishPending={finish.isPending}
+            finishError={
+              finish.error instanceof Error ? finish.error.message : null
+            }
+            onGoToTracks={() => navigate("/", { replace: true })}
+            onFinish={() => finish.mutate()}
+            resumePanel={resumePanel}
+          />
         </aside>
       </div>
     </div>
