@@ -7,11 +7,14 @@ import {
   type ChatResult,
   type OnboardingState,
   type PreparationPreferences,
+  type StartInterviewOffer,
+  type Track,
 } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import ConversationStarters from "../components/ConversationStarters";
 import EmojiPicker from "../components/EmojiPicker";
 import GoalDiscovery from "../components/GoalDiscovery";
+import StartInterviewModal from "../components/StartInterviewModal";
 import { VaultSidebar } from "../components/VaultSidebar";
 
 const NEAR_BOTTOM_PX = 120;
@@ -20,6 +23,7 @@ const CHAT_TIMEOUT_MS = 30_000;
 const STILL_THINKING_MS = 8_000;
 const IDLE_NUDGE_MS = 45_000;
 const IDLE_NUDGE_SECOND_MS = 120_000;
+const DEDUPE_WINDOW_MS = 2_000;
 const EMPTY_REPLY_FALLBACK =
   "I didn't catch that. Could you say it a different way?";
 const DEFAULT_DOC_TITLE = "InterviewCopilot";
@@ -210,6 +214,13 @@ export default function OnboardingPage() {
   } | null>(null);
   const [nudgeCount, setNudgeCount] = useState(0);
   const [activityEpoch, setActivityEpoch] = useState(0);
+  const [startOffer, setStartOffer] = useState<StartInterviewOffer | null>(null);
+  const [startTrack, setStartTrack] = useState<{ id: string; subject: string } | null>(
+    null,
+  );
+  const [startCreating, setStartCreating] = useState(false);
+  const startOfferSeenRef = useRef(false);
+  const lastSendRef = useRef<{ text: string; at: number } | null>(null);
   const lastActivityRef = useRef(Date.now());
   const baseTitleRef = useRef(
     typeof document !== "undefined" ? document.title || DEFAULT_DOC_TITLE : DEFAULT_DOC_TITLE,
@@ -263,10 +274,16 @@ export default function OnboardingPage() {
   });
 
   const chat = useMutation({
-    mutationFn: (message: string) =>
+    mutationFn: ({
+      message,
+      messageId,
+    }: {
+      message: string;
+      messageId: string;
+    }) =>
       api<ChatResult>("/onboarding/chat", {
         method: "POST",
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, message_id: messageId }),
         signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
       }),
     onSuccess: (data) => {
@@ -274,9 +291,15 @@ export default function OnboardingPage() {
       setPendingUser(null);
       setStillThinking(false);
       setInput("");
-      setEmptyFallback(
-        (data.reply || "").trim() ? null : EMPTY_REPLY_FALLBACK,
-      );
+      const blank = !(data.reply || "").trim();
+      setEmptyFallback(blank ? EMPTY_REPLY_FALLBACK : null);
+      if (blank) {
+        pushToast(
+          "info",
+          "I didn't catch that",
+          "Try saying it a different way?",
+        );
+      }
       const added = [
         ...(data.items_created ?? []),
         ...(data.items_updated ?? []),
@@ -290,6 +313,14 @@ export default function OnboardingPage() {
           `Saved to your profile: ${added[0].title}`,
         );
       }
+      if (
+        data.offer_start_interview?.subject &&
+        !startOfferSeenRef.current &&
+        !startOffer
+      ) {
+        startOfferSeenRef.current = true;
+        setStartOffer(data.offer_start_interview);
+      }
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         document.title = "(1) New reply from Aiko";
       }
@@ -298,20 +329,37 @@ export default function OnboardingPage() {
       qc.invalidateQueries({ queryKey: ["onboarding-state"] });
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    onError: (err, message) => {
-      setFailedMessage(message);
-      setPendingUser({ content: message, status: "failed" });
+    onError: (err, vars) => {
+      const failedText = vars.message;
+      setFailedMessage(failedText);
+      setPendingUser({ content: failedText, status: "failed" });
       setStillThinking(false);
       const detail =
         err instanceof Error ? err.message : "Please try again.";
-      pushToast("error", "Message failed", detail, {
-        label: "Retry",
-        onAction: () => {
-          setPendingUser({ content: message, status: "sending" });
-          setFailedMessage(null);
-          chat.mutate(message);
+      const isBusy =
+        /busy|rate|quota|503|temporarily|timeout|aborted|exceeded/i.test(
+          detail,
+        );
+      pushToast(
+        "error",
+        isBusy ? "AI is busy" : "Message failed",
+        isBusy
+          ? detail.includes("minute")
+            ? detail
+            : "Please retry in about a minute."
+          : detail,
+        {
+          label: "Retry",
+          onAction: () => {
+            setPendingUser({ content: failedText, status: "sending" });
+            setFailedMessage(null);
+            chat.mutate({
+              message: failedText,
+              messageId: vars.messageId || `retry-${Date.now().toString(36)}`,
+            });
+          },
         },
-      });
+      );
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
   });
@@ -388,11 +436,20 @@ export default function OnboardingPage() {
 
   const finish = useMutation({
     mutationFn: () =>
-      api<OnboardingState>("/onboarding/complete", { method: "POST" }),
+      api<OnboardingState & { offer_start_interview?: StartInterviewOffer | null }>(
+        "/onboarding/complete",
+        { method: "POST" },
+      ),
     onSuccess: async (data) => {
       qc.setQueryData(["onboarding-state"], data);
       pushToast("success", "Onboarding finished");
       await refresh();
+      const offer = data.offer_start_interview;
+      if (offer?.subject && !startOfferSeenRef.current) {
+        startOfferSeenRef.current = true;
+        setStartOffer(offer);
+        return;
+      }
       navigate("/", { replace: true });
     },
   });
@@ -405,6 +462,38 @@ export default function OnboardingPage() {
     const t = window.setTimeout(() => setStillThinking(true), STILL_THINKING_MS);
     return () => window.clearTimeout(t);
   }, [chat.isPending]);
+
+  // Recover stuck history: user messages with no coach reply (e.g. prior 503/empty).
+  const orphanRecoveredRef = useRef(false);
+  useEffect(() => {
+    if (orphanRecoveredRef.current || state.isLoading || chat.isPending) return;
+    const msgs = state.data?.messages;
+    if (!msgs?.length) return;
+    let i = msgs.length - 1;
+    while (i >= 0 && msgs[i].role === "user") i -= 1;
+    const trailing = msgs.slice(i + 1).filter((m) => m.role === "user");
+    if (!trailing.length) return;
+    orphanRecoveredRef.current = true;
+    const last = trailing[trailing.length - 1].content;
+    setFailedMessage(last);
+    setPendingUser({ content: last, status: "failed" });
+    pushToast(
+      "error",
+      "Last reply didn't arrive",
+      "The coach was busy — tap Retry to resend.",
+      {
+        label: "Retry",
+        onAction: () => {
+          setPendingUser({ content: last, status: "sending" });
+          setFailedMessage(null);
+          chat.mutate({
+            message: last,
+            messageId: `retry-${Date.now().toString(36)}`,
+          });
+        },
+      },
+    );
+  }, [state.isLoading, state.data?.messages, chat.isPending]);
 
   useEffect(() => {
     const onOnline = () => pushToast("success", "Connection restored");
@@ -564,7 +653,17 @@ export default function OnboardingPage() {
 
   const send = (override?: string) => {
     const message = (override ?? input).trim();
-    if (!message || busy) return;
+    if (!message || busy || chat.isPending) return;
+    const now = Date.now();
+    const last = lastSendRef.current;
+    if (
+      last &&
+      last.text === message &&
+      now - last.at < DEDUPE_WINDOW_MS
+    ) {
+      return;
+    }
+    lastSendRef.current = { text: message, at: now };
     chat.reset();
     setFailedMessage(null);
     setEmptyFallback(null);
@@ -574,9 +673,45 @@ export default function OnboardingPage() {
     stickToBottomRef.current = true;
     setShowNewPill(false);
     setPendingUser({ content: message, status: "sending" });
-    // Keep the message visible until success so failures can retry without retyping.
+    // Keep the draft until the server accepts the message.
     setInput(message);
-    chat.mutate(message);
+    const messageId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `m-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    chat.mutate({ message, messageId });
+  };
+
+  const dismissStartOffer = () => {
+    setStartOffer(null);
+    if (finished) navigate("/", { replace: true });
+  };
+
+  const confirmStartOffer = async () => {
+    if (!startOffer?.subject || startCreating) return;
+    setStartCreating(true);
+    try {
+      const data = await api<{ track: Track }>(
+        "/onboarding/review/start-recommended",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            subject: startOffer.subject,
+            track_type: startOffer.track_type || "topic",
+          }),
+        },
+      );
+      setStartOffer(null);
+      setStartTrack({ id: data.track.id, subject: data.track.subject });
+    } catch (err) {
+      pushToast(
+        "error",
+        "Could not start interview",
+        err instanceof Error ? err.message : "Please try again.",
+      );
+    } finally {
+      setStartCreating(false);
+    }
   };
 
   const insertEmoji = (emoji: string) => {
@@ -598,8 +733,10 @@ export default function OnboardingPage() {
 
   const retryCoach = () => {
     if (busy) return;
-    if (chat.error) {
-      const message = (failedMessage ?? input).trim();
+    const orphan =
+      pendingUser?.status === "failed" ? pendingUser.content.trim() : "";
+    if (chat.error || orphan) {
+      const message = (failedMessage ?? orphan ?? input).trim();
       if (!message) return;
       send(message);
       return;
@@ -1167,13 +1304,18 @@ export default function OnboardingPage() {
                   </div>
                 )}
 
-              {coachError && (
+              {(coachError || pendingUser?.status === "failed") && !chat.isPending && (
                 <div
                   data-testid="onboarding-chat-error"
                   role="alert"
                   className="ml-10 max-w-md rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-950"
                 >
-                  <p>{friendlyCoachError(coachError.message)}</p>
+                  <p>
+                    {friendlyCoachError(
+                      coachError?.message ||
+                        "The coach was busy and didn't reply.",
+                    )}
+                  </p>
                   <button
                     type="button"
                     data-testid="onboarding-chat-retry"
@@ -1429,7 +1571,12 @@ export default function OnboardingPage() {
       </div>
 
       <div
-        className="pointer-events-none fixed inset-x-3 top-[max(0.75rem,env(safe-area-inset-top))] z-50 flex flex-col items-stretch gap-2 sm:inset-x-auto sm:right-4 sm:left-auto sm:w-80 lg:top-16"
+        className="pointer-events-none fixed inset-x-3 z-50 flex flex-col items-stretch gap-2 bottom-[max(5.75rem,calc(env(safe-area-inset-bottom)+4.5rem))] sm:inset-x-auto sm:bottom-auto sm:right-4 sm:left-auto sm:top-[max(0.75rem,env(safe-area-inset-top))] sm:w-80 lg:top-16"
+        style={
+          keyboardInset > 0
+            ? { bottom: `calc(${keyboardInset}px + 5.5rem)` }
+            : undefined
+        }
         data-testid="toast-stack"
       >
         {toasts.map((t) => (
@@ -1480,6 +1627,63 @@ export default function OnboardingPage() {
           </div>
         ))}
       </div>
+
+      {startOffer && !startTrack && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="start-interview-title"
+          data-testid="start-interview-offer"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) dismissStartOffer();
+          }}
+        >
+          <div className="start-modal-panel w-full max-w-md rounded-2xl border border-line bg-surface p-5 shadow-card">
+            <h2
+              id="start-interview-title"
+              className="text-lg font-semibold text-ink"
+            >
+              Let&apos;s start your interview
+            </h2>
+            <p className="mt-2 text-sm text-ink-soft">
+              {startOffer.reason === "onboarding_finished"
+                ? "You're ready to practise. We can open a focused session now."
+                : `Ready to practise ${startOffer.subject}?`}
+            </p>
+            <p className="mt-3 rounded-xl bg-accent-soft/70 px-3 py-2 text-sm font-medium text-accent-strong">
+              Focus: {startOffer.subject}
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                className="min-h-10 rounded-xl border border-line px-3.5 text-sm font-medium text-ink-soft hover:bg-page"
+                onClick={dismissStartOffer}
+                data-testid="start-interview-dismiss"
+              >
+                Not now
+              </button>
+              <button
+                type="button"
+                className="min-h-10 rounded-xl bg-accent px-3.5 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
+                onClick={() => void confirmStartOffer()}
+                disabled={startCreating}
+                data-testid="start-interview-confirm"
+              >
+                {startCreating ? "Starting…" : "Start interview"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <StartInterviewModal
+        track={startTrack}
+        onClose={() => {
+          setStartTrack(null);
+          if (finished) navigate("/", { replace: true });
+        }}
+      />
     </div>
   );
 }

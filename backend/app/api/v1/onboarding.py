@@ -20,6 +20,8 @@ _SUGGESTED = ("project", "skill", "education")
 
 class ChatRequest(BaseModel):
     message: str = Field(max_length=20000)
+    # Client-generated id for idempotent retries (additive; optional).
+    message_id: str | None = Field(default=None, max_length=80)
 
 
 class GoalsRequest(BaseModel):
@@ -116,6 +118,7 @@ async def chat(
             body.message,
             request_id=request.headers.get("x-request-id"),
             already_finished=user.onboarding_completed_at is not None,
+            message_id=body.message_id,
         )
     except LLMGatewayError as exc:
         raise HTTPException(
@@ -223,7 +226,30 @@ async def complete(
     await onboarding_service.ensure_profile_review(
         db, request.app.state.mongo_db, user, force=first_finish
     )
-    return await _state_payload(request.app.state.mongo_db, db, user)
+    payload = await _state_payload(request.app.state.mongo_db, db, user)
+    # Offer the start-interview popup once on first finish (additive field).
+    if first_finish and not await conversation_store.get_start_offer_shown(
+        request.app.state.mongo_db, str(user.id)
+    ):
+        seeds = payload.get("recommended_tracks") or []
+        seed = seeds[0] if seeds else {}
+        subject = (
+            (seed.get("subject") if isinstance(seed, dict) else None)
+            or (prefs.get("target_role") if isinstance(prefs, dict) else None)
+            or "your focus area"
+        )
+        payload["offer_start_interview"] = {
+            "subject": str(subject),
+            "track_type": (
+                seed.get("track_type") if isinstance(seed, dict) else None
+            )
+            or "topic",
+            "reason": "onboarding_finished",
+        }
+        await conversation_store.mark_start_offer_shown(
+            request.app.state.mongo_db, str(user.id)
+        )
+    return payload
 
 
 @router.get("/review")

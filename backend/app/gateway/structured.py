@@ -19,6 +19,9 @@ async def structured_completion(
     temperature: float | None = None,
     meta: dict | None = None,
     max_attempts: int = 3,
+    max_tokens: int | None = None,
+    timeout_s: float | None = None,
+    repair_attempts: int = 2,
 ) -> BaseModel:
     """Ask for JSON, validate against schema, repair once, then give up.
 
@@ -40,7 +43,7 @@ async def structured_completion(
         {"role": "user", "content": json.dumps(user_payload)},
     ]
     last_error: Exception | None = None
-    for _ in range(2):
+    for _ in range(max(1, repair_attempts)):
         raw = await chat_completion(
             client,
             model=model,
@@ -51,6 +54,8 @@ async def structured_completion(
             response_format={"type": "json_object"},
             meta=meta,
             max_attempts=max_attempts,
+            max_tokens=max_tokens,
+            timeout_s=timeout_s,
         )
         try:
             data = json.loads(raw)

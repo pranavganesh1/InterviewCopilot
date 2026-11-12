@@ -1,10 +1,12 @@
+import re
+import time
 from typing import Literal, TypedDict
 
 import httpx
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-from app.core.config import get_settings
+from app.core.logging import get_logger
 from app.gateway.structured import structured_completion
 from app.services.preparation_goals import (
     EMPTY_PREFERENCES,
@@ -16,6 +18,8 @@ from app.services.preparation_goals import (
     normalize_preferences,
     preferences_ready,
 )
+
+log = get_logger(__name__)
 
 # Optional profile sections — never hard blockers for goals/completion.
 SUGGESTED_CATEGORIES = ("project", "skill", "education")
@@ -400,6 +404,75 @@ def ack_followup_question(vault_summary: list[dict] | None = None) -> str:
     return ensure_nonempty_reply("", vault_summary=vault_summary)
 
 
+_PRACTISE_RE = re.compile(
+    r"(?i)\b(?:i(?:'d| would)?\s+like\s+to\s+|let'?s\s+|want\s+to\s+|wanna\s+)?"
+    r"(?:practi[sc]e|be\s+interviewed(?:\s+on)?|interview\s+me(?:\s+on)?|"
+    r"mock\s+interview(?:\s+on)?|quiz\s+me(?:\s+on)?)\s+"
+    r"(?:on\s+|with\s+|about\s+|in\s+)?(?P<subject>.+)$"
+)
+
+
+def classify_practise_intent(
+    message: str, vault_summary: list[dict] | None = None
+) -> dict | None:
+    """Return {subject, track_type} when the user asks to practise / be interviewed."""
+    text = (message or "").strip()
+    if not text or len(text) > 160:
+        return None
+    m = _PRACTISE_RE.search(text)
+    if not m:
+        low = text.lower()
+        if not any(
+            k in low
+            for k in (
+                "practise",
+                "practice",
+                "interview me",
+                "mock interview",
+                "quiz me",
+            )
+        ):
+            return None
+        subject = text
+    else:
+        subject = (m.group("subject") or "").strip(" .!?\"'")
+    subject = re.sub(r"\s+", " ", subject).strip()
+    if not subject or len(subject) > 80:
+        return None
+    # Prefer an exact vault skill/project title when the user named one.
+    titles = [
+        str(i.get("title") or "").strip()
+        for i in (vault_summary or [])
+        if i.get("category") in ("skill", "project") and i.get("title")
+    ]
+    low_sub = subject.lower()
+    for title in titles:
+        if title.lower() == low_sub or title.lower() in low_sub or low_sub in title.lower():
+            cat = next(
+                (
+                    str(i.get("category"))
+                    for i in (vault_summary or [])
+                    if str(i.get("title") or "").strip() == title
+                ),
+                "skill",
+            )
+            return {
+                "subject": title,
+                "track_type": "topic" if cat == "project" else "topic",
+            }
+    # Strip leading "my " for cleaner track subjects.
+    if low_sub.startswith("my "):
+        subject = subject[3:].strip()
+    return {"subject": subject[:80], "track_type": "topic"}
+
+
+def practise_followup_reply(subject: str) -> str:
+    return (
+        f"Great — we can run a focused interview on {subject}. "
+        "Want to start now?"
+    )
+
+
 async def run_onboarding_turn(
     *,
     message: str,
@@ -489,14 +562,26 @@ async def run_onboarding_turn(
     else:
         system = SYSTEM_PROMPT
 
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
+    # One structured call: reply + extraction together. Fail over fast on 429
+    # (max_attempts=1) so the UI's 30s budget is not burned on retries.
+    llm_started = time.monotonic()
+    async with httpx.AsyncClient(timeout=22.0) as client:
         turn = await structured_completion(
             client,
             system=system,
             user_payload=payload,
             schema=OnboardingTurn,
             meta=meta,
+            max_attempts=1,
+            max_tokens=700,
+            timeout_s=20.0,
+            repair_attempts=1,
         )
+    log.info(
+        "onboarding_llm_timing",
+        stage="structured_turn",
+        elapsed_ms=int((time.monotonic() - llm_started) * 1000),
+    )
 
     # Deterministic phase / completion after the model replies.
     merged_prefs = prefs

@@ -115,7 +115,15 @@ EMPTY_COACH_CONTEXT: dict = {
 
 
 def normalize_coach_context(raw: dict | None) -> dict:
-    base = {**EMPTY_COACH_CONTEXT, "background": {}, "confirmed_facts": [], "asked_questions": [], "skipped_categories": [], "not_applicable_categories": [], "answers_received": []}
+    base = {
+        **EMPTY_COACH_CONTEXT,
+        "background": {},
+        "confirmed_facts": [],
+        "asked_questions": [],
+        "skipped_categories": [],
+        "not_applicable_categories": [],
+        "answers_received": [],
+    }
     if not isinstance(raw, dict):
         return base
 
@@ -191,3 +199,101 @@ async def merge_coach_context(
     if "background" in patch and isinstance(patch["background"], dict):
         merged["background"] = {**(current.get("background") or {}), **patch["background"]}
     return await set_coach_context(mongo_db, user_id, merged)
+
+
+async def get_idempotent_chat_reply(
+    mongo_db: AsyncIOMotorDatabase, user_id: str, message_id: str
+) -> dict | None:
+    """Return a prior chat response body for this client message id, if any."""
+    mid = (message_id or "").strip()[:80]
+    if not mid:
+        return None
+    doc = await mongo_db[CONVERSATIONS].find_one(
+        {"user_id": user_id}, {"chat_idempotency": 1}
+    )
+    bucket = (doc or {}).get("chat_idempotency") or {}
+    cached = bucket.get(mid)
+    return cached if isinstance(cached, dict) else None
+
+
+async def save_idempotent_chat_reply(
+    mongo_db: AsyncIOMotorDatabase, user_id: str, message_id: str, payload: dict
+) -> None:
+    mid = (message_id or "").strip()[:80]
+    if not mid:
+        return
+    now = datetime.now(UTC).isoformat()
+    # Keep a small window of recent ids so the doc stays bounded.
+    await mongo_db[CONVERSATIONS].update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                f"chat_idempotency.{mid}": payload,
+                "updated_at": now,
+            },
+            "$setOnInsert": {"created_at": now, "messages": []},
+        },
+        upsert=True,
+    )
+
+
+async def try_acquire_chat_lock(
+    mongo_db: AsyncIOMotorDatabase, user_id: str, message_id: str
+) -> bool:
+    """Acquire a short chat lock. False if another request holds it."""
+    mid = (message_id or "").strip()[:80] or f"anon-{datetime.now(UTC).timestamp()}"
+    now = datetime.now(UTC)
+    now_iso = now.isoformat()
+    stale_before = datetime.fromtimestamp(now.timestamp() - 45, tz=UTC).isoformat()
+    # Ensure the conversation doc exists without clobbering an active lock.
+    await mongo_db[CONVERSATIONS].update_one(
+        {"user_id": user_id},
+        {"$setOnInsert": {"created_at": now_iso, "messages": [], "user_id": user_id}},
+        upsert=True,
+    )
+    result = await mongo_db[CONVERSATIONS].update_one(
+        {
+            "user_id": user_id,
+            "$or": [
+                {"chat_lock": {"$exists": False}},
+                {"chat_lock": None},
+                {"chat_lock.updated_at": {"$lt": stale_before}},
+            ],
+        },
+        {
+            "$set": {
+                "chat_lock": {"message_id": mid, "updated_at": now_iso},
+                "updated_at": now_iso,
+            }
+        },
+    )
+    return result.modified_count == 1
+
+
+async def release_chat_lock(
+    mongo_db: AsyncIOMotorDatabase, user_id: str, message_id: str | None = None
+) -> None:
+    mid = (message_id or "").strip()[:80] if message_id else None
+    filt: dict = {"user_id": user_id}
+    if mid:
+        filt["chat_lock.message_id"] = mid
+    await mongo_db[CONVERSATIONS].update_one(filt, {"$unset": {"chat_lock": ""}})
+
+
+async def get_start_offer_shown(mongo_db: AsyncIOMotorDatabase, user_id: str) -> bool:
+    doc = await mongo_db[CONVERSATIONS].find_one(
+        {"user_id": user_id}, {"start_interview_offer_shown": 1}
+    )
+    return bool((doc or {}).get("start_interview_offer_shown"))
+
+
+async def mark_start_offer_shown(mongo_db: AsyncIOMotorDatabase, user_id: str) -> None:
+    now = datetime.now(UTC).isoformat()
+    await mongo_db[CONVERSATIONS].update_one(
+        {"user_id": user_id},
+        {
+            "$set": {"start_interview_offer_shown": True, "updated_at": now},
+            "$setOnInsert": {"created_at": now, "messages": []},
+        },
+        upsert=True,
+    )
