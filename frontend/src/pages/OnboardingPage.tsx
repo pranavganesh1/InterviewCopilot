@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -211,8 +211,8 @@ export default function OnboardingPage() {
   const stickToBottomRef = useRef(true);
   const forceScrollRef = useRef(false);
   const initialScrollDoneRef = useRef(false);
-  const seededKeysRef = useRef<Set<string> | null>(null);
   const prevMsgCountRef = useRef(0);
+  const [historyAnchor, setHistoryAnchor] = useState<number | null>(null);
   const [showNewPill, setShowNewPill] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
@@ -344,6 +344,11 @@ export default function OnboardingPage() {
     const t = window.setTimeout(() => setVaultChips([]), 4200);
     return () => window.clearTimeout(t);
   }, [vaultChips]);
+
+  useLayoutEffect(() => {
+    if (historyAnchor !== null || state.isLoading || !state.data) return;
+    setHistoryAnchor(state.data.messages?.length ?? 0);
+  }, [historyAnchor, state.isLoading, state.data]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -515,12 +520,6 @@ export default function OnboardingPage() {
   ]);
 
   const baseMessages = state.data?.messages ?? [];
-  if (seededKeysRef.current === null && !state.isLoading && state.data) {
-    seededKeysRef.current = new Set(
-      baseMessages.map((m, i) => messageKey(m.role, m.content, i)),
-    );
-  }
-
   const messages = [
     ...baseMessages,
     ...(chat.isPending || starter.isPending || saveGoals.isPending
@@ -668,8 +667,8 @@ export default function OnboardingPage() {
                 const key = messageKey(m.role, m.content, i);
                 const isNew =
                   m.role !== "pending" &&
-                  seededKeysRef.current !== null &&
-                  !seededKeysRef.current.has(key);
+                  historyAnchor !== null &&
+                  i >= historyAnchor;
                 const enterClass =
                   isNew && m.role === "user"
                     ? "coach-bubble-enter-user"
@@ -679,7 +678,7 @@ export default function OnboardingPage() {
                 return (
                   <div
                     key={key}
-                    className={`flex w-full max-w-[85%] gap-2 sm:max-w-[min(100%,36rem)] ${
+                    className={`flex max-w-[85%] gap-2 sm:max-w-[min(85%,36rem)] ${
                       m.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
                     } ${enterClass}`}
                   >
