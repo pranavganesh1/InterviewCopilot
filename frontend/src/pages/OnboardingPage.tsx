@@ -392,7 +392,7 @@ export default function OnboardingPage() {
         setStartOffer(data.offer_start_interview);
       }
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        document.title = "(1) New reply from Aiko";
+        document.title = "(1) New reply from Chanakya";
       }
       setNudge(null);
       bumpActivity();
@@ -1105,7 +1105,7 @@ export default function OnboardingPage() {
       <p className="text-xs text-ink-soft">
         {hasResumeSignal
           ? "Replace or refresh your resume anytime from the upload bar above."
-          : "Use the upload bar above to add a PDF — Aiko builds your profile from it."}
+          : "Use the upload bar above to add a PDF — Chanakya builds your profile from it."}
       </p>
       <Link
         to="/readiness"
@@ -1210,7 +1210,7 @@ export default function OnboardingPage() {
                 />
               </div>
               <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-ink">Aiko</h2>
+                <h2 className="truncate text-sm font-semibold text-ink">Chanakya</h2>
                 <p className="truncate text-xs text-ink-soft">Interview Coach</p>
               </div>
             </div>

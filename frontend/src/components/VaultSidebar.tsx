@@ -329,7 +329,7 @@ export function VaultSidebar({
             {skills.length === 0 ? (
               <EmptyState
                 title="No skills yet"
-                body="Chat with Aiko or upload a resume to add skills."
+                body="Chat with Chanakya or upload a resume to add skills."
               />
             ) : (
               <ul className="flex flex-wrap gap-2">
@@ -381,7 +381,7 @@ export function VaultSidebar({
             {projects.length === 0 ? (
               <EmptyState
                 title="No projects yet"
-                body="Share a project in chat — Aiko will save it here."
+                body="Share a project in chat — Chanakya will save it here."
               />
             ) : (
               projects.map((item) => {
