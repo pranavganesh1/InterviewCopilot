@@ -297,3 +297,46 @@ async def mark_start_offer_shown(mongo_db: AsyncIOMotorDatabase, user_id: str) -
         },
         upsert=True,
     )
+
+
+async def check_chat_rate_limit(
+    mongo_db: AsyncIOMotorDatabase,
+    user_id: str,
+    *,
+    limit: int = 20,
+    window_seconds: int = 60,
+) -> float | None:
+    """Return retry_after_seconds if over the rolling limit, else None and record a hit."""
+    now = datetime.now(UTC)
+    cutoff = datetime.fromtimestamp(now.timestamp() - window_seconds, tz=UTC)
+    cutoff_iso = cutoff.isoformat()
+    now_iso = now.isoformat()
+    await mongo_db[CONVERSATIONS].update_one(
+        {"user_id": user_id},
+        {
+            "$pull": {"chat_rate_hits": {"$lt": cutoff_iso}},
+            "$setOnInsert": {"created_at": now_iso, "messages": [], "user_id": user_id},
+        },
+        upsert=True,
+    )
+    doc = await mongo_db[CONVERSATIONS].find_one(
+        {"user_id": user_id}, {"chat_rate_hits": 1}
+    )
+    hits = [
+        h
+        for h in ((doc or {}).get("chat_rate_hits") or [])
+        if isinstance(h, str) and h >= cutoff_iso
+    ]
+    if len(hits) >= limit:
+        oldest = min(hits)
+        try:
+            oldest_dt = datetime.fromisoformat(oldest)
+            retry = window_seconds - (now - oldest_dt).total_seconds()
+        except ValueError:
+            retry = float(window_seconds)
+        return max(1.0, retry)
+    await mongo_db[CONVERSATIONS].update_one(
+        {"user_id": user_id},
+        {"$push": {"chat_rate_hits": now_iso}, "$set": {"updated_at": now_iso}},
+    )
+    return None

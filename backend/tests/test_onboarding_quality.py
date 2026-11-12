@@ -632,12 +632,64 @@ async def test_llm_quota_returns_503_and_keeps_user_message(
             cookies={"ic_access": token},
         )
     assert resp.status_code == 503
-    assert "retry" in resp.json()["detail"].lower()
+    detail = resp.json()["detail"]
+    detail_text = detail if isinstance(detail, str) else str(detail.get("message", ""))
+    assert "retry" in detail_text.lower()
     msgs = await conversation_store.get_messages(mongo, user_id, limit=10)
     assert any(
         m.get("role") == "user" and "Tell me about interviews" in m.get("content", "")
         for m in msgs
     )
+    await mongo.onboarding_conversations.delete_many({"user_id": user_id})
+
+
+@pytest.mark.asyncio
+async def test_chat_rate_limit_returns_429(monkeypatch, clean_users_table):
+    from app.core.config import get_settings
+    from app.db.mongo import get_mongo_client
+
+    email = f"rpm-{uuid.uuid4()}@example.com"
+    async with SessionFactory() as session:
+        user = User(google_sub=f"sub-{uuid.uuid4()}", email=email)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        token = create_access_token(str(user.id))
+        user_id = str(user.id)
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "onboarding_chat_rpm", 2)
+    monkeypatch.setattr(settings, "onboarding_chat_rpm_window_seconds", 60)
+
+    async def fake_turn(*args, **kwargs):
+        return OnboardingTurn(reply="What project should we cover?", extracted_items=[])
+
+    import app.services.onboarding_service as svc
+
+    monkeypatch.setattr(svc, "run_onboarding_turn", fake_turn)
+
+    app = create_app()
+    mongo = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = mongo
+    await mongo.onboarding_conversations.delete_many({"user_id": user_id})
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        for i in range(2):
+            ok = await client.post(
+                "/api/v1/onboarding/chat",
+                json={"message": f"hello {i}", "message_id": f"rpm-{i}"},
+                cookies={"ic_access": token},
+            )
+            assert ok.status_code == 200
+        limited = await client.post(
+            "/api/v1/onboarding/chat",
+            json={"message": "hello 2", "message_id": "rpm-2"},
+            cookies={"ic_access": token},
+        )
+    assert limited.status_code == 429
+    detail = limited.json()["detail"]
+    assert detail["cause"] == "rate_limited"
+    assert detail["retry_after_seconds"] >= 1
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
 
 
