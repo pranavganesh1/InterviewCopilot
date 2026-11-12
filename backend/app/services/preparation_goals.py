@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 GOAL_INTERESTS: list[tuple[str, str]] = [
-    ("technical", "Technical Interview Preparation"),
-    ("skill", "Skill-Based Practice"),
-    ("project", "Project-Based Interviews"),
-    ("placement", "Internship & Placement Preparation"),
-    ("behavioral", "HR and Behavioral Interviews"),
+    ("technical", "💻 Technical Interviews"),
+    ("skill", "🧠 Skill Practice"),
+    ("project", "🚀 Project Deep Dive"),
+    ("placement", "🎯 Internship & Placements"),
+    ("behavioral", "💬 HR & Behavioral"),
 ]
 
 GOAL_INTEREST_IDS = {i for i, _ in GOAL_INTERESTS}
@@ -386,36 +386,31 @@ def build_resume_goal_options(vault_summary: list[dict]) -> dict:
 
 
 def goals_intro_message(vault_summary: list[dict] | None = None) -> str:
-    """Personalized transition into goal discovery (resume-aware)."""
+    """Warm goal-discovery opener — 1–2 resume hooks, one question."""
     summary = vault_summary or []
     skills = skill_titles(summary)
     projects = project_titles(summary)
 
-    if skills and projects:
-        skill_preview = ", ".join(skills[:3])
-        proj = projects[0]
+    if projects and skills:
         return (
-            f"I noticed you've worked with {skill_preview}, and your “{proj}” project "
-            "looks interesting! Let's personalize your preparation. "
-            f"{GOALS_INTRO_MARKER}? You can pick more than one."
-        )
-    if skills:
-        skill_preview = ", ".join(skills[:4])
-        return (
-            f"I noticed {skill_preview} in your profile. "
-            "Let's personalize your preparation. "
-            f"{GOALS_INTRO_MARKER}? You can pick more than one."
+            f"Your “{projects[0]}” project caught my eye — and {skills[0]} shows up a lot "
+            f"in your profile. 🚀 Let's personalize your prep.\n\n"
+            f"{GOALS_INTRO_MARKER} first?"
         )
     if projects:
-        named = ", ".join(f"“{p}”" for p in projects[:3])
         return (
-            f"I found these projects in your resume: {named}. "
-            "Let's personalize your preparation. "
-            f"{GOALS_INTRO_MARKER}? You can pick more than one."
+            f"Your “{projects[0]}” project looks like a great interview story. 🚀 "
+            f"Let's personalize your prep.\n\n{GOALS_INTRO_MARKER} first?"
+        )
+    if skills:
+        preview = " and ".join(skills[:2])
+        return (
+            f"Nice — I see {preview} in your profile. "
+            f"Let's personalize your prep.\n\n{GOALS_INTRO_MARKER} first?"
         )
     return (
-        "Your profile looks good! Now let's personalize your interview preparation. "
-        f"{GOALS_INTRO_MARKER} first? You can pick more than one."
+        "Your profile looks solid! Let's personalize your interview prep.\n\n"
+        f"{GOALS_INTRO_MARKER} first?"
     )
 
 
@@ -436,44 +431,38 @@ def goals_followup_reply(
     roles = suggest_roles(summary)
 
     if not p["interests"]:
-        return (
-            "Pick one or more preparation focuses above and I will tailor the next questions."
-        )
-    focus = ", ".join(GOAL_INTEREST_LABELS.get(i, i) for i in p["interests"])
+        return "Pick a focus above and I’ll tailor the next question to your resume. 🙂"
 
     if "technical" in p["interests"] and not p.get("target_role"):
-        hint = f" Suggestions from your background: {', '.join(roles[:3])}." if roles else ""
-        return (
-            f"Great — focusing on {focus}. "
-            f"Which role are you targeting?{hint}"
-        )
+        if roles:
+            return (
+                f"Awesome! 💻 Which role are you aiming for — "
+                f"{', '.join(roles[:2])}, or something else?"
+            )
+        return "Awesome! 💻 Which role are you aiming for?"
     if "technical" in p["interests"] and not p.get("technical_areas"):
         if areas:
-            preview = ", ".join(areas[:4])
+            preview = " and ".join(areas[:2])
             return (
-                f"I noticed {preview} in your profile. "
-                "Which technical areas would you like to practice?"
+                f"Nice — I noticed {preview} in your resume. "
+                "Which area would you like to sharpen first?"
             )
-        return (
-            "Thanks. Which technical areas should we emphasize "
-            "(for example DSA, system design, or backend)?"
-        )
+        return "Which technical area should we sharpen first?"
     if "skill" in p["interests"] and not p.get("focus_skills"):
         if skills:
-            preview = ", ".join(skills[:4])
+            preview = " and ".join(skills[:2])
             return (
-                f"Your resume mentions {preview}. "
-                "Which skill would you like to test first?"
+                f"Awesome! 🧠 I noticed {preview} in your resume. "
+                "Which one would you like to practice first?"
             )
-        return "Which skills from your vault do you want to practise first?"
+        return "Which skill would you like to practice first?"
     if "project" in p["interests"] and not p.get("focus_projects"):
         if projects:
-            named = ", ".join(f"“{p_}”" for p_ in projects[:3])
             return (
-                f"I found these projects in your resume: {named}. "
-                "Which one would you like to prepare for interviews?"
+                f"Your “{projects[0]}” project caught my attention! 🚀 "
+                "Want to prep that one, or another project from your resume?"
             )
-        return "Which project should we deep-dive in interviews?"
+        return "Which project should we deep-dive for interviews?"
     if (
         "project" in p["interests"]
         and p.get("focus_projects")
@@ -484,26 +473,31 @@ def goals_followup_reply(
             (c for c in project_option_cards(summary) if c["label"] == chosen),
             None,
         )
-        tech_bit = ""
         if card and card.get("technologies"):
-            tech_bit = (
-                f" uses {', '.join(card['technologies'][:4])} and"
+            tech = ", ".join(card["technologies"][:2])
+            return (
+                f"Love it — “{chosen}” with {tech}. 🚀 "
+                "Want to practice architecture, implementation, or the challenges you solved?"
             )
         return (
-            f"I noticed your “{chosen}” project{tech_bit}. "
-            "Would you like to practice explaining its architecture, technical challenges, "
-            "implementation, or research contributions?"
+            f"Great choice — “{chosen}”! "
+            "Want to practice architecture, implementation, or the challenges you solved?"
         )
     if "placement" in p["interests"] and not p.get("placement_target"):
-        return "Are you preparing for internship, full-time, or both?"
+        return "Nice! 🎯 Internship, full-time, or both?"
     if "placement" in p["interests"] and not p.get("target_role"):
-        hint = f" Based on your background: {', '.join(roles[:3])}." if roles else ""
-        return f"Which roles are you targeting?{hint} You can also type a custom role."
+        if roles:
+            return (
+                f"Got it. Which role are you targeting — "
+                f"{', '.join(roles[:2])}, or type your own?"
+            )
+        return "Which role are you targeting? You can also type a custom one."
     if "behavioral" in p["interests"] and not (
         p.get("experience_level") or p.get("behavioral_goals")
     ):
-        return "For HR and behavioral prep, what experience level should we target?"
+        return "Cool 💬 What HR/behavioral scenarios should we practice for?"
+    focus = ", ".join(GOAL_INTEREST_LABELS.get(i, i) for i in p["interests"])
     return (
-        f"Nice — your preparation focus is set ({focus}). "
-        "Tap Start Preparing when you're ready, or tell me any adjustments."
+        f"You're set — {focus}. "
+        "Hit Start Preparing when you're ready, or tell me if you want to tweak anything."
     )
