@@ -116,7 +116,7 @@ test("chat panel keeps a fixed scroll region and friendly coach chrome", async (
 
   const panel = page.getByTestId("onboarding-chat-panel");
   await expect(panel).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Aiko" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chanakya" })).toBeVisible();
   await expect(page.getByText("Interview Coach")).toBeVisible();
   await expect(page.getByTestId("resume-upload-bar")).toBeVisible();
   await expect(page.getByTestId("resume-upload-dropzone")).toBeVisible();
@@ -968,5 +968,5 @@ test("hidden tab title updates when reply arrives", async ({ page }) => {
   release();
   await expect
     .poll(async () => page.evaluate(() => document.title))
-    .toContain("New reply from Aiko");
+    .toContain("New reply from Chanakya");
 });
