@@ -121,16 +121,30 @@ async def chat(
             message_id=body.message_id,
         )
     except LLMGatewayError as exc:
+        retry = exc.retry_after_seconds
+        hint = (
+            f"Please retry in about {int(retry)} seconds."
+            if retry and retry < 90
+            else "Please retry in about a minute."
+        )
         raise HTTPException(
             status_code=503,
-            detail="The interview coach is temporarily busy. Please retry in about a minute.",
+            detail={
+                "message": f"The interview coach is temporarily busy. {hint}",
+                "cause": getattr(exc.cause, "value", "unknown"),
+                "retry_after_seconds": int(retry) if retry else 60,
+            },
         ) from exc
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail="Something went wrong saving your reply. Please try again.",
+            detail={
+                "message": "Something went wrong saving your reply. Please try again.",
+                "cause": "unknown",
+                "retry_after_seconds": 15,
+            },
         ) from exc
 
 
@@ -153,9 +167,19 @@ async def conversation_starter(
             request_id=request.headers.get("x-request-id"),
         )
     except LLMGatewayError as exc:
+        retry = exc.retry_after_seconds
+        hint = (
+            f"Please retry in about {int(retry)} seconds."
+            if retry and retry < 90
+            else "Please retry in about a minute."
+        )
         raise HTTPException(
             status_code=503,
-            detail="The interview coach is temporarily busy. Please retry in about a minute.",
+            detail={
+                "message": f"The interview coach is temporarily busy. {hint}",
+                "cause": getattr(exc.cause, "value", "unknown"),
+                "retry_after_seconds": int(retry) if retry else 60,
+            },
         ) from exc
 
 

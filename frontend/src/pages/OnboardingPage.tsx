@@ -149,12 +149,67 @@ function TypingIndicator() {
   );
 }
 
-function friendlyCoachError(raw: string | undefined): string {
-  const text = (raw || "").toLowerCase();
-  if (text.includes("busy") || text.includes("rate") || text.includes("503") || text.includes("temporarily")) {
-    return "Oops! My thoughts got interrupted 😅 Let's try that again.";
+function coachErrorCopy(err: unknown): {
+  kind: "busy" | "network" | "ours";
+  text: string;
+  retryAfter?: number;
+} {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return {
+      kind: "network",
+      text: "You're offline. Reconnect, then try again.",
+    };
   }
-  return "Oops! My thoughts got interrupted 😅 Let's try that again.";
+  if (err instanceof ApiError) {
+    const cause = (err.causeCode || "").toLowerCase();
+    const retryAfter =
+      typeof err.retryAfterSeconds === "number" && err.retryAfterSeconds > 0
+        ? Math.min(90, Math.ceil(err.retryAfterSeconds))
+        : undefined;
+    if (
+      cause === "rate_limited" ||
+      cause === "overloaded" ||
+      /busy|rate|quota|temporarily/i.test(err.message)
+    ) {
+      return {
+        kind: "busy",
+        text: "The AI is busy right now.",
+        retryAfter: retryAfter ?? 30,
+      };
+    }
+    if (
+      cause === "network" ||
+      /network|fetch|offline|failed to fetch/i.test(err.message)
+    ) {
+      return {
+        kind: "network",
+        text: "Connection lost. Check your network and try again.",
+      };
+    }
+    if (
+      cause === "auth_failed" ||
+      cause === "model_not_found" ||
+      cause === "unknown" ||
+      cause === "schema_rejected"
+    ) {
+      return {
+        kind: "ours",
+        text: "Something is wrong on our side. We've logged it. Try again in a moment.",
+      };
+    }
+  }
+  const raw = err instanceof Error ? err.message : "";
+  if (/timeout|aborted/i.test(raw)) {
+    return {
+      kind: "busy",
+      text: "The AI is busy right now.",
+      retryAfter: 20,
+    };
+  }
+  return {
+    kind: "ours",
+    text: "Something is wrong on our side. We've logged it. Try again in a moment.",
+  };
 }
 
 function profileCompleteness(items: { category: string; source?: string }[], hasResumeWelcome: boolean) {
@@ -219,8 +274,16 @@ export default function OnboardingPage() {
     null,
   );
   const [startCreating, setStartCreating] = useState(false);
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
+  const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const startOfferSeenRef = useRef(false);
   const lastSendRef = useRef<{ text: string; at: number } | null>(null);
+  const autoRetryRef = useRef<{
+    message: string;
+    messageId: string;
+    used: boolean;
+  } | null>(null);
+  const countdownTimerRef = useRef<number | null>(null);
   const lastActivityRef = useRef(Date.now());
   const baseTitleRef = useRef(
     typeof document !== "undefined" ? document.title || DEFAULT_DOC_TITLE : DEFAULT_DOC_TITLE,
@@ -290,6 +353,13 @@ export default function OnboardingPage() {
       setFailedMessage(null);
       setPendingUser(null);
       setStillThinking(false);
+      setErrorBanner(null);
+      setRetryCountdown(null);
+      autoRetryRef.current = null;
+      if (countdownTimerRef.current) {
+        window.clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
       setInput("");
       const blank = !(data.reply || "").trim();
       setEmptyFallback(blank ? EMPTY_REPLY_FALLBACK : null);
@@ -334,32 +404,67 @@ export default function OnboardingPage() {
       setFailedMessage(failedText);
       setPendingUser({ content: failedText, status: "failed" });
       setStillThinking(false);
-      const detail =
-        err instanceof Error ? err.message : "Please try again.";
-      const isBusy =
-        /busy|rate|quota|503|temporarily|timeout|aborted|exceeded/i.test(
-          detail,
-        );
-      pushToast(
-        "error",
-        isBusy ? "AI is busy" : "Message failed",
-        isBusy
-          ? detail.includes("minute")
-            ? detail
-            : "Please retry in about a minute."
-          : detail,
-        {
+      const copy = coachErrorCopy(err);
+      setErrorBanner(copy.text);
+      const toastTitle =
+        copy.kind === "busy"
+          ? "AI is busy"
+          : copy.kind === "network"
+            ? "Connection lost"
+            : "Message failed";
+      const doRetry = () => {
+        if (countdownTimerRef.current) {
+          window.clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+        }
+        setRetryCountdown(null);
+        setPendingUser({ content: failedText, status: "sending" });
+        setFailedMessage(null);
+        setErrorBanner(null);
+        chat.mutate({
+          message: failedText,
+          // Reuse id so the backend skips a duplicate user row.
+          messageId: vars.messageId || `retry-${Date.now().toString(36)}`,
+        });
+      };
+      if (copy.kind === "busy") {
+        pushToast("error", toastTitle, copy.text);
+      } else {
+        pushToast("error", toastTitle, copy.text, {
           label: "Retry",
           onAction: () => {
-            setPendingUser({ content: failedText, status: "sending" });
-            setFailedMessage(null);
-            chat.mutate({
-              message: failedText,
-              messageId: vars.messageId || `retry-${Date.now().toString(36)}`,
-            });
+            doRetry();
           },
-        },
-      );
+        });
+      }
+      if (copy.kind === "busy" && copy.retryAfter && !autoRetryRef.current?.used) {
+        autoRetryRef.current = {
+          message: failedText,
+          messageId: vars.messageId,
+          used: false,
+        };
+        let left = copy.retryAfter;
+        setRetryCountdown(left);
+        if (countdownTimerRef.current) {
+          window.clearInterval(countdownTimerRef.current);
+        }
+        countdownTimerRef.current = window.setInterval(() => {
+          left -= 1;
+          if (left <= 0) {
+            if (countdownTimerRef.current) {
+              window.clearInterval(countdownTimerRef.current);
+              countdownTimerRef.current = null;
+            }
+            setRetryCountdown(null);
+            if (autoRetryRef.current && !autoRetryRef.current.used) {
+              autoRetryRef.current.used = true;
+              doRetry();
+            }
+            return;
+          }
+          setRetryCountdown(left);
+        }, 1000);
+      }
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
   });
@@ -651,12 +756,16 @@ export default function OnboardingPage() {
     vaultChips.length,
   ]);
 
-  const send = (override?: string) => {
+  const send = (
+    override?: string,
+    opts?: { force?: boolean; messageId?: string },
+  ) => {
     const message = (override ?? input).trim();
     if (!message || busy || chat.isPending) return;
     const now = Date.now();
     const last = lastSendRef.current;
     if (
+      !opts?.force &&
       last &&
       last.text === message &&
       now - last.at < DEDUPE_WINDOW_MS
@@ -667,6 +776,12 @@ export default function OnboardingPage() {
     chat.reset();
     setFailedMessage(null);
     setEmptyFallback(null);
+    setErrorBanner(null);
+    setRetryCountdown(null);
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
     setNudge(null);
     bumpActivity();
     forceScrollRef.current = true;
@@ -676,9 +791,10 @@ export default function OnboardingPage() {
     // Keep the draft until the server accepts the message.
     setInput(message);
     const messageId =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
+      opts?.messageId ||
+      (typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
-        : `m-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        : `m-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
     chat.mutate({ message, messageId });
   };
 
@@ -732,13 +848,14 @@ export default function OnboardingPage() {
   };
 
   const retryCoach = () => {
-    if (busy) return;
+    if (busy || retryCountdown != null) return;
     const orphan =
       pendingUser?.status === "failed" ? pendingUser.content.trim() : "";
     if (chat.error || orphan) {
       const message = (failedMessage ?? orphan ?? input).trim();
       if (!message) return;
-      send(message);
+      const reuseId = autoRetryRef.current?.messageId;
+      send(message, { force: true, messageId: reuseId });
       return;
     }
     if (starter.error && lastStarterId) {
@@ -1311,20 +1428,48 @@ export default function OnboardingPage() {
                   className="ml-10 max-w-md rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-950"
                 >
                   <p>
-                    {friendlyCoachError(
-                      coachError?.message ||
-                        "The coach was busy and didn't reply.",
-                    )}
+                    {errorBanner ||
+                      coachErrorCopy(coachError).text}
                   </p>
-                  <button
-                    type="button"
-                    data-testid="onboarding-chat-retry"
-                    disabled={busy}
-                    onClick={retryCoach}
-                    className="mt-2 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
-                  >
-                    Try Again
-                  </button>
+                  {retryCountdown != null && (
+                    <p
+                      className="mt-1 text-xs text-amber-900/80"
+                      data-testid="retry-countdown"
+                    >
+                      Retrying in {retryCountdown} second
+                      {retryCountdown === 1 ? "" : "s"}…
+                    </p>
+                  )}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      data-testid="onboarding-chat-retry"
+                      disabled={busy || retryCountdown != null}
+                      onClick={retryCoach}
+                      className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
+                    >
+                      Try Again
+                    </button>
+                    {retryCountdown != null && (
+                      <button
+                        type="button"
+                        data-testid="onboarding-chat-cancel-retry"
+                        className="rounded-md border border-amber-300 bg-surface px-3 py-1.5 text-xs font-medium text-amber-950"
+                        onClick={() => {
+                          if (countdownTimerRef.current) {
+                            window.clearInterval(countdownTimerRef.current);
+                            countdownTimerRef.current = null;
+                          }
+                          if (autoRetryRef.current) {
+                            autoRetryRef.current.used = true;
+                          }
+                          setRetryCountdown(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

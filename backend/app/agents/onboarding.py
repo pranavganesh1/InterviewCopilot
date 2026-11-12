@@ -473,6 +473,44 @@ def practise_followup_reply(subject: str) -> str:
     )
 
 
+def _approx_chars(messages: list[dict]) -> int:
+    return sum(len(str(m.get("content") or "")) for m in messages)
+
+
+def trim_history_for_llm(
+    history: list[dict] | None, *, max_chars: int = 6000
+) -> list[dict]:
+    """Keep recent turns under a char budget; summarise older ones without LLM."""
+    msgs = [
+        {"role": str(m.get("role") or "user"), "content": str(m.get("content") or "")}
+        for m in (history or [])
+        if m.get("content")
+    ]
+    if _approx_chars(msgs) <= max_chars:
+        return msgs[-18:]
+    kept: list[dict] = []
+    used = 0
+    for msg in reversed(msgs):
+        size = len(msg["content"]) + 8
+        if kept and used + size > max_chars:
+            break
+        kept.append(msg)
+        used += size
+    kept.reverse()
+    older = msgs[: max(0, len(msgs) - len(kept))]
+    if older:
+        bits = []
+        for m in older[-6:]:
+            role = "You" if m["role"] == "user" else "Coach"
+            bits.append(f"{role}: {m['content'][:80]}")
+        summary = {
+            "role": "assistant",
+            "content": "Earlier in this chat (summary): " + " | ".join(bits),
+        }
+        return [summary, *kept]
+    return kept
+
+
 async def run_onboarding_turn(
     *,
     message: str,
@@ -549,7 +587,7 @@ async def run_onboarding_turn(
         "resume_highlights": options.get("resume_highlights", {}),
         "goal_interest_labels": GOAL_INTEREST_LABELS,
         "conversation_mode": mode,
-        "conversation_so_far": prior[-18:],
+        "conversation_so_far": trim_history_for_llm(prior),
         "new_user_message": message,
         "already_finished": already_finished,
         "phase": current_phase,

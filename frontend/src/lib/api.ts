@@ -11,16 +11,25 @@ export class ApiError extends Error {
   status: number;
   code?: string;
   sessionId?: string;
+  causeCode?: string;
+  retryAfterSeconds?: number;
   constructor(
     status: number,
     message: string,
-    extra?: { code?: string; sessionId?: string },
+    extra?: {
+      code?: string;
+      sessionId?: string;
+      causeCode?: string;
+      retryAfterSeconds?: number;
+    },
   ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = extra?.code;
     this.sessionId = extra?.sessionId;
+    this.causeCode = extra?.causeCode;
+    this.retryAfterSeconds = extra?.retryAfterSeconds;
   }
 }
 
@@ -66,6 +75,8 @@ export async function api<T>(
       const record = detail as {
         message?: string;
         code?: string;
+        cause?: string;
+        retry_after_seconds?: number;
         session_id?: string;
         correlation_id?: string;
       };
@@ -77,6 +88,11 @@ export async function api<T>(
       throw new ApiError(res.status, message, {
         code: record.code,
         sessionId: record.session_id || record.correlation_id,
+        causeCode: record.cause || record.code,
+        retryAfterSeconds:
+          typeof record.retry_after_seconds === "number"
+            ? record.retry_after_seconds
+            : undefined,
       });
     }
     throw new ApiError(res.status, typeof detail === "string" ? detail : res.statusText);

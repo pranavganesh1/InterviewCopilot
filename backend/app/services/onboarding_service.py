@@ -19,6 +19,7 @@ from app.agents.onboarding import (
     recent_duplicate_prompt,
     vault_is_ready,
 )
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.gateway.llm import LLMGatewayError
 from app.models.user import User
@@ -186,6 +187,7 @@ async def chat(
     started = time.monotonic()
     uid = str(user.id)
     mid = (message_id or "").strip()[:80] or None
+    settings = get_settings()
 
     if mid:
         cached = await conversation_store.get_idempotent_chat_reply(mongo_db, uid, mid)
@@ -197,13 +199,33 @@ async def chat(
             )
             return cached
 
-    lock_key = mid or "anon"
-    if not await conversation_store.try_acquire_chat_lock(mongo_db, uid, lock_key):
-        from fastapi import HTTPException
+    from fastapi import HTTPException
 
+    retry_in = await conversation_store.check_chat_rate_limit(
+        mongo_db,
+        uid,
+        limit=settings.onboarding_chat_rpm,
+        window_seconds=settings.onboarding_chat_rpm_window_seconds,
+    )
+    if retry_in is not None:
         raise HTTPException(
             status_code=429,
-            detail="A reply is already in progress. Please wait a moment.",
+            detail={
+                "message": "You're sending messages a bit too quickly. Please wait a moment.",
+                "cause": "rate_limited",
+                "retry_after_seconds": int(retry_in) + 1,
+            },
+        )
+
+    lock_key = mid or "anon"
+    if not await conversation_store.try_acquire_chat_lock(mongo_db, uid, lock_key):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "message": "A reply is already in progress. Please wait a moment.",
+                "cause": "rate_limited",
+                "retry_after_seconds": 3,
+            },
         )
 
     offer: dict | None = None
@@ -216,8 +238,16 @@ async def chat(
                 return cached
 
         t0 = time.monotonic()
-        await conversation_store.append_message(mongo_db, uid, "user", message)
         history = await conversation_store.get_messages(mongo_db, uid, limit=24)
+        # Retries after a gateway failure must not duplicate the trailing user turn.
+        last = history[-1] if history else None
+        if not (
+            last
+            and last.get("role") == "user"
+            and str(last.get("content") or "") == message
+        ):
+            await conversation_store.append_message(mongo_db, uid, "user", message)
+            history = await conversation_store.get_messages(mongo_db, uid, limit=24)
         items = await list_items(db, user.id)
         summary = await vault_summary(db, user.id)
         coach_ctx = await conversation_store.get_coach_context(mongo_db, uid)
@@ -348,11 +378,14 @@ async def chat(
                     }
                 )
                 turn = result["turn"]
-            except LLMGatewayError:
+            except LLMGatewayError as exc:
                 log.warning(
                     "onboarding_chat_stage",
                     stage="llm",
-                    cause="gateway_error",
+                    cause=getattr(exc.cause, "value", "gateway_error"),
+                    status_code=exc.status_code,
+                    provider_code=exc.provider_code,
+                    retry_after_seconds=exc.retry_after_seconds,
                     elapsed_ms=int((time.monotonic() - t_llm) * 1000),
                 )
                 raise

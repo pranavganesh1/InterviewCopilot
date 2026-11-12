@@ -151,8 +151,11 @@ test("chat failure shows friendly retry and preserves typed message", async ({
       status: 503,
       contentType: "application/json",
       body: JSON.stringify({
-        detail:
-          "The interview coach is temporarily busy. Please retry in about a minute.",
+        detail: {
+          message: "Something is wrong on our side.",
+          cause: "unknown",
+          retry_after_seconds: 15,
+        },
       }),
     });
   });
@@ -163,7 +166,7 @@ test("chat failure shows friendly retry and preserves typed message", async ({
   await page.getByTestId("onboarding-chat-send").click();
 
   await expect(page.getByTestId("onboarding-chat-error")).toContainText(
-    "thoughts got interrupted",
+    "Something is wrong on our side",
   );
   await expect(page.getByTestId("onboarding-chat-retry")).toBeVisible();
   await expect(page.getByTestId("message-not-delivered")).toBeVisible();
@@ -778,6 +781,76 @@ test("trailing unanswered user message shows recovery toast and Retry", async ({
   await expect(page.getByTestId("onboarding-messages")).toContainText(
     "Kept both",
   );
+});
+
+test("busy 503 shows countdown, disables Retry, auto-retries once", async ({
+  page,
+}) => {
+  await page.clock.install();
+  let chatCalls = 0;
+  let state = {
+    ...BASE_STATE,
+    show_goal_menu: false,
+    phase: "profile" as const,
+    messages: [...BASE_STATE.messages],
+  };
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    chatCalls += 1;
+    const body = route.request().postDataJSON() as {
+      message: string;
+      message_id?: string;
+    };
+    if (chatCalls === 1) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          detail: {
+            message: "The interview coach is temporarily busy.",
+            cause: "rate_limited",
+            retry_after_seconds: 3,
+          },
+        }),
+      });
+      return;
+    }
+    state = {
+      ...state,
+      messages: [
+        ...state.messages,
+        { role: "user", content: body.message },
+        { role: "assistant", content: "Back online — what next?" },
+      ],
+    };
+    await route.fulfill({
+      json: {
+        reply: "Back online — what next?",
+        items_created: [],
+        onboarding_complete: true,
+      },
+    });
+  });
+
+  await page.goto("/onboarding");
+  await page.getByTestId("onboarding-chat-input").fill("Tell me about Python");
+  await page.getByTestId("onboarding-chat-send").click();
+  await expect(page.getByTestId("onboarding-chat-error")).toContainText(
+    "The AI is busy right now",
+  );
+  await expect(page.getByTestId("retry-countdown")).toBeVisible();
+  await expect(page.getByTestId("onboarding-chat-retry")).toBeDisabled();
+  await page.clock.fastForward(3000);
+  await expect.poll(() => chatCalls).toBe(2);
+  await expect(page.getByTestId("onboarding-messages")).toContainText(
+    "Back online",
+  );
+  const userBubbles = page.locator(
+    '[data-testid="onboarding-messages"] >> text=Tell me about Python',
+  );
+  await expect(userBubbles).toHaveCount(1);
 });
 
 test("blocks double send of identical text while pending", async ({ page }) => {
