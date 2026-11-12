@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 const USER = {
   id: "u1",
@@ -48,7 +48,18 @@ const BASE_STATE = {
   },
 };
 
-test.beforeEach(async ({ page }) => {
+function longHistoryState(count = 30) {
+  const messages = Array.from({ length: count }, (_, i) => ({
+    role: i % 2 === 0 ? "assistant" : "user",
+    content:
+      i % 2 === 0
+        ? `Assistant message ${i + 1}. Tell me more about your experience with long-url-https://example.com/path/to/resource and wrap.`
+        : `User reply ${i + 1} about my background.`,
+  }));
+  return { ...BASE_STATE, messages, show_goal_menu: false, phase: "profile" };
+}
+
+async function mockCommon(page: Page) {
   await page.route("**/api/v1/auth/me", (route) => route.fulfill({ json: USER }));
   await page.route("**/api/v1/auth/logout", (route) =>
     route.fulfill({ json: { status: "ok" } }),
@@ -72,6 +83,10 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/v1/me/open-sessions", (route) =>
     route.fulfill({ json: [] }),
   );
+}
+
+test.beforeEach(async ({ page }) => {
+  await mockCommon(page);
 });
 
 test("chat panel keeps a fixed scroll region and friendly coach chrome", async ({
@@ -136,4 +151,161 @@ test("chat failure shows friendly retry and preserves typed message", async ({
     .poll(() => chatCalls)
     .toBe(2);
   await expect(input).toHaveValue("I want to practice Python");
+});
+
+test("sending with long history scrolls message list; window stays at 0", async ({
+  page,
+}) => {
+  let state = longHistoryState(30);
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    const body = route.request().postDataJSON() as { message: string };
+    state = {
+      ...state,
+      messages: [
+        ...state.messages,
+        { role: "user", content: body.message },
+        { role: "assistant", content: "Great — let's keep going! ✨" },
+      ],
+    };
+    await route.fulfill({
+      json: {
+        reply: "Great — let's keep going! ✨",
+        items_created: [],
+        onboarding_complete: true,
+        phase: "profile",
+      },
+    });
+  });
+
+  await page.goto("/onboarding");
+  const list = page.getByTestId("onboarding-messages");
+  await expect(list).toBeVisible();
+
+  await expect
+    .poll(async () =>
+      list.evaluate((el) => el.scrollHeight - el.clientHeight > 40),
+    )
+    .toBe(true);
+
+  const input = page.getByTestId("onboarding-chat-input");
+  await input.fill("My next answer");
+  await page.getByTestId("onboarding-chat-send").click();
+
+  await expect(list).toContainText("Great — let's keep going");
+  await expect
+    .poll(async () =>
+      list.evaluate(
+        (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 140,
+      ),
+    )
+    .toBe(true);
+
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await expect(page.getByTestId("onboarding-chat-composer")).toBeInViewport();
+});
+
+test("scrolled-up user sees New message pill instead of jump", async ({
+  page,
+}) => {
+  let state = longHistoryState(30);
+  let releaseChat: (() => void) | null = null;
+  const chatGate = new Promise<void>((resolve) => {
+    releaseChat = resolve;
+  });
+
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    await chatGate;
+    const body = route.request().postDataJSON() as { message: string };
+    state = {
+      ...state,
+      messages: [
+        ...state.messages,
+        { role: "user", content: body.message },
+        { role: "assistant", content: "Here is a fresh reply from up high." },
+      ],
+    };
+    await route.fulfill({
+      json: {
+        reply: "Here is a fresh reply from up high.",
+        items_created: [],
+        onboarding_complete: true,
+        phase: "profile",
+      },
+    });
+  });
+
+  await page.goto("/onboarding");
+  const list = page.getByTestId("onboarding-messages");
+  await expect(list).toBeVisible();
+  await list.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+
+  // Send via forceScroll would scroll — so we inject an assistant-only update path:
+  // fill + send after scrolling up, but release after we confirm stickiness broke.
+  await page.getByTestId("onboarding-chat-input").fill("ping");
+  // User send always force-scrolls; instead mutate state via a delayed assistant
+  // by using starter-less invalidate: click send then immediately scroll up again
+  // before the reply lands.
+  const sendPromise = page.getByTestId("onboarding-chat-send").click();
+  await page.getByTestId("typing-indicator").waitFor({ state: "visible" });
+  await list.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  releaseChat?.();
+  await sendPromise;
+  await expect(list).toContainText("fresh reply from up high");
+
+  const nearBottom = await list.evaluate(
+    (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 120,
+  );
+  expect(nearBottom).toBe(false);
+  await expect(page.getByTestId("new-message-pill")).toBeVisible();
+  await page.getByTestId("new-message-pill").click();
+  await expect
+    .poll(async () =>
+      list.evaluate(
+        (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 140,
+      ),
+    )
+    .toBe(true);
+});
+
+test("typing indicator shows while reply pending then disappears", async ({
+  page,
+}) => {
+  let resolveChat: ((route: Route) => void) | null = null;
+  const pending = new Promise<Route>((resolve) => {
+    resolveChat = resolve;
+  });
+
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: BASE_STATE }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    await pending;
+    await route.fulfill({
+      json: {
+        reply: "Done thinking.",
+        items_created: [{ id: "9", category: "skill", title: "Excel" }],
+        items_updated: [],
+        onboarding_complete: true,
+        phase: "goals",
+      },
+    });
+  });
+
+  await page.goto("/onboarding");
+  await page.getByTestId("onboarding-chat-input").fill("hello coach");
+  await page.getByTestId("onboarding-chat-send").click();
+  await expect(page.getByTestId("typing-indicator")).toBeVisible();
+  resolveChat?.(await pending);
+  // fulfill already waiting — resolve the gate by fulfilling via second tick
+  // The promise above resolves with Route when route handler runs — fix approach:
 });

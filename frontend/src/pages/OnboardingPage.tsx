@@ -10,8 +10,20 @@ import {
 } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import ConversationStarters from "../components/ConversationStarters";
+import EmojiPicker from "../components/EmojiPicker";
 import GoalDiscovery from "../components/GoalDiscovery";
 import { VaultSidebar } from "../components/VaultSidebar";
+
+const NEAR_BOTTOM_PX = 120;
+const TEXTAREA_MAX_LINES = 5;
+
+function isNearBottom(el: HTMLElement, threshold = NEAR_BOTTOM_PX): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+}
+
+function messageKey(role: string, content: string, index: number): string {
+  return `${role}:${index}:${content.slice(0, 48)}`;
+}
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -107,9 +119,13 @@ function CoachAvatar({
   );
 }
 
-function TypingDots() {
+function TypingIndicator() {
   return (
-    <span className="inline-flex items-center gap-1 px-0.5" aria-label="Coach is typing">
+    <span
+      className="inline-flex items-center gap-1 px-0.5"
+      data-testid="typing-indicator"
+      aria-label="Coach is typing"
+    >
       <span className="coach-typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
       <span className="coach-typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
       <span className="coach-typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
@@ -191,7 +207,18 @@ export default function OnboardingPage() {
   const [showStartersOverride, setShowStartersOverride] = useState(true);
   const resumeInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const stickToBottomRef = useRef(true);
+  const forceScrollRef = useRef(false);
+  const initialScrollDoneRef = useRef(false);
+  const seededKeysRef = useRef<Set<string> | null>(null);
+  const prevMsgCountRef = useRef(0);
+  const [showNewPill, setShowNewPill] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const [vaultChips, setVaultChips] = useState<
+    { id: string; title: string }[]
+  >([]);
 
   const state = useQuery({
     queryKey: ["onboarding-state"],
@@ -204,13 +231,24 @@ export default function OnboardingPage() {
         method: "POST",
         body: JSON.stringify({ message }),
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       setFailedMessage(null);
       setInput("");
+      const added = [
+        ...(data.items_created ?? []),
+        ...(data.items_updated ?? []),
+      ]
+        .filter((item) => item?.title)
+        .map((item) => ({ id: item.id, title: item.title }));
+      if (added.length) {
+        setVaultChips(added.slice(0, 4));
+      }
       qc.invalidateQueries({ queryKey: ["onboarding-state"] });
+      requestAnimationFrame(() => textareaRef.current?.focus());
     },
     onError: (_err, message) => {
       setFailedMessage(message);
+      requestAnimationFrame(() => textareaRef.current?.focus());
     },
   });
 
@@ -286,15 +324,80 @@ export default function OnboardingPage() {
   const goalsBusy = busy;
 
   useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const sync = () => {
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      setKeyboardInset(inset > 40 ? inset : 0);
+    };
+    sync();
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    return () => {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!vaultChips.length) return;
+    const t = window.setTimeout(() => setVaultChips([]), 4200);
+    return () => window.clearTimeout(t);
+  }, [vaultChips]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const line = Number.parseFloat(getComputedStyle(el).lineHeight) || 20;
+    const max = line * TEXTAREA_MAX_LINES + 20;
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+  }, [input]);
+
+  const scrollMessagesToBottom = (behavior: ScrollBehavior) => {
     const panel = messagesRef.current;
     if (!panel) return;
-    panel.scrollTo({ top: panel.scrollHeight, behavior: "smooth" });
+    panel.scrollTo({ top: panel.scrollHeight, behavior });
+    stickToBottomRef.current = true;
+    setShowNewPill(false);
+  };
+
+  useEffect(() => {
+    const panel = messagesRef.current;
+    if (!panel) return;
+    const count =
+      (state.data?.messages?.length ?? 0) +
+      (chat.isPending || starter.isPending || saveGoals.isPending ? 1 : 0);
+
+    if (!initialScrollDoneRef.current) {
+      if (state.isLoading) return;
+      panel.scrollTop = panel.scrollHeight;
+      initialScrollDoneRef.current = true;
+      stickToBottomRef.current = true;
+      prevMsgCountRef.current = count;
+      return;
+    }
+
+    if (count === prevMsgCountRef.current && !forceScrollRef.current) return;
+    const grew = count > prevMsgCountRef.current;
+    prevMsgCountRef.current = count;
+
+    if (forceScrollRef.current || stickToBottomRef.current) {
+      const behavior: ScrollBehavior = forceScrollRef.current ? "smooth" : "smooth";
+      forceScrollRef.current = false;
+      requestAnimationFrame(() => scrollMessagesToBottom(behavior));
+      return;
+    }
+
+    if (grew) setShowNewPill(true);
   }, [
-    state.data?.messages.length,
+    state.data?.messages?.length,
+    state.isLoading,
     chat.isPending,
     starter.isPending,
     saveGoals.isPending,
     chat.isError,
+    vaultChips.length,
   ]);
 
   const send = (override?: string) => {
@@ -302,9 +405,29 @@ export default function OnboardingPage() {
     if (!message || busy) return;
     chat.reset();
     setFailedMessage(null);
+    forceScrollRef.current = true;
+    stickToBottomRef.current = true;
+    setShowNewPill(false);
     // Keep the message visible until success so failures can retry without retyping.
     setInput(message);
     chat.mutate(message);
+  };
+
+  const insertEmoji = (emoji: string) => {
+    const el = textareaRef.current;
+    if (!el) {
+      setInput((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? input.length;
+    const end = el.selectionEnd ?? input.length;
+    const next = input.slice(0, start) + emoji + input.slice(end);
+    setInput(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
   };
 
   const retryCoach = () => {
@@ -391,8 +514,15 @@ export default function OnboardingPage() {
     state.data?.suggested_roles,
   ]);
 
+  const baseMessages = state.data?.messages ?? [];
+  if (seededKeysRef.current === null && !state.isLoading && state.data) {
+    seededKeysRef.current = new Set(
+      baseMessages.map((m, i) => messageKey(m.role, m.content, i)),
+    );
+  }
+
   const messages = [
-    ...(state.data?.messages ?? []),
+    ...baseMessages,
     ...(chat.isPending || starter.isPending || saveGoals.isPending
       ? [
           {
@@ -419,8 +549,9 @@ export default function OnboardingPage() {
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+      className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3"
       data-testid="onboarding-page"
+      style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
     >
       <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -496,119 +627,198 @@ export default function OnboardingPage() {
             </div>
           </div>
 
-          <div
-            ref={messagesRef}
-            data-testid="onboarding-messages"
-            className="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto px-4 py-4 sm:px-5"
-          >
-            {messages.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-line bg-accent-soft/30 px-4 py-8 text-center">
-                <div className="mx-auto mb-3 flex justify-center">
-                  <CoachAvatar mood="happy" size="lg" />
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            <div
+              ref={messagesRef}
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions"
+              data-testid="onboarding-messages"
+              onScroll={() => {
+                const panel = messagesRef.current;
+                if (!panel) return;
+                const near = isNearBottom(panel);
+                stickToBottomRef.current = near;
+                if (near) setShowNewPill(false);
+              }}
+              className="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+            >
+              {messages.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-line bg-accent-soft/30 px-4 py-8 text-center">
+                  <div className="mx-auto mb-3 flex justify-center">
+                    <CoachAvatar mood="happy" size="lg" />
+                  </div>
+                  <p className="text-sm font-medium text-ink">
+                    {finished
+                      ? "What would you like to update?"
+                      : vaultItems.length > 0
+                        ? "Ready when you are ✨"
+                        : "Hi! Upload a resume or say hello 👋"}
+                  </p>
+                  <p className="mx-auto mt-1 max-w-sm text-xs text-ink-soft">
+                    {finished
+                      ? "New skills, projects, or education details go straight into your vault."
+                      : vaultItems.length > 0
+                        ? "We'll chat about your experience one question at a time."
+                        : "Drop a PDF on the right, or tell me about a project you've built."}
+                  </p>
                 </div>
-                <p className="text-sm font-medium text-ink">
-                  {finished
-                    ? "What would you like to update?"
-                    : vaultItems.length > 0
-                      ? "Ready when you are ✨"
-                      : "Hi! Upload a resume or say hello 👋"}
-                </p>
-                <p className="mx-auto mt-1 max-w-sm text-xs text-ink-soft">
-                  {finished
-                    ? "New skills, projects, or education details go straight into your vault."
-                    : vaultItems.length > 0
-                      ? "We'll chat about your experience one question at a time."
-                      : "Drop a PDF on the right, or tell me about a project you've built."}
-                </p>
-              </div>
-            )}
-            {messages.map((m, i) => (
-              <div
-                key={i}
-                className={`flex max-w-[min(100%,36rem)] gap-2 ${
-                  m.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
-                }`}
-              >
-                {m.role !== "user" && (
-                  <CoachAvatar
-                    size="sm"
-                    mood={m.role === "pending" ? "thinking" : "idle"}
-                  />
-                )}
-                <div
-                  className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm ${
-                    m.role === "user"
-                      ? "rounded-br-md bg-accent text-white"
-                      : m.role === "pending"
-                        ? "rounded-bl-md border border-line bg-accent-soft/50 text-ink-soft"
-                        : "rounded-bl-md border border-line bg-white text-ink"
-                  }`}
-                >
-                  {m.role === "pending" ? <TypingDots /> : m.content}
-                </div>
-              </div>
-            ))}
-
-            {startersVisible && !busy && (
-              <ConversationStarters
-                starters={starters}
-                skills={state.data?.suggested_skills ?? []}
-                projects={state.data?.suggested_projects ?? []}
-                vaultItems={vaultItems}
-                activeMode={state.data?.conversation_mode}
-                pending={busy}
-                onSelectStarter={(id) => {
-                  setLastStarterId(id);
-                  starter.mutate(id);
-                }}
-                onExploreSkill={(skill) =>
-                  send(
-                    `I'd like to explore my skill in ${skill}. Ask me one question about how I've used it.`,
-                  )
-                }
-                onExploreProject={(project) =>
-                  send(
-                    `Let's explore my project “${project}”. Ask follow-ups based only on what's in my vault.`,
-                  )
-                }
-              />
-            )}
-
-            {suggestedReplies.length > 0 && !busy && !finished && (
-              <div className="flex flex-wrap gap-2 pl-10" data-testid="suggested-replies">
-                {suggestedReplies.map((reply) => (
-                  <button
-                    key={reply}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => send(reply)}
-                    className="rounded-full border border-accent/25 bg-accent-soft/70 px-3 py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-soft disabled:opacity-50"
+              )}
+              {messages.map((m, i) => {
+                const key = messageKey(m.role, m.content, i);
+                const isNew =
+                  m.role !== "pending" &&
+                  seededKeysRef.current !== null &&
+                  !seededKeysRef.current.has(key);
+                const enterClass =
+                  isNew && m.role === "user"
+                    ? "coach-bubble-enter-user"
+                    : isNew
+                      ? "coach-bubble-enter-assistant"
+                      : "";
+                return (
+                  <div
+                    key={key}
+                    className={`flex w-full max-w-[85%] gap-2 sm:max-w-[min(100%,36rem)] ${
+                      m.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
+                    } ${enterClass}`}
                   >
-                    {reply}
-                  </button>
-                ))}
-              </div>
-            )}
+                    {m.role !== "user" && (
+                      <CoachAvatar
+                        size="sm"
+                        mood={m.role === "pending" ? "thinking" : "idle"}
+                      />
+                    )}
+                    <div
+                      className={`min-w-0 break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm [overflow-wrap:anywhere] ${
+                        m.role === "user"
+                          ? "rounded-br-md bg-accent text-white"
+                          : m.role === "pending"
+                            ? "rounded-bl-md border border-line bg-accent-soft/50 text-ink-soft"
+                            : "rounded-bl-md border border-line bg-white text-ink"
+                      }`}
+                    >
+                      {m.role === "pending" ? <TypingIndicator /> : m.content}
+                    </div>
+                  </div>
+                );
+              })}
 
-            {coachError && (
-              <div
-                data-testid="onboarding-chat-error"
-                role="alert"
-                className="ml-10 max-w-md rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-950"
-              >
-                <p>{friendlyCoachError(coachError.message)}</p>
-                <button
-                  type="button"
-                  data-testid="onboarding-chat-retry"
-                  disabled={busy}
-                  onClick={retryCoach}
-                  className="mt-2 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
+              {vaultChips.length > 0 && (
+                <div
+                  className="flex flex-wrap gap-2 pl-10"
+                  data-testid="vault-add-chips"
+                  aria-live="polite"
                 >
-                  Try Again
-                </button>
-              </div>
+                  {vaultChips.map((chip) => (
+                    <span
+                      key={chip.id}
+                      className="coach-vault-chip inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-800"
+                    >
+                      <svg
+                        viewBox="0 0 16 16"
+                        className="h-3.5 w-3.5 shrink-0"
+                        aria-hidden
+                      >
+                        <circle cx="8" cy="8" r="7" fill="#10b981" opacity="0.2" />
+                        <path
+                          d="M4.5 8.2 7 10.6 11.5 5.5"
+                          fill="none"
+                          stroke="#059669"
+                          strokeWidth="1.6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      Added to your profile: {chip.title}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {startersVisible && !busy && (
+                <ConversationStarters
+                  starters={starters}
+                  skills={state.data?.suggested_skills ?? []}
+                  projects={state.data?.suggested_projects ?? []}
+                  vaultItems={vaultItems}
+                  activeMode={state.data?.conversation_mode}
+                  pending={busy}
+                  onSelectStarter={(id) => {
+                    setLastStarterId(id);
+                    forceScrollRef.current = true;
+                    starter.mutate(id);
+                  }}
+                  onExploreSkill={(skill) =>
+                    send(
+                      `I'd like to explore my skill in ${skill}. Ask me one question about how I've used it.`,
+                    )
+                  }
+                  onExploreProject={(project) =>
+                    send(
+                      `Let's explore my project “${project}”. Ask follow-ups based only on what's in my vault.`,
+                    )
+                  }
+                />
+              )}
+
+              {suggestedReplies.length > 0 && !busy && !finished && (
+                <div className="flex flex-wrap gap-2 pl-10" data-testid="suggested-replies">
+                  {suggestedReplies.map((reply) => (
+                    <button
+                      key={reply}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => send(reply)}
+                      className="rounded-full border border-accent/25 bg-accent-soft/70 px-3 py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
+                    >
+                      {reply}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {coachError && (
+                <div
+                  data-testid="onboarding-chat-error"
+                  role="alert"
+                  className="ml-10 max-w-md rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-950"
+                >
+                  <p>{friendlyCoachError(coachError.message)}</p>
+                  <button
+                    type="button"
+                    data-testid="onboarding-chat-retry"
+                    disabled={busy}
+                    onClick={retryCoach}
+                    className="mt-2 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {showNewPill && (
+              <button
+                type="button"
+                data-testid="new-message-pill"
+                aria-label="Jump to new message"
+                onClick={() => scrollMessagesToBottom("smooth")}
+                className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-white shadow-md hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                New message
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
+                  <path
+                    d="M4 6.5 8 10.5 12 6.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
             )}
-            <div ref={bottomRef} />
           </div>
 
           {(phase === "goals" || phase === "ready" || showGoalMenu) && !finished && (
@@ -636,12 +846,15 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          <div className="shrink-0 border-t border-line bg-white p-3 sm:p-4">
+          <div
+            data-testid="onboarding-chat-composer"
+            className="shrink-0 border-t border-line bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"
+          >
             <div className="mb-2 flex flex-wrap gap-2">
               {!finished && (
                 <button
                   type="button"
-                  className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink"
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                   onClick={() => setShowStartersOverride(true)}
                 >
                   Change topic
@@ -650,7 +863,7 @@ export default function OnboardingPage() {
               {!finished && phase !== "profile" && (
                 <button
                   type="button"
-                  className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink"
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                   onClick={() =>
                     send("Let's go back to reviewing my vault profile for a moment.")
                   }
@@ -661,17 +874,37 @@ export default function OnboardingPage() {
               {!finished && (
                 <button
                   type="button"
-                  className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink"
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                   onClick={() => send("I'd like to skip this question and move on.")}
                 >
                   Skip this question
                 </button>
               )}
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-              <input
+            <div className="flex items-end gap-2">
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  data-testid="emoji-picker-button"
+                  aria-label="Insert emoji"
+                  aria-expanded={emojiOpen}
+                  disabled={busy}
+                  onClick={() => setEmojiOpen((v) => !v)}
+                  className="rounded-xl border border-line bg-page/40 px-2.5 py-2.5 text-base leading-none hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
+                >
+                  😊
+                </button>
+                <EmojiPicker
+                  open={emojiOpen}
+                  onClose={() => setEmojiOpen(false)}
+                  onPick={insertEmoji}
+                />
+              </div>
+              <textarea
+                ref={textareaRef}
+                rows={1}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => setInput(e.target.value.slice(0, 4000))}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -685,24 +918,33 @@ export default function OnboardingPage() {
                       ? "Type your reply…"
                       : "Tell me about a project, internship, or skill…"
                 }
-                className="min-w-0 flex-1 rounded-xl border border-line bg-page/40 px-4 py-2.5 text-sm outline-none transition focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/20"
+                className="max-h-[7.5rem] min-h-[2.625rem] min-w-0 flex-1 resize-none overflow-y-auto rounded-xl border border-line bg-page/40 px-4 py-2.5 text-sm leading-5 outline-none transition focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/20 disabled:opacity-60"
                 disabled={busy}
                 data-testid="onboarding-chat-input"
+                aria-label="Message your coach"
               />
               <button
                 type="button"
                 onClick={() => send()}
                 disabled={busy || !input.trim()}
                 data-testid="onboarding-chat-send"
-                className="rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-40 sm:self-auto"
+                aria-label={busy ? "Sending" : "Send message"}
+                className="inline-flex min-w-[4.5rem] items-center justify-center gap-1.5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
               >
-                Send
+                {busy ? (
+                  <span
+                    className="h-4 w-4 motion-safe:animate-spin rounded-full border-2 border-white/30 border-t-white"
+                    aria-hidden
+                  />
+                ) : (
+                  "Send"
+                )}
               </button>
             </div>
           </div>
         </section>
 
-        <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto lg:max-h-full">
+        <aside className="flex min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto overscroll-contain lg:max-h-full">
           <VaultSidebar items={vaultItems} />
 
           <Link
