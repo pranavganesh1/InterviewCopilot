@@ -245,6 +245,161 @@ def _question_fingerprint(text: str) -> str:
     return cleaned[:180]
 
 
+def _norm_msg(text: str) -> str:
+    return " ".join((text or "").lower().split())
+
+
+def last_assistant_content(history: list[dict] | None) -> str:
+    for msg in reversed(history or []):
+        if msg.get("role") == "assistant":
+            return str(msg.get("content") or "")
+    return ""
+
+
+def assistant_asked_about_duplicates(text: str) -> bool:
+    t = _norm_msg(text)
+    return ("same item" in t and "keep both" in t) or (
+        "keep both" in t and ("same" in t or "duplicate" in t or "similar" in t)
+    )
+
+
+def recent_duplicate_prompt(history: list[dict] | None, *, lookback: int = 8) -> bool:
+    """True if a recent assistant turn asked same-vs-both (not only the latest message)."""
+    seen = 0
+    for msg in reversed(history or []):
+        if msg.get("role") != "assistant":
+            continue
+        seen += 1
+        if assistant_asked_about_duplicates(str(msg.get("content") or "")):
+            return True
+        if seen >= lookback:
+            break
+    return False
+
+
+def classify_duplicate_answer(message: str) -> str | None:
+    """Return 'keep_both', 'merge', or None if unclear."""
+    t = _norm_msg(message)
+    if not t:
+        return None
+    merge_exact = {
+        "same",
+        "same item",
+        "merge",
+        "combine",
+        "one",
+        "they're the same",
+        "they are the same",
+        "its the same",
+        "it's the same",
+        "yes same",
+        "same one",
+    }
+    keep_exact = {
+        "both",
+        "keep both",
+        "give both",
+        "keep them",
+        "separate",
+        "different",
+        "two",
+        "keep separate",
+        "they're different",
+        "they are different",
+    }
+    if t in keep_exact or t.startswith("keep both") or "give both" in t:
+        return "keep_both"
+    if t in merge_exact or t.startswith("merge") or t.startswith("same item"):
+        return "merge"
+    if "both" in t and "not" not in t:
+        return "keep_both"
+    if t in {"yes", "y"} and "both" not in t:
+        # Ambiguous yes — treat as merge only when prior prompt offered same-first.
+        return None
+    if t in {"no", "n"}:
+        return "keep_both"
+    return None
+
+
+def is_ack_only(message: str) -> bool:
+    t = _norm_msg(message)
+    if not t or len(t) > 40:
+        return False
+    acks = {
+        "ok",
+        "okay",
+        "k",
+        "yes",
+        "yep",
+        "yeah",
+        "sure",
+        "fine",
+        "alright",
+        "all right",
+        "lets start",
+        "let's start",
+        "lets us start",
+        "let us start",
+        "start",
+        "go ahead",
+        "continue",
+        "next",
+        "ready",
+        "thanks",
+        "thank you",
+        "cool",
+        "great",
+        "good",
+        "done",
+    }
+    return t in acks
+
+
+def ensure_nonempty_reply(
+    reply: str,
+    *,
+    vault_summary: list[dict] | None = None,
+    duplicates_resolved: str | None = None,
+) -> str:
+    text = (reply or "").strip()
+    if text:
+        return text
+    if duplicates_resolved == "keep_both":
+        return (
+            "Kept both entries. Which project or skill should we dig into next?"
+        )
+    if duplicates_resolved == "merge":
+        return (
+            "Merged those into one entry. What was the goal of that item, "
+            "and which tools did you use?"
+        )
+    projects = [
+        str(i.get("title") or "")
+        for i in (vault_summary or [])
+        if i.get("category") == "project" and i.get("title")
+    ]
+    skills = [
+        str(i.get("title") or "")
+        for i in (vault_summary or [])
+        if i.get("category") == "skill" and i.get("title")
+    ]
+    if projects:
+        return (
+            f"What was the goal of your “{projects[0]}” project, "
+            "and which tools did you use?"
+        )
+    if skills:
+        return f"How have you used {skills[0]} in a real task or project?"
+    return (
+        "What would you like to prepare for first — a project story, "
+        "a skill, or a target role?"
+    )
+
+
+def ack_followup_question(vault_summary: list[dict] | None = None) -> str:
+    return ensure_nonempty_reply("", vault_summary=vault_summary)
+
+
 async def run_onboarding_turn(
     *,
     message: str,
@@ -346,7 +501,9 @@ async def run_onboarding_turn(
     # Deterministic phase / completion after the model replies.
     merged_prefs = prefs
     if turn.preparation_update is not None:
-        merged_prefs = merge_preferences(prefs, turn.preparation_update.model_dump(exclude_none=True))
+        merged_prefs = merge_preferences(
+            prefs, turn.preparation_update.model_dump(exclude_none=True)
+        )
 
     # Synthetic vault after this turn's extractions items (for readiness only).
     enriched = list(vault_summary or [])
@@ -354,11 +511,7 @@ async def run_onboarding_turn(
         enriched.append({"category": item.category, "title": item.title, "details": item.details})
     vault_ready = vault_is_ready(enriched, ctx)
 
-    if already_finished:
-        turn.phase = "ready"
-        turn.onboarding_complete = True
-        turn.show_goal_menu = False
-    elif preferences_ready(merged_prefs):
+    if already_finished or preferences_ready(merged_prefs):
         turn.phase = "ready"
         turn.onboarding_complete = True
         turn.show_goal_menu = False
@@ -377,6 +530,7 @@ async def run_onboarding_turn(
         turn.onboarding_complete = False
         turn.show_goal_menu = False
 
+    turn.reply = ensure_nonempty_reply(turn.reply, vault_summary=vault_summary)
     return turn
 
 

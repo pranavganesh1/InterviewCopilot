@@ -166,6 +166,8 @@ test("chat failure shows friendly retry and preserves typed message", async ({
     "thoughts got interrupted",
   );
   await expect(page.getByTestId("onboarding-chat-retry")).toBeVisible();
+  await expect(page.getByTestId("message-not-delivered")).toBeVisible();
+  await expect(page.getByTestId("toast-error")).toBeVisible();
   await expect(input).toHaveValue("I want to practice Python");
   expect(chatCalls).toBe(1);
 
@@ -608,4 +610,166 @@ test("resume drop zone shows error and success; Go to Tracks navigates", async (
 
   await page.getByTestId("go-to-tracks").click();
   await expect(page).toHaveURL("/");
+});
+
+test("slow reply shows still thinking then timeout Not delivered", async ({
+  page,
+}) => {
+  await page.clock.install();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: BASE_STATE }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    await gate;
+    await route.fulfill({
+      status: 503,
+      body: JSON.stringify({ detail: "busy" }),
+      contentType: "application/json",
+    });
+  });
+
+  await page.goto("/onboarding");
+  await page.getByTestId("onboarding-chat-input").fill("hello slow");
+  await page.getByTestId("onboarding-chat-send").click();
+  await expect(page.getByTestId("typing-indicator")).toBeVisible();
+  await page.clock.fastForward(8000);
+  await expect(page.getByTestId("still-thinking")).toBeVisible();
+  await page.clock.fastForward(22000);
+  release();
+  await expect(page.getByTestId("message-not-delivered")).toBeVisible();
+  await expect(page.getByTestId("toast-error")).toBeVisible();
+});
+
+test("empty reply shows fallback bubble", async ({ page }) => {
+  let state = { ...BASE_STATE };
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    const body = route.request().postDataJSON() as { message: string };
+    state = {
+      ...state,
+      messages: [
+        ...state.messages,
+        { role: "user", content: body.message },
+        { role: "assistant", content: "" },
+      ],
+    };
+    await route.fulfill({
+      json: {
+        reply: "",
+        items_created: [],
+        onboarding_complete: true,
+        phase: "goals",
+      },
+    });
+  });
+  await page.goto("/onboarding");
+  await page.getByTestId("onboarding-chat-input").fill("ping");
+  await page.getByTestId("onboarding-chat-send").click();
+  await expect(page.getByTestId("onboarding-messages")).toContainText(
+    "I didn't catch that",
+  );
+});
+
+test("idle nudge appears, fills input without sending, respects visibility", async ({
+  page,
+}) => {
+  await page.clock.install();
+  let chatCalls = 0;
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({
+      json: { ...BASE_STATE, show_goal_menu: false, phase: "profile" },
+    }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    chatCalls += 1;
+    await route.fulfill({
+      json: { reply: "ok", items_created: [], onboarding_complete: true },
+    });
+  });
+
+  await page.goto("/onboarding");
+  await expect(page.getByTestId("onboarding-chat-input")).toBeVisible();
+  await expect(page.getByTestId("onboarding-messages")).toContainText("QCGNN");
+  await page.clock.fastForward(45000);
+  await expect(page.getByTestId("idle-nudge")).toBeVisible();
+  await page.getByTestId("idle-nudge-chip").first().click();
+  await expect(page.getByTestId("onboarding-chat-input")).not.toHaveValue("");
+  expect(chatCalls).toBe(0);
+
+  await page.getByTestId("onboarding-chat-input").fill("typing clears nudge");
+  await expect(page.getByTestId("idle-nudge")).toHaveCount(0);
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.clock.fastForward(200000);
+  await expect(page.getByTestId("idle-nudge")).toHaveCount(0);
+});
+
+test("offline and online show connection toasts", async ({ page }) => {
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: BASE_STATE }),
+  );
+  await page.goto("/onboarding");
+  await expect(page.getByTestId("onboarding-chat-input")).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+  await expect(page.getByTestId("toast-error")).toContainText("Connection lost");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.getByTestId("toast-success")).toContainText(
+    "Connection restored",
+  );
+});
+
+test("hidden tab title updates when reply arrives", async ({ page }) => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  let state = { ...BASE_STATE };
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    await gate;
+    const body = route.request().postDataJSON() as { message: string };
+    state = {
+      ...state,
+      messages: [
+        ...state.messages,
+        { role: "user", content: body.message },
+        { role: "assistant", content: "Back with a reply" },
+      ],
+    };
+    await route.fulfill({
+      json: {
+        reply: "Back with a reply",
+        items_created: [],
+        onboarding_complete: true,
+      },
+    });
+  });
+
+  await page.goto("/onboarding");
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+  });
+  await page.getByTestId("onboarding-chat-input").fill("hi");
+  await page.getByTestId("onboarding-chat-send").click();
+  release();
+  await expect
+    .poll(async () => page.evaluate(() => document.title))
+    .toContain("New reply from Aiko");
 });

@@ -1,20 +1,28 @@
+import uuid
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.onboarding import (
     ExtractedItem,
+    OnboardingTurn,
+    ack_followup_question,
     build_onboarding_graph,
+    classify_duplicate_answer,
     compute_profile_gaps,
     derive_phase,
+    ensure_nonempty_reply,
+    is_ack_only,
+    recent_duplicate_prompt,
     vault_is_ready,
 )
 from app.core.logging import get_logger
+from app.gateway.llm import LLMGatewayError
 from app.models.user import User
 from app.services import conversation_store
-from app.gateway.llm import LLMGatewayError
 from app.services.preparation_goals import (
-    GOALS_INTRO_MARKER,
     GOAL_INTERESTS,
+    GOALS_INTRO_MARKER,
     build_resume_goal_options,
     followups_complete,
     goals_followup_reply,
@@ -35,6 +43,7 @@ from app.services.preparation_review import (
 )
 from app.services.vault_service import (
     build_profile_review_message,
+    delete_item,
     find_near_duplicates,
     list_items,
     message_looks_like_resume_welcome,
@@ -119,6 +128,48 @@ def _message_signals_skip(message: str) -> bool:
     )
 
 
+async def _apply_duplicate_decision(
+    db: AsyncSession,
+    user_id,
+    decision: str,
+    pair: dict,
+) -> str:
+    """Mutate vault for merge; keep_both leaves both rows. Returns confirmation text."""
+    a_title = str((pair.get("a") or {}).get("title") or "entry")
+    b_title = str((pair.get("b") or {}).get("title") or "entry")
+    category = str(pair.get("category") or "item")
+    if decision == "keep_both":
+        return f"Kept both {category} entries — “{a_title}” and “{b_title}”."
+    # merge: fold b into a when possible, then remove b
+    a_id = (pair.get("a") or {}).get("id")
+    b_id = (pair.get("b") or {}).get("id")
+    items = await list_items(db, user_id)
+    by_id = {str(i.id): i for i in items}
+    a_item = by_id.get(str(a_id)) if a_id else None
+    b_item = by_id.get(str(b_id)) if b_id else None
+    if a_item is not None and b_item is not None:
+        merged = dict(a_item.details or {})
+        for k, v in (b_item.details or {}).items():
+            if v and not merged.get(k):
+                merged[k] = v
+        a_item.details = merged
+        await db.commit()
+        try:
+            await delete_item(db, user_id, uuid.UUID(str(b_id)))
+        except Exception:
+            log.warning("onboarding_duplicate_merge_delete_failed", stage="merge")
+        return f"Merged into one {category} entry — “{a_title}”."
+    return f"Treated those as the same {category} entry."
+
+
+def _next_question_after_dup(summary: list[dict]) -> str:
+    q = ack_followup_question(summary)
+    # Prefer a concrete What/How/Which follow-up.
+    if q.startswith("What") or q.startswith("How") or q.startswith("Which"):
+        return q
+    return "Which project or skill should we explore next?"
+
+
 async def chat(
     db: AsyncSession,
     mongo_db: AsyncIOMotorDatabase,
@@ -157,50 +208,115 @@ async def chat(
         coach_context=coach_ctx,
     )
 
-    resume_options = build_resume_goal_options(summary)
-    graph = build_onboarding_graph(turn_runner=run_onboarding_turn)
-    result = await graph.ainvoke(
-        {
-            "message": message,
-            "history": history,
-            "vault_summary": summary,
-            "possible_duplicates": duplicates,
-            "profile_gaps": gaps,
-            "preparation_preferences": prefs,
-            "available_skills": resume_options.get("suggested_skills")
-            or _skill_titles(summary),
-            "available_projects": resume_options.get("suggested_projects")
-            or _project_titles(summary),
-            "resume_goal_options": resume_options,
-            "candidate_background": bg,
-            "coach_context": coach_ctx,
-            "conversation_mode": mode,
-            "already_finished": already_finished,
-            "phase": phase,
-            "meta": {"user_id": str(user.id), "request_id": request_id},
-        }
-    )
-    turn = result["turn"]
+    turn: dict | None = None
+    created: list = []
+    updated: list = []
 
-    created, updated = await upsert_extracted_items(
-        db,
-        user.id,
-        [ExtractedItem(**i) for i in turn["extracted_items"]],
-        "onboarding_chat",
+    # 1) Deterministic pending-duplicate answers (no LLM).
+    dup_decision = (
+        classify_duplicate_answer(message)
+        if duplicates and recent_duplicate_prompt(history)
+        else None
     )
-
-    prep_update = turn.get("preparation_update")
-    if prep_update:
-        prefs = merge_preferences(prefs, prep_update)
-        prefs = await conversation_store.set_preparation_preferences(
-            mongo_db, str(user.id), prefs
+    if dup_decision:
+        confirm = await _apply_duplicate_decision(
+            db, user.id, dup_decision, duplicates[0]
+        )
+        summary = await vault_summary(db, user.id)
+        follow = _next_question_after_dup(summary)
+        turn = OnboardingTurn(
+            reply=ensure_nonempty_reply(
+                f"{confirm} {follow}",
+                vault_summary=summary,
+                duplicates_resolved=dup_decision,
+            ),
+            phase="goals" if vault_is_ready(summary, coach_ctx) else "profile",
+            show_goal_menu=False,
+        ).model_dump()
+        log.info(
+            "onboarding_chat_stage",
+            stage="duplicate_resolve",
+            cause=dup_decision,
         )
 
-    await conversation_store.append_message(mongo_db, str(user.id), "assistant", turn["reply"])
+    # 2) Acknowledgement-only → one concrete next question (no LLM).
+    elif is_ack_only(message) and not already_finished:
+        turn = OnboardingTurn(
+            reply=ack_followup_question(summary),
+            phase=phase if phase in ("profile", "goals", "ready") else "profile",
+            show_goal_menu=phase == "goals" and not prefs.get("interests"),
+        ).model_dump()
+        log.info("onboarding_chat_stage", stage="ack_followup", cause="ack_only")
+
+    # 3) Normal LLM turn.
+    else:
+        resume_options = build_resume_goal_options(summary)
+        graph = build_onboarding_graph(turn_runner=run_onboarding_turn)
+        try:
+            result = await graph.ainvoke(
+                {
+                    "message": message,
+                    "history": history,
+                    "vault_summary": summary,
+                    "possible_duplicates": duplicates,
+                    "profile_gaps": gaps,
+                    "preparation_preferences": prefs,
+                    "available_skills": resume_options.get("suggested_skills")
+                    or _skill_titles(summary),
+                    "available_projects": resume_options.get("suggested_projects")
+                    or _project_titles(summary),
+                    "resume_goal_options": resume_options,
+                    "candidate_background": bg,
+                    "coach_context": coach_ctx,
+                    "conversation_mode": mode,
+                    "already_finished": already_finished,
+                    "phase": phase,
+                    "meta": {"user_id": str(user.id), "request_id": request_id},
+                }
+            )
+            turn = result["turn"]
+        except LLMGatewayError:
+            log.warning("onboarding_chat_stage", stage="llm", cause="gateway_error")
+            raise
+        except Exception as exc:
+            log.warning(
+                "onboarding_chat_stage",
+                stage="llm_or_db",
+                cause=type(exc).__name__,
+            )
+            raise
+
+        created, updated = await upsert_extracted_items(
+            db,
+            user.id,
+            [ExtractedItem(**i) for i in (turn.get("extracted_items") or [])],
+            "onboarding_chat",
+        )
+
+        prep_update = turn.get("preparation_update")
+        if prep_update:
+            prefs = merge_preferences(prefs, prep_update)
+            prefs = await conversation_store.set_preparation_preferences(
+                mongo_db, str(user.id), prefs
+            )
+
+    assert turn is not None
+    turn["reply"] = ensure_nonempty_reply(
+        turn.get("reply") or "",
+        vault_summary=summary,
+    )
+    await conversation_store.append_message(
+        mongo_db, str(user.id), "assistant", turn["reply"]
+    )
 
     # Persist structured coach context across refreshes.
     asked = list(coach_ctx.get("asked_questions") or [])
     fp = turn.get("_question_fingerprint") or ""
+    if not fp:
+        from app.agents.onboarding import _question_fingerprint
+
+        fp = _question_fingerprint(turn["reply"])
+        turn["_question_fingerprint"] = fp
     if fp and fp not in asked:
         asked.append(fp)
     confirmed = list(coach_ctx.get("confirmed_facts") or [])
