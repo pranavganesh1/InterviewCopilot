@@ -24,6 +24,8 @@ export default function App() {
   const { user, loading } = useAuth();
   const { pathname } = useLocation();
   const isInterviewSession = /\/tracks\/[^/]+\/interview\//.test(pathname);
+  const isOnboarding = pathname === "/onboarding";
+  const isImmersive = isInterviewSession || isOnboarding;
 
   if (loading) {
     return (
@@ -42,8 +44,8 @@ export default function App() {
       <AppHeader />
       <main
         className={
-          isInterviewSession
-            ? "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-hidden"
+          isImmersive
+            ? "mx-auto flex min-h-0 w-full min-w-0 max-w-6xl flex-1 flex-col overflow-x-hidden px-3 py-3 sm:px-4 sm:py-4"
             : "mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:py-8"
         }
       >

@@ -211,7 +211,7 @@ export default function GoalDiscovery({
       ? suggestedTechnicalAreas
       : [...suggestedSkills, ...suggestedProjects]
   ).map((s) => ({ id: s, label: s }));
-  const projectItems =
+  const projectItems: GoalOption[] =
     projectOptions.length > 0
       ? projectOptions.map((p) => ({
           id: p.id || p.label,
@@ -325,10 +325,10 @@ export default function GoalDiscovery({
                   disabled={pending}
                   data-testid={`goal-interest-${opt.id}`}
                   onClick={() => toggleInterest(opt.id)}
-                  className={`rounded-md px-3 py-2 text-left text-xs font-medium transition ${
+                  className={`rounded-xl px-3 py-2.5 text-left text-xs font-medium shadow-sm transition ${
                     active
-                      ? "bg-accent text-white"
-                      : "bg-white text-ink ring-1 ring-stone-200 hover:ring-accent"
+                      ? "bg-accent text-white shadow-md"
+                      : "bg-white text-ink ring-1 ring-stone-200 hover:bg-accent-soft/50 hover:ring-accent"
                   }`}
                 >
                   {opt.label}

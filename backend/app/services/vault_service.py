@@ -219,11 +219,12 @@ RESUME_WELCOME_MARKER = "I've reviewed your resume"
 
 
 def build_profile_review_message(items: list[VaultItem]) -> str:
-    """Personalized conversational welcome from extracted vault data (no hardcoded bios)."""
+    """Warm, short welcome — mention 1–2 resume highlights, not a full dump."""
     if not items:
         return (
-            "Welcome! I don't have your background yet. "
-            "Upload a resume or tell me about a project you've built."
+            "Hey! 👋 I don't have your background yet. "
+            "Upload a resume or tell me about a project you've built — "
+            "we'll shape your prep from there."
         )
 
     by_cat: dict[str, list[str]] = {}
@@ -232,53 +233,48 @@ def build_profile_review_message(items: list[VaultItem]) -> str:
 
     skills = by_cat.get("skill") or []
     projects = by_cat.get("project") or []
-    education = by_cat.get("education") or []
     internships = by_cat.get("internship") or []
 
-    found_bits: list[str] = []
-    if skills:
-        preview = ", ".join(skills[:5])
-        if len(skills) > 5:
-            preview += f", and {len(skills) - 5} more"
-        found_bits.append(preview)
-    if projects:
-        proj = ", ".join(f"“{p}”" for p in projects[:3])
-        if len(projects) > 3:
-            proj += f", and {len(projects) - 3} more"
-        found_bits.append(f"projects like {proj}")
-    if education:
-        found_bits.append(f"education in {education[0]}")
-    if internships:
-        found_bits.append(f"internship experience ({internships[0]})")
+    # Prefer a standout project; fall back to a skill or internship — never list everything.
+    highlight: str | None = None
+    if len(projects) >= 2:
+        highlight = (
+            f"especially your “{projects[0]}” and “{projects[1]}” projects"
+        )
+    elif projects:
+        highlight = f"especially your “{projects[0]}” project"
+    elif skills:
+        preview = " and ".join(skills[:2])
+        highlight = f"especially your work with {preview}"
+    elif internships:
+        highlight = f"especially your {internships[0]} experience"
 
-    if found_bits:
-        if len(found_bits) == 1:
-            found_clause = found_bits[0]
-        elif len(found_bits) == 2:
-            found_clause = f"{found_bits[0]}, and {found_bits[1]}"
-        else:
-            found_clause = ", ".join(found_bits[:-1]) + f", and {found_bits[-1]}"
+    if highlight:
         opener = (
-            f"Hey! {RESUME_WELCOME_MARKER}. I found your experience in {found_clause}."
+            f"Hey! 👋 {RESUME_WELCOME_MARKER}. "
+            f"You've got some really interesting experience — {highlight}! 🚀"
         )
     else:
         opener = (
-            f"Hey! {RESUME_WELCOME_MARKER} and saved what I could find into your vault."
+            f"Hey! 👋 {RESUME_WELCOME_MARKER} and saved a few notes into your vault."
         )
 
     lines = [
         opener,
-        "Instead of filling out a long form, let's explore your experience through a conversation!",
         "",
-        "Pick a starter below — or type anything you want to share.",
+        "Let's get to know your goals a little better.",
+        "What would you like to work on first? Pick a starter below — or just type.",
     ]
 
     near = find_near_duplicates(items)
     if near:
         pair = near[0]
-        lines.append(
-            f"Quick check: “{pair['a']['title']}” and “{pair['b']['title']}” look similar — "
-            "same item, or keep both?"
+        lines.extend(
+            [
+                "",
+                f"Quick check: “{pair['a']['title']}” and “{pair['b']['title']}” look similar — "
+                "same item, or keep both?",
+            ]
         )
     return "\n".join(lines)
 

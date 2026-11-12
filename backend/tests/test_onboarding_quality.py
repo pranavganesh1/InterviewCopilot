@@ -77,9 +77,11 @@ def test_profile_review_message_lists_sections():
     ]
     msg = build_profile_review_message(items)
     assert RESUME_WELCOME_MARKER in msg
-    assert "Python" in msg and "QCGNN" in msg
-    assert "B.Tech CSE" in msg
-    assert "conversation" in msg.lower()
+    assert "QCGNN" in msg
+    # Warm coach tone: highlight a couple of items, not a full resume dump.
+    assert "and 11 more" not in msg
+    assert "I found your experience in" not in msg
+    assert "goals" in msg.lower() or "work on" in msg.lower()
     assert message_looks_like_resume_welcome(msg)
     assert not message_looks_like_resume_welcome("Just a normal coach reply")
 
@@ -234,7 +236,9 @@ async def test_seed_resume_welcome_is_idempotent(clean_users_table):
     assert second is False
     messages = await conversation_store.get_messages(mongo, user_id, limit=40)
     assert sum(1 for m in messages if "I've reviewed your resume" in m["content"]) == 1
-    assert "Java" in messages[0]["content"]
+    assert "Portfolio" in messages[0]["content"]
+    # Warm welcome highlights a project — not a full skill dump.
+    assert "I found your experience in" not in messages[0]["content"]
 
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
 

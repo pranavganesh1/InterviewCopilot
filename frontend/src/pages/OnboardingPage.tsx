@@ -66,6 +66,65 @@ const DEFAULT_STARTERS = [
   },
 ];
 
+function CoachAvatar({
+  mood = "idle",
+  size = "md",
+}: {
+  mood?: "idle" | "thinking" | "happy";
+  size?: "sm" | "md" | "lg";
+}) {
+  const dim = size === "sm" ? "h-8 w-8" : size === "lg" ? "h-14 w-14" : "h-10 w-10";
+  const eyeY = mood === "thinking" ? 11 : 10;
+  const mouth =
+    mood === "thinking"
+      ? "M10 16.5c1.2.6 2.8.6 4 0"
+      : mood === "happy"
+        ? "M9.5 15.5c1.4 1.6 3.6 1.6 5 0"
+        : "M10 16c1.3.8 2.7.8 4 0";
+  return (
+    <div
+      className={`${dim} shrink-0 overflow-hidden rounded-full bg-gradient-to-b from-sky-100 to-accent-soft shadow-sm ring-2 ring-white ${
+        mood === "thinking" ? "coach-avatar-thinking" : ""
+      }`}
+      aria-hidden
+    >
+      <svg viewBox="0 0 24 24" className="h-full w-full">
+        <circle cx="12" cy="12" r="11" fill="#dbeafe" />
+        <circle cx="12" cy="12" r="9.2" fill="#eff6ff" />
+        <circle cx="9" cy={eyeY} r="1.15" fill="#1e3a8a" />
+        <circle cx="15" cy={eyeY} r="1.15" fill="#1e3a8a" />
+        <circle cx="9.35" cy={eyeY - 0.35} r="0.35" fill="#fff" />
+        <circle cx="15.35" cy={eyeY - 0.35} r="0.35" fill="#fff" />
+        <path d={mouth} fill="none" stroke="#1d4ed8" strokeWidth="1.2" strokeLinecap="round" />
+        {mood === "happy" && (
+          <>
+            <circle cx="7.2" cy="13.2" r="1.1" fill="#93c5fd" opacity="0.55" />
+            <circle cx="16.8" cy="13.2" r="1.1" fill="#93c5fd" opacity="0.55" />
+          </>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+function TypingDots() {
+  return (
+    <span className="inline-flex items-center gap-1 px-0.5" aria-label="Coach is typing">
+      <span className="coach-typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
+      <span className="coach-typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
+      <span className="coach-typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
+    </span>
+  );
+}
+
+function friendlyCoachError(raw: string | undefined): string {
+  const text = (raw || "").toLowerCase();
+  if (text.includes("busy") || text.includes("rate") || text.includes("503") || text.includes("temporarily")) {
+    return "Oops! My thoughts got interrupted 😅 Let's try that again.";
+  }
+  return "Oops! My thoughts got interrupted 😅 Let's try that again.";
+}
+
 function ProgressSteps({
   phase,
   hasVault,
@@ -125,10 +184,13 @@ export default function OnboardingPage() {
   const navigate = useNavigate();
   const { refresh } = useAuth();
   const [input, setInput] = useState("");
+  const [failedMessage, setFailedMessage] = useState<string | null>(null);
+  const [lastStarterId, setLastStarterId] = useState<string | null>(null);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [showStartersOverride, setShowStartersOverride] = useState(true);
   const resumeInputRef = useRef<HTMLInputElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const state = useQuery({
@@ -143,7 +205,12 @@ export default function OnboardingPage() {
         body: JSON.stringify({ message }),
       }),
     onSuccess: () => {
+      setFailedMessage(null);
+      setInput("");
       qc.invalidateQueries({ queryKey: ["onboarding-state"] });
+    },
+    onError: (_err, message) => {
+      setFailedMessage(message);
     },
   });
 
@@ -155,6 +222,7 @@ export default function OnboardingPage() {
       }),
     onSuccess: () => {
       setShowStartersOverride(true);
+      setFailedMessage(null);
       qc.invalidateQueries({ queryKey: ["onboarding-state"] });
     },
   });
@@ -165,7 +233,10 @@ export default function OnboardingPage() {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["onboarding-state"] }),
+    onSuccess: () => {
+      setFailedMessage(null);
+      qc.invalidateQueries({ queryKey: ["onboarding-state"] });
+    },
   });
 
   const upload = useMutation({
@@ -215,14 +286,42 @@ export default function OnboardingPage() {
   const goalsBusy = busy;
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [state.data?.messages.length, chat.isPending, starter.isPending]);
+    const panel = messagesRef.current;
+    if (!panel) return;
+    panel.scrollTo({ top: panel.scrollHeight, behavior: "smooth" });
+  }, [
+    state.data?.messages.length,
+    chat.isPending,
+    starter.isPending,
+    saveGoals.isPending,
+    chat.isError,
+  ]);
 
-  const send = () => {
-    const message = input.trim();
+  const send = (override?: string) => {
+    const message = (override ?? input).trim();
     if (!message || busy) return;
-    setInput("");
+    chat.reset();
+    setFailedMessage(null);
+    // Keep the message visible until success so failures can retry without retyping.
+    setInput(message);
     chat.mutate(message);
+  };
+
+  const retryCoach = () => {
+    if (busy) return;
+    if (chat.error) {
+      const message = (failedMessage ?? input).trim();
+      if (!message) return;
+      send(message);
+      return;
+    }
+    if (starter.error && lastStarterId) {
+      starter.reset();
+      starter.mutate(lastStarterId);
+      return;
+    }
+    starter.reset();
+    saveGoals.reset();
   };
 
   const vaultItems = state.data?.vault_items ?? [];
@@ -309,20 +408,33 @@ export default function OnboardingPage() {
       : []),
   ];
 
+  const coachMood = busy ? "thinking" : finished ? "happy" : "idle";
+  const coachError =
+    chat.error instanceof Error
+      ? chat.error
+      : starter.error instanceof Error
+        ? starter.error
+        : saveGoals.error instanceof Error
+          ? saveGoals.error
+          : null;
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div
+      className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+      data-testid="onboarding-page"
+    >
+      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-accent">
             Profile setup
           </p>
           <h1 className="text-xl font-semibold tracking-tight">
-            {finished ? "Your profile vault" : "Meet your onboarding coach"}
+            {finished ? "Your profile vault" : "Meet your interview coach"}
           </h1>
           <p className="mt-0.5 text-sm text-stone-500">
             {finished
               ? "Your profile is saved. Edit anything below — Tracks stays your home."
-              : "Upload a resume or chat — we'll build your vault through conversation."}
+              : "Upload a resume or chat — your coach builds your vault with you."}
           </p>
         </div>
         <ProgressSteps
@@ -336,7 +448,7 @@ export default function OnboardingPage() {
       {finished && (
         <div
           data-testid="onboarding-finished-banner"
-          className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
+          className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
         >
           Onboarding completed
           {state.data?.onboarding_completed_at
@@ -346,86 +458,95 @@ export default function OnboardingPage() {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <section className="flex min-h-[28rem] flex-col overflow-hidden rounded-xl border border-stone-200 bg-gradient-to-b from-white to-stone-50/40 shadow-sm md:min-h-[calc(100vh-11rem)]">
-          <div className="flex items-center justify-between gap-3 border-b border-stone-100 bg-page/80 px-4 py-3 sm:px-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-xs font-bold text-white shadow-sm">
-                AI
-              </div>
-              <div>
-                <h2 className="text-sm font-semibold text-stone-800">
-                  Onboarding assistant
+      <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[minmax(0,1fr)_280px]">
+        <section
+          data-testid="onboarding-chat-panel"
+          className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-sm"
+        >
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-accent-soft/40 px-4 py-3 sm:px-5">
+            <div className="flex min-w-0 items-center gap-3">
+              <CoachAvatar mood={coachMood} />
+              <div className="min-w-0">
+                <h2 className="truncate text-sm font-semibold text-ink">
+                  Aiko · Interview Coach
                 </h2>
-                <p className="text-xs text-stone-500">
-                  {finished
-                    ? "Add or correct details — we won’t restart intake questions"
-                    : state.data?.has_resume_welcome
-                      ? "Resume reviewed · choose a starter or keep chatting"
-                      : "Chat with your coach · vault updates as you share"}
+                <p className="truncate text-xs text-ink-soft">
+                  {busy
+                    ? "Thinking…"
+                    : finished
+                      ? "Happy to refine your vault anytime"
+                      : state.data?.has_resume_welcome
+                        ? "Resume reviewed · let's personalize your prep"
+                        : "Friendly coach · vault updates as you share"}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               {canShowStarters && (
                 <button
                   type="button"
-                  className="hidden rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-stone-600 ring-1 ring-stone-200 hover:bg-stone-50 sm:inline"
+                  className="hidden rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-ink-soft ring-1 ring-line hover:bg-page sm:inline"
                   onClick={() => setShowStartersOverride((v) => !v)}
                 >
                   {showStartersOverride ? "Hide starters" : "Show starters"}
                 </button>
               )}
-              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-stone-500 ring-1 ring-stone-200">
-                {messages.filter((m) => m.role !== "pending").length} messages
+              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-ink-faint ring-1 ring-line">
+                {messages.filter((m) => m.role !== "pending").length}
               </span>
             </div>
           </div>
 
-          <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5">
+          <div
+            ref={messagesRef}
+            data-testid="onboarding-messages"
+            className="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto px-4 py-4 sm:px-5"
+          >
             {messages.length === 0 && (
-              <div className="rounded-xl border border-dashed border-stone-200 bg-white/80 px-4 py-8 text-center">
-                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-accent-soft text-sm font-bold text-accent-strong">
-                  AI
+              <div className="rounded-2xl border border-dashed border-line bg-accent-soft/30 px-4 py-8 text-center">
+                <div className="mx-auto mb-3 flex justify-center">
+                  <CoachAvatar mood="happy" size="lg" />
                 </div>
-                <p className="text-sm font-medium text-stone-700">
+                <p className="text-sm font-medium text-ink">
                   {finished
-                    ? "Tell us what you’d like to update"
+                    ? "What would you like to update?"
                     : vaultItems.length > 0
-                      ? "Review the profile we already found"
-                      : "Upload a resume or start chatting"}
+                      ? "Ready when you are ✨"
+                      : "Hi! Upload a resume or say hello 👋"}
                 </p>
-                <p className="mx-auto mt-1 max-w-sm text-xs text-stone-500">
+                <p className="mx-auto mt-1 max-w-sm text-xs text-ink-soft">
                   {finished
                     ? "New skills, projects, or education details go straight into your vault."
                     : vaultItems.length > 0
-                      ? "Confirm what’s right, fix duplicates, and fill only the missing details."
-                      : "Include stack, your role, and one concrete outcome — or drop a PDF on the right."}
+                      ? "We'll chat about your experience one question at a time."
+                      : "Drop a PDF on the right, or tell me about a project you've built."}
                 </p>
               </div>
             )}
             {messages.map((m, i) => (
               <div
                 key={i}
-                className={`max-w-[min(100%,36rem)] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
-                  m.role === "user"
-                    ? "ml-auto bg-accent text-white shadow-sm"
-                    : m.role === "pending"
-                      ? "bg-stone-100 italic text-stone-400"
-                      : "border border-stone-100 bg-white text-stone-800 shadow-sm"
+                className={`flex max-w-[min(100%,36rem)] gap-2 ${
+                  m.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
                 }`}
               >
-                {m.role === "pending" ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span
-                      className="h-3.5 w-3.5 motion-safe:animate-spin rounded-full border-2 border-stone-300 border-t-accent"
-                      aria-hidden
-                    />
-                    {m.content}
-                  </span>
-                ) : (
-                  m.content
+                {m.role !== "user" && (
+                  <CoachAvatar
+                    size="sm"
+                    mood={m.role === "pending" ? "thinking" : "idle"}
+                  />
                 )}
+                <div
+                  className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm ${
+                    m.role === "user"
+                      ? "rounded-br-md bg-accent text-white"
+                      : m.role === "pending"
+                        ? "rounded-bl-md border border-line bg-accent-soft/50 text-ink-soft"
+                        : "rounded-bl-md border border-line bg-white text-ink"
+                  }`}
+                >
+                  {m.role === "pending" ? <TypingDots /> : m.content}
+                </div>
               </div>
             ))}
 
@@ -437,14 +558,17 @@ export default function OnboardingPage() {
                 vaultItems={vaultItems}
                 activeMode={state.data?.conversation_mode}
                 pending={busy}
-                onSelectStarter={(id) => starter.mutate(id)}
+                onSelectStarter={(id) => {
+                  setLastStarterId(id);
+                  starter.mutate(id);
+                }}
                 onExploreSkill={(skill) =>
-                  chat.mutate(
+                  send(
                     `I'd like to explore my skill in ${skill}. Ask me one question about how I've used it.`,
                   )
                 }
                 onExploreProject={(project) =>
-                  chat.mutate(
+                  send(
                     `Let's explore my project “${project}”. Ask follow-ups based only on what's in my vault.`,
                   )
                 }
@@ -452,14 +576,14 @@ export default function OnboardingPage() {
             )}
 
             {suggestedReplies.length > 0 && !busy && !finished && (
-              <div className="flex flex-wrap gap-2" data-testid="suggested-replies">
+              <div className="flex flex-wrap gap-2 pl-10" data-testid="suggested-replies">
                 {suggestedReplies.map((reply) => (
                   <button
                     key={reply}
                     type="button"
                     disabled={busy}
-                    onClick={() => chat.mutate(reply)}
-                    className="rounded-full border border-accent/30 bg-accent-soft/60 px-3 py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-soft disabled:opacity-50"
+                    onClick={() => send(reply)}
+                    className="rounded-full border border-accent/25 bg-accent-soft/70 px-3 py-1.5 text-xs font-medium text-accent-strong transition hover:bg-accent-soft disabled:opacity-50"
                   >
                     {reply}
                   </button>
@@ -467,20 +591,29 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {(chat.error instanceof Error ||
-              starter.error instanceof Error ||
-              saveGoals.error instanceof Error) && (
-              <p className="text-sm text-red-600">
-                {(chat.error as Error | null)?.message ||
-                  (starter.error as Error | null)?.message ||
-                  (saveGoals.error as Error | null)?.message}
-              </p>
+            {coachError && (
+              <div
+                data-testid="onboarding-chat-error"
+                role="alert"
+                className="ml-10 max-w-md rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-950"
+              >
+                <p>{friendlyCoachError(coachError.message)}</p>
+                <button
+                  type="button"
+                  data-testid="onboarding-chat-retry"
+                  disabled={busy}
+                  onClick={retryCoach}
+                  className="mt-2 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
+                >
+                  Try Again
+                </button>
+              </div>
             )}
             <div ref={bottomRef} />
           </div>
 
           {(phase === "goals" || phase === "ready" || showGoalMenu) && !finished && (
-            <div className="border-t border-stone-100 p-3 sm:p-4">
+            <div className="max-h-[40%] shrink-0 overflow-y-auto border-t border-line p-3 sm:p-4">
               <GoalDiscovery
                 options={state.data?.goal_interest_options ?? []}
                 preferences={prefs}
@@ -504,12 +637,12 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          <div className="border-t border-stone-100 bg-white/90 p-3 sm:p-4">
+          <div className="shrink-0 border-t border-line bg-white p-3 sm:p-4">
             <div className="mb-2 flex flex-wrap gap-2">
               {!finished && (
                 <button
                   type="button"
-                  className="rounded-md px-2 py-1 text-[11px] font-medium text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink"
                   onClick={() => setShowStartersOverride(true)}
                 >
                   Change topic
@@ -518,11 +651,9 @@ export default function OnboardingPage() {
               {!finished && phase !== "profile" && (
                 <button
                   type="button"
-                  className="rounded-md px-2 py-1 text-[11px] font-medium text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink"
                   onClick={() =>
-                    chat.mutate(
-                      "Let's go back to reviewing my vault profile for a moment.",
-                    )
+                    send("Let's go back to reviewing my vault profile for a moment.")
                   }
                 >
                   Return to profile review
@@ -531,10 +662,8 @@ export default function OnboardingPage() {
               {!finished && (
                 <button
                   type="button"
-                  className="rounded-md px-2 py-1 text-[11px] font-medium text-stone-500 hover:bg-stone-100 hover:text-stone-700"
-                  onClick={() =>
-                    chat.mutate("I'd like to skip this question and move on.")
-                  }
+                  className="rounded-md px-2 py-1 text-[11px] font-medium text-ink-soft hover:bg-page hover:text-ink"
+                  onClick={() => send("I'd like to skip this question and move on.")}
                 >
                   Skip this question
                 </button>
@@ -544,21 +673,29 @@ export default function OnboardingPage() {
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
                 placeholder={
                   finished
                     ? "Add or correct a project, skill, or education detail…"
                     : state.data?.has_resume_welcome
-                      ? "Type your own reply anytime…"
-                      : "Describe a project, internship, or skill…"
+                      ? "Type your reply…"
+                      : "Tell me about a project, internship, or skill…"
                 }
-                className="min-w-0 flex-1 rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                className="min-w-0 flex-1 rounded-xl border border-line bg-page/40 px-4 py-2.5 text-sm outline-none transition focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/20"
                 disabled={busy}
+                data-testid="onboarding-chat-input"
               />
               <button
-                onClick={send}
+                type="button"
+                onClick={() => send()}
                 disabled={busy || !input.trim()}
-                className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white hover:bg-accent-strong disabled:opacity-40 sm:self-auto"
+                data-testid="onboarding-chat-send"
+                className="rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-40 sm:self-auto"
               >
                 Send
               </button>
@@ -566,7 +703,7 @@ export default function OnboardingPage() {
           </div>
         </section>
 
-        <aside className="flex flex-col gap-4">
+        <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto lg:max-h-full">
           <VaultSidebar items={vaultItems} />
 
           <Link
