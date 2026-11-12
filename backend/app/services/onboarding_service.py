@@ -1,3 +1,4 @@
+import time
 import uuid
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -9,10 +10,12 @@ from app.agents.onboarding import (
     ack_followup_question,
     build_onboarding_graph,
     classify_duplicate_answer,
+    classify_practise_intent,
     compute_profile_gaps,
     derive_phase,
     ensure_nonempty_reply,
     is_ack_only,
+    practise_followup_reply,
     recent_duplicate_prompt,
     vault_is_ready,
 )
@@ -178,195 +181,293 @@ async def chat(
     request_id: str | None = None,
     already_finished: bool = False,
     conversation_mode: str | None = None,
+    message_id: str | None = None,
 ) -> dict:
-    await conversation_store.append_message(mongo_db, str(user.id), "user", message)
-    history = await conversation_store.get_messages(mongo_db, str(user.id), limit=24)
-    items = await list_items(db, user.id)
-    summary = await vault_summary(db, user.id)
-    coach_ctx = await conversation_store.get_coach_context(mongo_db, str(user.id))
-    bg = infer_candidate_background(summary)
-    if _message_signals_skip(message):
-        coach_ctx = await conversation_store.merge_coach_context(
+    started = time.monotonic()
+    uid = str(user.id)
+    mid = (message_id or "").strip()[:80] or None
+
+    if mid:
+        cached = await conversation_store.get_idempotent_chat_reply(mongo_db, uid, mid)
+        if cached:
+            log.info(
+                "onboarding_chat_timing",
+                stage="idempotent_hit",
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
+            return cached
+
+    lock_key = mid or "anon"
+    if not await conversation_store.try_acquire_chat_lock(mongo_db, uid, lock_key):
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=429,
+            detail="A reply is already in progress. Please wait a moment.",
+        )
+
+    offer: dict | None = None
+    try:
+        if mid:
+            cached = await conversation_store.get_idempotent_chat_reply(
+                mongo_db, uid, mid
+            )
+            if cached:
+                return cached
+
+        t0 = time.monotonic()
+        await conversation_store.append_message(mongo_db, uid, "user", message)
+        history = await conversation_store.get_messages(mongo_db, uid, limit=24)
+        items = await list_items(db, user.id)
+        summary = await vault_summary(db, user.id)
+        coach_ctx = await conversation_store.get_coach_context(mongo_db, uid)
+        log.info(
+            "onboarding_chat_timing",
+            stage="db_mongo_reads",
+            elapsed_ms=int((time.monotonic() - t0) * 1000),
+        )
+        bg = infer_candidate_background(summary)
+        if _message_signals_skip(message):
+            coach_ctx = await conversation_store.merge_coach_context(
+                mongo_db,
+                uid,
+                {
+                    "proceed_to_goals": True,
+                    "answers_received": (coach_ctx.get("answers_received") or [])
+                    + [message.strip()[:180]],
+                },
+            )
+        duplicates = find_near_duplicates(items)
+        gaps = compute_profile_gaps(summary, coach_context=coach_ctx)
+        prefs = await conversation_store.get_preparation_preferences(mongo_db, uid)
+        mode = conversation_mode or await conversation_store.get_conversation_mode(
+            mongo_db, uid
+        )
+        phase = derive_phase(
+            vault_summary=summary,
+            preferences=prefs,
+            already_finished=already_finished,
+            coach_context=coach_ctx,
+        )
+
+        turn: dict | None = None
+        created: list = []
+        updated: list = []
+        path = "llm"
+        offer_already = await conversation_store.get_start_offer_shown(mongo_db, uid)
+
+        # 1) Deterministic pending-duplicate answers (no LLM).
+        dup_decision = (
+            classify_duplicate_answer(message)
+            if recent_duplicate_prompt(history)
+            else None
+        )
+        if dup_decision:
+            path = "duplicate_resolve"
+            if duplicates:
+                confirm = await _apply_duplicate_decision(
+                    db, user.id, dup_decision, duplicates[0]
+                )
+                summary = await vault_summary(db, user.id)
+            elif dup_decision == "keep_both":
+                confirm = "Kept both entries as you asked."
+            else:
+                confirm = "Treated those as the same entry."
+            follow = _next_question_after_dup(summary)
+            turn = OnboardingTurn(
+                reply=ensure_nonempty_reply(
+                    f"{confirm} {follow}",
+                    vault_summary=summary,
+                    duplicates_resolved=dup_decision,
+                ),
+                phase="goals" if vault_is_ready(summary, coach_ctx) else "profile",
+                show_goal_menu=False,
+            ).model_dump()
+            log.info(
+                "onboarding_chat_stage",
+                stage="duplicate_resolve",
+                cause=dup_decision,
+            )
+
+        # 2) Acknowledgement-only → one concrete next question (no LLM).
+        elif is_ack_only(message):
+            path = "ack_followup"
+            turn = OnboardingTurn(
+                reply=ack_followup_question(summary),
+                phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                show_goal_menu=phase == "goals" and not prefs.get("interests"),
+            ).model_dump()
+            log.info("onboarding_chat_stage", stage="ack_followup", cause="ack_only")
+
+        # 3) Practise / interview intent → no LLM; offer start popup.
+        elif (practise := classify_practise_intent(message, summary)):
+            path = "practise_intent"
+            subject = practise["subject"]
+            turn = OnboardingTurn(
+                reply=practise_followup_reply(subject),
+                phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                show_goal_menu=False,
+            ).model_dump()
+            if not offer_already:
+                offer = {
+                    "subject": subject,
+                    "track_type": practise.get("track_type") or "topic",
+                    "reason": "practise",
+                }
+            log.info(
+                "onboarding_chat_stage",
+                stage="practise_intent",
+                cause="deterministic",
+            )
+
+        # 4) Normal LLM turn (single structured call).
+        else:
+            resume_options = build_resume_goal_options(summary)
+            graph = build_onboarding_graph(turn_runner=run_onboarding_turn)
+            t_llm = time.monotonic()
+            try:
+                result = await graph.ainvoke(
+                    {
+                        "message": message,
+                        "history": history,
+                        "vault_summary": summary,
+                        "possible_duplicates": duplicates,
+                        "profile_gaps": gaps,
+                        "preparation_preferences": prefs,
+                        "available_skills": resume_options.get("suggested_skills")
+                        or _skill_titles(summary),
+                        "available_projects": resume_options.get("suggested_projects")
+                        or _project_titles(summary),
+                        "resume_goal_options": resume_options,
+                        "candidate_background": bg,
+                        "coach_context": coach_ctx,
+                        "conversation_mode": mode,
+                        "already_finished": already_finished,
+                        "phase": phase,
+                        "meta": {"user_id": uid, "request_id": request_id},
+                    }
+                )
+                turn = result["turn"]
+            except LLMGatewayError:
+                log.warning(
+                    "onboarding_chat_stage",
+                    stage="llm",
+                    cause="gateway_error",
+                    elapsed_ms=int((time.monotonic() - t_llm) * 1000),
+                )
+                raise
+            except Exception as exc:
+                log.warning(
+                    "onboarding_chat_stage",
+                    stage="llm_or_db",
+                    cause=type(exc).__name__,
+                    elapsed_ms=int((time.monotonic() - t_llm) * 1000),
+                )
+                raise
+            log.info(
+                "onboarding_chat_timing",
+                stage="llm_total",
+                elapsed_ms=int((time.monotonic() - t_llm) * 1000),
+            )
+
+            created, updated = await upsert_extracted_items(
+                db,
+                user.id,
+                [ExtractedItem(**i) for i in (turn.get("extracted_items") or [])],
+                "onboarding_chat",
+            )
+
+            prep_update = turn.get("preparation_update")
+            if prep_update:
+                prefs = merge_preferences(prefs, prep_update)
+                prefs = await conversation_store.set_preparation_preferences(
+                    mongo_db, uid, prefs
+                )
+
+        assert turn is not None
+        turn["reply"] = ensure_nonempty_reply(
+            turn.get("reply") or "",
+            vault_summary=summary,
+        )
+        await conversation_store.append_message(
+            mongo_db, uid, "assistant", turn["reply"]
+        )
+
+        asked = list(coach_ctx.get("asked_questions") or [])
+        fp = turn.get("_question_fingerprint") or ""
+        if not fp:
+            from app.agents.onboarding import _question_fingerprint
+
+            fp = _question_fingerprint(turn["reply"])
+            turn["_question_fingerprint"] = fp
+        if fp and fp not in asked:
+            asked.append(fp)
+        confirmed = list(coach_ctx.get("confirmed_facts") or [])
+        for item in created + updated:
+            title = f"{item.category}:{item.title}"
+            if title not in confirmed:
+                confirmed.append(title)
+        answers = list(coach_ctx.get("answers_received") or [])
+        if message.strip():
+            answers.append(message.strip()[:180])
+        await conversation_store.merge_coach_context(
             mongo_db,
-            str(user.id),
+            uid,
             {
-                "proceed_to_goals": True,
-                "answers_received": (coach_ctx.get("answers_received") or [])
-                + [message.strip()[:180]],
+                "background": bg,
+                "asked_questions": asked[-40:],
+                "confirmed_facts": confirmed[-40:],
+                "answers_received": answers[-40:],
+                "current_topic": turn.get("phase"),
+                "proceed_to_goals": bool(coach_ctx.get("proceed_to_goals"))
+                or turn.get("phase") in ("goals", "ready"),
             },
         )
-    duplicates = find_near_duplicates(items)
-    gaps = compute_profile_gaps(summary, coach_context=coach_ctx)
-    prefs = await conversation_store.get_preparation_preferences(mongo_db, str(user.id))
-    mode = conversation_mode or await conversation_store.get_conversation_mode(
-        mongo_db, str(user.id)
-    )
-    phase = derive_phase(
-        vault_summary=summary,
-        preferences=prefs,
-        already_finished=already_finished,
-        coach_context=coach_ctx,
-    )
 
-    turn: dict | None = None
-    created: list = []
-    updated: list = []
-
-    # 1) Deterministic pending-duplicate answers (no LLM).
-    dup_decision = (
-        classify_duplicate_answer(message)
-        if duplicates and recent_duplicate_prompt(history)
-        else None
-    )
-    if dup_decision:
-        confirm = await _apply_duplicate_decision(
-            db, user.id, dup_decision, duplicates[0]
+        refreshed = await vault_summary(db, user.id)
+        coach_ctx = await conversation_store.get_coach_context(mongo_db, uid)
+        phase_out = turn.get("phase") or derive_phase(
+            vault_summary=refreshed,
+            preferences=prefs,
+            already_finished=already_finished,
+            coach_context=coach_ctx,
         )
-        summary = await vault_summary(db, user.id)
-        follow = _next_question_after_dup(summary)
-        turn = OnboardingTurn(
-            reply=ensure_nonempty_reply(
-                f"{confirm} {follow}",
-                vault_summary=summary,
-                duplicates_resolved=dup_decision,
-            ),
-            phase="goals" if vault_is_ready(summary, coach_ctx) else "profile",
-            show_goal_menu=False,
-        ).model_dump()
+        payload = {
+            "reply": turn["reply"],
+            "items_created": [
+                {"id": str(i.id), "category": i.category, "title": i.title}
+                for i in created
+            ],
+            "items_updated": [
+                {"id": str(i.id), "category": i.category, "title": i.title}
+                for i in updated
+            ],
+            "onboarding_complete": preferences_ready(prefs) or already_finished,
+            "phase": phase_out,
+            "show_goal_menu": bool(turn.get("show_goal_menu"))
+            or (phase_out == "goals" and not prefs.get("interests")),
+            "preparation_preferences": prefs,
+            "conversation_mode": mode,
+            "show_starters": _should_show_starters(history, phase_out, already_finished),
+            "candidate_background": bg,
+            "coach_context": coach_ctx,
+            "offer_start_interview": offer,
+        }
+        if mid:
+            await conversation_store.save_idempotent_chat_reply(
+                mongo_db, uid, mid, payload
+            )
+        if offer:
+            await conversation_store.mark_start_offer_shown(mongo_db, uid)
         log.info(
-            "onboarding_chat_stage",
-            stage="duplicate_resolve",
-            cause=dup_decision,
+            "onboarding_chat_timing",
+            stage="total",
+            path=path,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
         )
-
-    # 2) Acknowledgement-only → one concrete next question (no LLM).
-    elif is_ack_only(message) and not already_finished:
-        turn = OnboardingTurn(
-            reply=ack_followup_question(summary),
-            phase=phase if phase in ("profile", "goals", "ready") else "profile",
-            show_goal_menu=phase == "goals" and not prefs.get("interests"),
-        ).model_dump()
-        log.info("onboarding_chat_stage", stage="ack_followup", cause="ack_only")
-
-    # 3) Normal LLM turn.
-    else:
-        resume_options = build_resume_goal_options(summary)
-        graph = build_onboarding_graph(turn_runner=run_onboarding_turn)
-        try:
-            result = await graph.ainvoke(
-                {
-                    "message": message,
-                    "history": history,
-                    "vault_summary": summary,
-                    "possible_duplicates": duplicates,
-                    "profile_gaps": gaps,
-                    "preparation_preferences": prefs,
-                    "available_skills": resume_options.get("suggested_skills")
-                    or _skill_titles(summary),
-                    "available_projects": resume_options.get("suggested_projects")
-                    or _project_titles(summary),
-                    "resume_goal_options": resume_options,
-                    "candidate_background": bg,
-                    "coach_context": coach_ctx,
-                    "conversation_mode": mode,
-                    "already_finished": already_finished,
-                    "phase": phase,
-                    "meta": {"user_id": str(user.id), "request_id": request_id},
-                }
-            )
-            turn = result["turn"]
-        except LLMGatewayError:
-            log.warning("onboarding_chat_stage", stage="llm", cause="gateway_error")
-            raise
-        except Exception as exc:
-            log.warning(
-                "onboarding_chat_stage",
-                stage="llm_or_db",
-                cause=type(exc).__name__,
-            )
-            raise
-
-        created, updated = await upsert_extracted_items(
-            db,
-            user.id,
-            [ExtractedItem(**i) for i in (turn.get("extracted_items") or [])],
-            "onboarding_chat",
-        )
-
-        prep_update = turn.get("preparation_update")
-        if prep_update:
-            prefs = merge_preferences(prefs, prep_update)
-            prefs = await conversation_store.set_preparation_preferences(
-                mongo_db, str(user.id), prefs
-            )
-
-    assert turn is not None
-    turn["reply"] = ensure_nonempty_reply(
-        turn.get("reply") or "",
-        vault_summary=summary,
-    )
-    await conversation_store.append_message(
-        mongo_db, str(user.id), "assistant", turn["reply"]
-    )
-
-    # Persist structured coach context across refreshes.
-    asked = list(coach_ctx.get("asked_questions") or [])
-    fp = turn.get("_question_fingerprint") or ""
-    if not fp:
-        from app.agents.onboarding import _question_fingerprint
-
-        fp = _question_fingerprint(turn["reply"])
-        turn["_question_fingerprint"] = fp
-    if fp and fp not in asked:
-        asked.append(fp)
-    confirmed = list(coach_ctx.get("confirmed_facts") or [])
-    for item in created + updated:
-        title = f"{item.category}:{item.title}"
-        if title not in confirmed:
-            confirmed.append(title)
-    answers = list(coach_ctx.get("answers_received") or [])
-    if message.strip():
-        answers.append(message.strip()[:180])
-    await conversation_store.merge_coach_context(
-        mongo_db,
-        str(user.id),
-        {
-            "background": bg,
-            "asked_questions": asked[-40:],
-            "confirmed_facts": confirmed[-40:],
-            "answers_received": answers[-40:],
-            "current_topic": turn.get("phase"),
-            "proceed_to_goals": bool(coach_ctx.get("proceed_to_goals"))
-            or turn.get("phase") in ("goals", "ready"),
-        },
-    )
-
-    refreshed = await vault_summary(db, user.id)
-    coach_ctx = await conversation_store.get_coach_context(mongo_db, str(user.id))
-    phase_out = turn.get("phase") or derive_phase(
-        vault_summary=refreshed,
-        preferences=prefs,
-        already_finished=already_finished,
-        coach_context=coach_ctx,
-    )
-    return {
-        "reply": turn["reply"],
-        "items_created": [
-            {"id": str(i.id), "category": i.category, "title": i.title} for i in created
-        ],
-        "items_updated": [
-            {"id": str(i.id), "category": i.category, "title": i.title} for i in updated
-        ],
-        "onboarding_complete": preferences_ready(prefs) or already_finished,
-        "phase": phase_out,
-        "show_goal_menu": bool(turn.get("show_goal_menu"))
-        or (phase_out == "goals" and not prefs.get("interests")),
-        "preparation_preferences": prefs,
-        "conversation_mode": mode,
-        "show_starters": _should_show_starters(history, phase_out, already_finished),
-        "candidate_background": bg,
-        "coach_context": coach_ctx,
-    }
+        return payload
+    finally:
+        await conversation_store.release_chat_lock(mongo_db, uid, lock_key)
 
 
 async def start_conversation_starter(

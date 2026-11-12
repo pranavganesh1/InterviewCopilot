@@ -40,6 +40,8 @@ async def chat_completion(
     response_format: dict | None = None,
     meta: dict | None = None,
     max_attempts: int = 3,
+    max_tokens: int | None = None,
+    timeout_s: float | None = None,
 ) -> str:
     """Call the LiteLLM proxy (OpenAI-compatible) and return the assistant content.
 
@@ -48,18 +50,20 @@ async def chat_completion(
     """
     chain = [model, *MODEL_FALLBACKS.get(model, [])]
     last_error: Exception | None = None
+    chain_started = time.monotonic()
     for idx, candidate in enumerate(chain):
-        # Primary gets the full timeout; fallbacks a tight one (a hanging
-        # provider must not stall past the caller's patience).
-        timeout_s = (
-            get_settings().llm_client_timeout
-            if idx == 0
-            else min(get_settings().llm_client_timeout, 30)
+        # Primary uses caller/settings timeout; fallbacks stay tight so a
+        # hanging provider cannot burn the whole UI budget (~30s).
+        base_timeout = (
+            timeout_s
+            if timeout_s is not None
+            else float(get_settings().llm_client_timeout)
         )
+        candidate_timeout = base_timeout if idx == 0 else min(base_timeout, 20.0)
         try:
             content = await _chat_once(
                 client,
-                timeout_s=timeout_s,
+                timeout_s=candidate_timeout,
                 model=candidate,
                 messages=messages,
                 mongo_db=mongo_db,
@@ -68,12 +72,24 @@ async def chat_completion(
                 response_format=response_format,
                 meta=meta,
                 max_attempts=max_attempts,
+                max_tokens=max_tokens,
             )
         except LLMGatewayError as exc:
             last_error = exc
-            log.warning("llm_model_failed", model=candidate, error=str(exc)[:200])
+            log.warning(
+                "llm_model_failed",
+                model=candidate,
+                error=str(exc)[:200],
+                elapsed_ms=int((time.monotonic() - chain_started) * 1000),
+            )
             continue
         llm_model_used.set(candidate)
+        log.info(
+            "llm_chat_ok",
+            model=candidate,
+            fallback_index=idx,
+            elapsed_ms=int((time.monotonic() - chain_started) * 1000),
+        )
         return content
     raise last_error or LLMGatewayError("LLM gateway call failed")
 
@@ -90,6 +106,7 @@ async def _chat_once(
     response_format: dict | None,
     meta: dict | None,
     max_attempts: int,
+    max_tokens: int | None = None,
 ) -> str:
     settings = get_settings()
     payload: dict = {"model": model, "messages": messages}
@@ -97,14 +114,15 @@ async def _chat_once(
         payload["temperature"] = temperature
     if response_format is not None:
         payload["response_format"] = response_format
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
 
     started = time.monotonic()
-    # 429 strategy: one quick 5s retry on the same model (covers per-minute
-    # bursts), then the caller's fallback chain takes over immediately —
-    # waiting 90s+ on an exhausted DAILY quota helps nobody (M11 finding).
+    # 429 strategy: at most one short retry on the same model, then failover.
+    # Cap backoff at 2s so onboarding stays under the UI's 30s budget.
     last_error: Exception | None = None
     data: dict | None = None
-    for attempt in range(max_attempts):
+    for attempt in range(max(1, max_attempts)):
         try:
             resp = await client.post(
                 f"{settings.litellm_url}/v1/chat/completions",
@@ -112,12 +130,9 @@ async def _chat_once(
                 headers={"Authorization": f"Bearer {settings.litellm_master_key}"},
                 timeout=timeout_s,
             )
-            if resp.status_code == 429 and attempt < max_attempts - 1:
+            if resp.status_code == 429 and attempt < max(1, max_attempts) - 1:
                 retry_after = resp.headers.get("retry-after")
-                # Cap at 10s — a long retry-after (e.g. 90s daily-quota
-                # exhaustion) means the provider is saturated; fall through
-                # to the next model in the chain rather than waiting.
-                delay = min(float(retry_after) if retry_after else 5, 10)
+                delay = min(float(retry_after) if retry_after else 1.5, 2.0)
                 log.warning(
                     "llm_gateway_rate_limited",
                     model=model,
@@ -126,9 +141,18 @@ async def _chat_once(
                 )
                 await asyncio.sleep(delay)
                 continue
+            if resp.status_code == 429:
+                log.warning(
+                    "llm_gateway_rate_limited_failover",
+                    model=model,
+                    attempt=attempt + 1,
+                )
+                raise LLMGatewayError(f"rate limited: {model}")
             resp.raise_for_status()
             data = resp.json()
             break
+        except LLMGatewayError:
+            raise
         except (httpx.HTTPError, KeyError) as exc:
             last_error = exc
             break
@@ -136,6 +160,7 @@ async def _chat_once(
         log.error("llm_gateway_failed", model=model, error=str(last_error))
         raise LLMGatewayError(f"LLM gateway call failed: {last_error}") from last_error
     latency_ms = int((time.monotonic() - started) * 1000)
+    log.info("llm_call_timing", model=model, latency_ms=latency_ms)
 
     content = data["choices"][0]["message"]["content"]
     usage = data.get("usage", {})

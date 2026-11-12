@@ -730,6 +730,130 @@ test("offline and online show connection toasts", async ({ page }) => {
   );
 });
 
+test("trailing unanswered user message shows recovery toast and Retry", async ({
+  page,
+}) => {
+  let chatCalls = 0;
+  let state = {
+    ...BASE_STATE,
+    show_goal_menu: false,
+    phase: "profile" as const,
+    messages: [
+      ...BASE_STATE.messages,
+      { role: "user", content: "give both" },
+      { role: "user", content: "lets us start" },
+    ],
+  };
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    chatCalls += 1;
+    const body = route.request().postDataJSON() as { message: string };
+    const reply = "Kept both. Which project should we explore next?";
+    state = {
+      ...state,
+      messages: [
+        ...state.messages,
+        { role: "user", content: body.message },
+        { role: "assistant", content: reply },
+      ],
+    };
+    await route.fulfill({
+      json: {
+        reply,
+        items_created: [],
+        onboarding_complete: true,
+      },
+    });
+  });
+  await page.goto("/onboarding");
+  await expect(page.getByTestId("toast-error")).toContainText(
+    "Last reply didn't arrive",
+  );
+  await expect(page.getByTestId("message-not-delivered")).toBeVisible();
+  await expect(page.getByTestId("onboarding-chat-error")).toBeVisible();
+  await page.getByTestId("onboarding-chat-retry").click();
+  await expect.poll(() => chatCalls).toBe(1);
+  await expect(page.getByTestId("onboarding-messages")).toContainText(
+    "Kept both",
+  );
+});
+
+test("blocks double send of identical text while pending", async ({ page }) => {
+  let chatCalls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: { ...BASE_STATE, show_goal_menu: false } }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    chatCalls += 1;
+    await gate;
+    await route.fulfill({
+      json: {
+        reply: "Only once",
+        items_created: [],
+        onboarding_complete: true,
+      },
+    });
+  });
+  await page.goto("/onboarding");
+  await page.getByTestId("onboarding-chat-input").fill("I'd like to practise Python");
+  await page.getByTestId("onboarding-chat-send").click();
+  await page.getByTestId("onboarding-chat-send").click({ force: true });
+  await page.getByTestId("onboarding-chat-input").press("Enter");
+  expect(chatCalls).toBe(1);
+  release();
+  await expect(page.getByTestId("typing-indicator")).toHaveCount(0);
+});
+
+test("practise reply shows Let's start interview popup", async ({ page }) => {
+  let state = {
+    ...BASE_STATE,
+    show_goal_menu: false,
+    phase: "profile" as const,
+  };
+  await page.route("**/api/v1/onboarding/state", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await page.route("**/api/v1/onboarding/chat", async (route) => {
+    const body = route.request().postDataJSON() as { message: string };
+    state = {
+      ...state,
+      messages: [
+        ...state.messages,
+        { role: "user", content: body.message },
+        {
+          role: "assistant",
+          content: "Great — we can run a focused interview on Python.",
+        },
+      ],
+    };
+    await route.fulfill({
+      json: {
+        reply: "Great — we can run a focused interview on Python.",
+        items_created: [],
+        onboarding_complete: true,
+        offer_start_interview: {
+          subject: "Python",
+          track_type: "topic",
+          reason: "practise",
+        },
+      },
+    });
+  });
+  await page.goto("/onboarding");
+  await page.getByTestId("onboarding-chat-input").fill("I'd like to practise Python");
+  await page.getByTestId("onboarding-chat-send").click();
+  await expect(page.getByTestId("start-interview-offer")).toBeVisible();
+  await expect(page.getByTestId("start-interview-offer")).toContainText(
+    "Let's start your interview",
+  );
+});
+
 test("hidden tab title updates when reply arrives", async ({ page }) => {
   let release!: () => void;
   const gate = new Promise<void>((r) => {

@@ -359,6 +359,12 @@ export interface OnboardingState {
   profile_review?: ProfileReview;
 }
 
+export interface StartInterviewOffer {
+  subject: string;
+  track_type?: string;
+  reason?: string;
+}
+
 export interface ChatResult {
   reply: string;
   items_created: { id: string; category: string; title: string }[];
@@ -369,6 +375,7 @@ export interface ChatResult {
   preparation_preferences?: PreparationPreferences;
   conversation_mode?: string | null;
   show_starters?: boolean;
+  offer_start_interview?: StartInterviewOffer | null;
 }
 
 export interface Track {
