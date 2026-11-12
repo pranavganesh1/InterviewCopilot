@@ -9,7 +9,9 @@ from app.gateway.structured import structured_completion
 from app.services.preparation_goals import (
     EMPTY_PREFERENCES,
     GOAL_INTEREST_LABELS,
+    build_resume_goal_options,
     merge_preferences,
+    next_goal_followup,
     normalize_preferences,
     preferences_ready,
 )
@@ -76,29 +78,37 @@ Hard rules:
 
 GOALS_SYSTEM_PROMPT = """You are the InterviewCopilot preparation coach (goals phase).
 
-The profile vault is already complete. Discover what the candidate wants to practice.
+The profile vault is already complete. Personalize every question from the resume/vault.
 
-You receive known_vault_summary, available_skills, available_projects,
-current_preparation_preferences, conversation_so_far, and new_user_message.
+You receive:
+- known_vault_summary, resume_highlights
+- available_skills, available_projects, suggested_roles, suggested_technical_areas
+- project_options (name + technologies), project_aspect_options
+- current_preparation_preferences, next_goal_followup, conversation_so_far, new_user_message
 
 Interest ids: technical, skill, project, placement, behavioral.
 
 Rules:
-1. Ask exactly ONE follow-up at a time. Never re-ask answered details.
-2. Do not re-collect resume facts already in known_vault_summary.
+1. Ask exactly ONE follow-up at a time. Prefer next_goal_followup when set.
+2. Do not re-collect resume facts already in known_vault_summary unless confirming ambiguity.
 3. Interpret short yes/no/skip answers from conversation context.
-4. Contextual follow-ups:
-   - technical → target role and technical areas
-   - skill → which of available_skills to practice (do not invent skills)
-   - project → which of available_projects to interview on
-   - placement → internship, full-time, or both
-   - behavioral → experience level and interview goals
-5. Multiple interests are allowed. Fill preparation_update with any newly stated fields.
-6. When interests are chosen and the needed follow-ups for those interests are covered,
+4. Mention concrete resume items (skill names, project names, technologies) in your reply.
+5. Offer choices from the structured lists above — never invent skills/projects not in the vault.
+6. Contextual follow-ups (resume-aware):
+   - technical → target role from suggested_roles (cautiously) then suggested_technical_areas.
+     Listing a skill on a resume is NOT proof of proficiency.
+   - skill → which of available_skills to practice.
+   - project → which of available_projects / project_options; then project_aspect_options
+     (architecture, implementation, challenges, technologies, research, deep_dive).
+   - placement → internship vs full-time, then suggested_roles (allow custom role).
+   - behavioral → experience level and interview goals (do not assume from keywords alone).
+7. Multiple interests are allowed. Fill preparation_update with any newly stated fields,
+   including project_aspects when chosen.
+8. When interests are chosen and needed follow-ups are covered (next_goal_followup is null),
    set preparation_update.confirmed=true, phase="ready", and give a concise summary.
-7. show_goal_menu=true only when interests are still empty.
-8. extracted_items should usually be empty in this phase.
-9. reply: warm, concise (max 3 sentences).
+9. show_goal_menu=true only when interests are still empty.
+10. extracted_items should usually be empty in this phase.
+11. reply: warm, concise (max 3 sentences). Support changing focus anytime.
 """
 
 FINISHED_SYSTEM_PROMPT = """You are the InterviewCopilot profile coach. This student has
@@ -125,6 +135,7 @@ class PreparationUpdate(BaseModel):
     technical_areas: list[str] | None = None
     focus_skills: list[str] | None = None
     focus_projects: list[str] | None = None
+    project_aspects: list[str] | None = None
     placement_target: str | None = None
     experience_level: str | None = None
     behavioral_goals: str | None = None
@@ -149,6 +160,7 @@ class OnboardingState(TypedDict, total=False):
     preparation_preferences: dict
     available_skills: list[str]
     available_projects: list[str]
+    resume_goal_options: dict
     conversation_mode: str
     already_finished: bool
     phase: str
@@ -202,6 +214,7 @@ async def run_onboarding_turn(
     preparation_preferences: dict | None = None,
     available_skills: list[str] | None = None,
     available_projects: list[str] | None = None,
+    resume_goal_options: dict | None = None,
     conversation_mode: str | None = None,
     phase: str | None = None,
     meta: dict | None = None,
@@ -226,13 +239,27 @@ async def run_onboarding_turn(
             # Keep the profile/exploration coach even when the vault is already ready.
             current_phase = "profile"
 
+    options = resume_goal_options or build_resume_goal_options(vault_summary)
+    skills = available_skills if available_skills is not None else options.get(
+        "suggested_skills", []
+    )
+    projects = available_projects if available_projects is not None else options.get(
+        "suggested_projects", []
+    )
+
     payload = {
         "known_vault_summary": vault_summary,
         "possible_duplicates": possible_duplicates or [],
         "profile_gaps": profile_gaps or compute_profile_gaps(vault_summary),
         "current_preparation_preferences": prefs,
-        "available_skills": available_skills or [],
-        "available_projects": available_projects or [],
+        "next_goal_followup": next_goal_followup(prefs),
+        "available_skills": skills,
+        "available_projects": projects,
+        "suggested_roles": options.get("suggested_roles", []),
+        "suggested_technical_areas": options.get("suggested_technical_areas", []),
+        "project_options": options.get("project_options", []),
+        "project_aspect_options": options.get("project_aspect_options", []),
+        "resume_highlights": options.get("resume_highlights", {}),
         "goal_interest_labels": GOAL_INTEREST_LABELS,
         "conversation_mode": mode,
         "conversation_so_far": prior[-18:],
@@ -307,6 +334,7 @@ def build_onboarding_graph(turn_runner=run_onboarding_turn):
             preparation_preferences=state.get("preparation_preferences") or EMPTY_PREFERENCES,
             available_skills=state.get("available_skills"),
             available_projects=state.get("available_projects"),
+            resume_goal_options=state.get("resume_goal_options"),
             conversation_mode=state.get("conversation_mode"),
             phase=state.get("phase"),
             meta=state.get("meta"),
