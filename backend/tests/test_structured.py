@@ -29,6 +29,27 @@ async def test_valid_json_parses_first_try():
 
 
 @pytest.mark.asyncio
+async def test_fenced_json_parses_without_repair():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '```json\n{"reply": "hi", "count": 3}\n```'
+                        }
+                    }
+                ]
+            },
+        )
+
+    async with _client(handler) as client:
+        out = await structured_completion(client, system="s", user_payload={}, schema=Out)
+    assert out.count == 3
+
+
+@pytest.mark.asyncio
 async def test_repairs_after_invalid_json():
     calls = {"n": 0}
 

@@ -431,6 +431,94 @@ def test_ensure_nonempty_and_ack_helpers():
     )
     assert practise and practise["subject"] == "Python"
 
+    from app.agents.onboarding import (
+        classify_topic_focus,
+        continue_topic_reply,
+        is_affirmative,
+        resolve_topic_confirmation,
+        topic_focus_reply,
+        wants_topic_switch,
+    )
+
+    vault = [
+        {
+            "category": "project",
+            "title": "Music Database Management",
+            "details": {"purpose": "store songs", "technologies": "MySQL, Flask"},
+        },
+        {
+            "category": "project",
+            "title": "QCGNN",
+            "details": {"purpose": "quantum graphs", "technologies": "PyTorch"},
+        },
+        {
+            "category": "skill",
+            "title": "Python",
+            "details": {"level": "intermediate"},
+        },
+    ]
+    focused = classify_topic_focus("I want in DBMS project", vault)
+    assert focused is not None
+    assert focused["title"] == "Music Database Management"
+    reply = topic_focus_reply(focused)
+    assert "Music Database Management" in reply
+    assert "Machine Learning" not in reply
+    assert "QCGNN" not in reply
+    assert classify_topic_focus("tell me a joke", vault) is None
+    assert classify_topic_focus("yes", vault) is None
+    assert is_affirmative("yes")
+
+    skill = classify_topic_focus("I want to discuss my Python skill", vault)
+    assert skill and skill["title"] == "Python" and skill["kind"] == "skill"
+
+    ml = classify_topic_focus("switch to my QCGNN project", vault)
+    assert ml and ml["title"] == "QCGNN"
+    assert wants_topic_switch("let's talk about something else")
+
+    locked_ctx = {
+        "current_topic": "Music Database Management",
+        "focus_kind": "project",
+        "focus_locked": True,
+        "last_question_intent": "explore",
+    }
+    cont = continue_topic_reply(locked_ctx, vault)
+    assert cont and "Music Database Management" in cont
+    assert "QCGNN" not in cont
+
+    confirm = resolve_topic_confirmation(
+        "yes",
+        vault,
+        {
+            "last_question_intent": "confirm_topic",
+            "pending_followup": "Music Database Management",
+        },
+    )
+    assert confirm and confirm["title"] == "Music Database Management"
+
+    # Already locked on that topic — do not restart the opening confirmation.
+    assert (
+        resolve_topic_confirmation(
+            "yes",
+            vault,
+            {
+                "last_question_intent": "confirm_topic",
+                "pending_followup": "Music Database Management",
+                "current_topic": "Music Database Management",
+                "focus_locked": True,
+            },
+        )
+        is None
+    )
+
+    from app.agents.onboarding import infer_question_intent
+
+    assert infer_question_intent(
+        "What did you focus on most in your Physics lab?"
+    ) == "explore"
+    assert infer_question_intent(
+        "Would you like to discuss your Accounting project next?"
+    ) == "confirm_topic"
+
 
 @pytest.mark.asyncio
 async def test_chat_never_returns_empty_reply(monkeypatch, clean_users_table):

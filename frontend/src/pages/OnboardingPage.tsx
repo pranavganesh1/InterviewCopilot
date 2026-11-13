@@ -19,7 +19,8 @@ import { VaultSidebar } from "../components/VaultSidebar";
 
 const NEAR_BOTTOM_PX = 120;
 const TEXTAREA_MAX_LINES = 5;
-const CHAT_TIMEOUT_MS = 30_000;
+// Outlive onboarding LLM (~20s) + one failover/overhead without waiting forever.
+const CHAT_TIMEOUT_MS = 55_000;
 const STILL_THINKING_MS = 8_000;
 const IDLE_NUDGE_MS = 45_000;
 const IDLE_NUDGE_SECOND_MS = 120_000;
@@ -111,23 +112,23 @@ function CoachAvatar({
         : "M10 16c1.3.8 2.7.8 4 0";
   return (
     <div
-      className={`${dim} shrink-0 overflow-hidden rounded-full bg-gradient-to-b from-sky-100 to-accent-soft shadow-sm ring-2 ring-white ${
+      className={`${dim} shrink-0 overflow-hidden rounded-full bg-gradient-to-b from-violet-100 to-accent-soft shadow-sm ring-2 ring-white ${
         mood === "thinking" ? "coach-avatar-thinking" : ""
       }`}
       aria-hidden
     >
       <svg viewBox="0 0 24 24" className="h-full w-full">
-        <circle cx="12" cy="12" r="11" fill="#dbeafe" />
-        <circle cx="12" cy="12" r="9.2" fill="#eff6ff" />
-        <circle cx="9" cy={eyeY} r="1.15" fill="#1e3a8a" />
-        <circle cx="15" cy={eyeY} r="1.15" fill="#1e3a8a" />
+        <circle cx="12" cy="12" r="11" fill="#e9e0f7" />
+        <circle cx="12" cy="12" r="9.2" fill="#f3effa" />
+        <circle cx="9" cy={eyeY} r="1.15" fill="#3b2a66" />
+        <circle cx="15" cy={eyeY} r="1.15" fill="#3b2a66" />
         <circle cx="9.35" cy={eyeY - 0.35} r="0.35" fill="#fff" />
         <circle cx="15.35" cy={eyeY - 0.35} r="0.35" fill="#fff" />
-        <path d={mouth} fill="none" stroke="#1d4ed8" strokeWidth="1.2" strokeLinecap="round" />
+        <path d={mouth} fill="none" stroke="#7c5cbf" strokeWidth="1.2" strokeLinecap="round" />
         {mood === "happy" && (
           <>
-            <circle cx="7.2" cy="13.2" r="1.1" fill="#93c5fd" opacity="0.55" />
-            <circle cx="16.8" cy="13.2" r="1.1" fill="#93c5fd" opacity="0.55" />
+            <circle cx="7.2" cy="13.2" r="1.1" fill="#c4b5e8" opacity="0.55" />
+            <circle cx="16.8" cy="13.2" r="1.1" fill="#c4b5e8" opacity="0.55" />
           </>
         )}
       </svg>
@@ -166,15 +167,31 @@ function coachErrorCopy(err: unknown): {
       typeof err.retryAfterSeconds === "number" && err.retryAfterSeconds > 0
         ? Math.min(90, Math.ceil(err.retryAfterSeconds))
         : undefined;
-    if (
-      cause === "rate_limited" ||
-      cause === "overloaded" ||
-      /busy|rate|quota|temporarily/i.test(err.message)
-    ) {
+    // Prefer structured cause — do not treat every 503 "temporarily…" as busy.
+    if (cause === "rate_limited") {
       return {
         kind: "busy",
-        text: "The AI is busy right now.",
-        retryAfter: retryAfter ?? 30,
+        text: "Temporary request limit reached. Please wait a moment.",
+        retryAfter: retryAfter ?? 20,
+      };
+    }
+    if (cause === "overloaded") {
+      return {
+        kind: "busy",
+        text: "Temporary service overload. Please wait a moment.",
+        retryAfter: retryAfter ?? 20,
+      };
+    }
+    if (cause === "schema_rejected") {
+      return {
+        kind: "ours",
+        text: "The AI returned an invalid response. Tap Try Again — your message was kept.",
+      };
+    }
+    if (cause === "timeout") {
+      return {
+        kind: "network",
+        text: "That reply took too long. Tap Try Again — your message was kept.",
       };
     }
     if (
@@ -186,24 +203,50 @@ function coachErrorCopy(err: unknown): {
         text: "Connection lost. Check your network and try again.",
       };
     }
+    if (cause === "persistence") {
+      return {
+        kind: "ours",
+        text: "Could not save your reply. Tap Try Again — your message was kept.",
+      };
+    }
     if (
       cause === "auth_failed" ||
       cause === "model_not_found" ||
       cause === "unknown" ||
-      cause === "schema_rejected"
+      cause === "schema_rejected" ||
+      cause
     ) {
       return {
         kind: "ours",
-        text: "Something is wrong on our side. We've logged it. Try again in a moment.",
+        text:
+          cause === "auth_failed"
+            ? "AI provider authentication failed. Check server configuration."
+            : cause === "unknown" || cause === "schema_rejected"
+              ? "Something is wrong on our side. We've logged it. Try again in a moment."
+              : err.message ||
+                "Something is wrong on our side. We've logged it. Try again in a moment.",
+      };
+    }
+    // Legacy plain-string 503 without cause — only then sniff message text.
+    if (/rate|quota|overloaded/i.test(err.message)) {
+      return {
+        kind: "busy",
+        text: "The AI is busy right now.",
+        retryAfter: retryAfter ?? 20,
       };
     }
   }
   const raw = err instanceof Error ? err.message : "";
-  if (/timeout|aborted/i.test(raw)) {
+  const errName = err instanceof Error ? err.name : "";
+  // Client abort/timeout is not provider overload — show manual retry, no long countdown.
+  if (
+    /timeout|aborted|timed out|AbortError/i.test(raw) ||
+    errName === "TimeoutError" ||
+    errName === "AbortError"
+  ) {
     return {
-      kind: "busy",
-      text: "The AI is busy right now.",
-      retryAfter: 20,
+      kind: "network",
+      text: "That reply took too long. Tap Try Again — your message was kept.",
     };
   }
   return {
@@ -401,17 +444,50 @@ export default function OnboardingPage() {
     },
     onError: (err, vars) => {
       const failedText = vars.message;
+      const copy = coachErrorCopy(err);
+      // Client abort: the backend may still have finished under message_id —
+      // refresh state before showing Not delivered.
+      const looksTimedOut =
+        copy.kind === "network" &&
+        /too long|timed out|timeout|aborted/i.test(
+          `${copy.text} ${err instanceof Error ? err.message : ""}`,
+        );
+      if (looksTimedOut) {
+        void qc
+          .fetchQuery({
+            queryKey: ["onboarding-state"],
+            queryFn: () => api<OnboardingState>("/onboarding/state"),
+          })
+          .then((data) => {
+            const msgs = data?.messages ?? [];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === "assistant" && (last.content || "").trim()) {
+              setFailedMessage(null);
+              setPendingUser(null);
+              setStillThinking(false);
+              setErrorBanner(null);
+              setRetryCountdown(null);
+              setEmptyFallback(null);
+              bumpActivity();
+              return;
+            }
+            setFailedMessage(failedText);
+            setPendingUser({ content: failedText, status: "failed" });
+            setStillThinking(false);
+            setErrorBanner(copy.text);
+          })
+          .catch(() => {
+            setFailedMessage(failedText);
+            setPendingUser({ content: failedText, status: "failed" });
+            setStillThinking(false);
+            setErrorBanner(copy.text);
+          });
+        return;
+      }
       setFailedMessage(failedText);
       setPendingUser({ content: failedText, status: "failed" });
       setStillThinking(false);
-      const copy = coachErrorCopy(err);
       setErrorBanner(copy.text);
-      const toastTitle =
-        copy.kind === "busy"
-          ? "AI is busy"
-          : copy.kind === "network"
-            ? "Connection lost"
-            : "Message failed";
       const doRetry = () => {
         if (countdownTimerRef.current) {
           window.clearInterval(countdownTimerRef.current);
@@ -427,16 +503,8 @@ export default function OnboardingPage() {
           messageId: vars.messageId || `retry-${Date.now().toString(36)}`,
         });
       };
-      if (copy.kind === "busy") {
-        pushToast("error", toastTitle, copy.text);
-      } else {
-        pushToast("error", toastTitle, copy.text, {
-          label: "Retry",
-          onAction: () => {
-            doRetry();
-          },
-        });
-      }
+      // Keep failures in-chat (banner + Not delivered). Auto-retry only for
+      // real provider busy/rate-limit signals — not client aborts.
       if (copy.kind === "busy" && copy.retryAfter && !autoRetryRef.current?.used) {
         autoRetryRef.current = {
           message: failedText,
@@ -569,6 +637,7 @@ export default function OnboardingPage() {
   }, [chat.isPending]);
 
   // Recover stuck history: user messages with no coach reply (e.g. prior 503/empty).
+  // Inline banner only — no toast on every visit.
   const orphanRecoveredRef = useRef(false);
   useEffect(() => {
     if (orphanRecoveredRef.current || state.isLoading || chat.isPending) return;
@@ -582,22 +651,7 @@ export default function OnboardingPage() {
     const last = trailing[trailing.length - 1].content;
     setFailedMessage(last);
     setPendingUser({ content: last, status: "failed" });
-    pushToast(
-      "error",
-      "Last reply didn't arrive",
-      "The coach was busy — tap Retry to resend.",
-      {
-        label: "Retry",
-        onAction: () => {
-          setPendingUser({ content: last, status: "sending" });
-          setFailedMessage(null);
-          chat.mutate({
-            message: last,
-            messageId: `retry-${Date.now().toString(36)}`,
-          });
-        },
-      },
-    );
+    setErrorBanner("Last reply didn't arrive. Tap Try Again to resend.");
   }, [state.isLoading, state.data?.messages, chat.isPending]);
 
   useEffect(() => {
@@ -1015,28 +1069,37 @@ export default function OnboardingPage() {
         setDragOver(false);
         pickResume(event.dataTransfer.files?.[0]);
       }}
-      className={`flex min-w-0 cursor-pointer flex-col justify-center rounded-2xl border border-dashed px-4 py-3 text-center transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+      className={`inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
         upload.isPending
-          ? "cursor-not-allowed border-line bg-page opacity-80"
+          ? "cursor-not-allowed border-line bg-surface opacity-80"
           : dragOver
             ? "border-accent bg-accent-soft"
-            : "border-line bg-page/60 hover:border-accent hover:bg-accent-soft/40"
+            : "border-line bg-surface hover:border-accent hover:bg-accent-soft/50"
       }`}
     >
       {upload.isPending ? (
-        <span className="inline-flex items-center justify-center gap-2 text-sm font-medium text-ink">
+        <span className="inline-flex items-center gap-2 text-xs font-semibold text-ink">
           <span
-            className="h-4 w-4 motion-safe:animate-spin rounded-full border-2 border-accent/30 border-t-accent"
+            className="h-3.5 w-3.5 motion-safe:animate-spin rounded-full border-2 border-accent/30 border-t-accent"
             aria-hidden="true"
           />
-          Extracting your experience…
+          Extracting…
         </span>
       ) : (
-        <span className="text-sm font-medium text-ink">Upload resume PDF</span>
+        <>
+          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden>
+            <path
+              d="M8 2.5v7M5.5 5.5 8 3l2.5 2.5M3.5 10.5v1.5A1.5 1.5 0 0 0 5 13.5h6a1.5 1.5 0 0 0 1.5-1.5v-1.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span className="text-xs font-semibold text-ink">Upload Resume</span>
+        </>
       )}
-      <span className="mt-0.5 text-[11px] text-ink-soft">
-        Drag and drop or click — PDF up to 10 MB
-      </span>
       <input
         ref={resumeInputRef}
         type="file"
@@ -1054,12 +1117,12 @@ export default function OnboardingPage() {
   const resumeStatus = (
     <>
       {resumeFile && (
-        <p className="truncate text-xs text-ink-soft" title={resumeFile.name}>
+        <p className="truncate text-[11px] text-ink-soft" title={resumeFile.name}>
           {resumeFile.name} · {formatBytes(resumeFile.size)}
         </p>
       )}
       {upload.data && (
-        <p className="text-xs text-emerald-700" data-testid="resume-upload-success">
+        <p className="text-[11px] text-emerald-700" data-testid="resume-upload-success">
           {upload.data.items_created.length === 0
             ? "No new vault items — those titles were already saved."
             : `Added ${upload.data.items_created.length} vault item${
@@ -1072,13 +1135,13 @@ export default function OnboardingPage() {
       )}
       {uploadError && (
         <div
-          className="rounded-xl bg-red-50 p-3 text-xs text-red-700"
+          className="rounded-xl bg-red-50 px-3 py-2 text-[11px] text-red-700"
           data-testid="resume-upload-error"
           role="alert"
         >
           <p>{uploadError.message}</p>
           {uploadHints && uploadHints.length > 0 && (
-            <ul className="mt-2 list-disc space-y-0.5 pl-4 text-red-600/90">
+            <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-red-600/90">
               {uploadHints.map((hint) => (
                 <li key={hint}>{hint}</li>
               ))}
@@ -1086,7 +1149,7 @@ export default function OnboardingPage() {
           )}
           <button
             type="button"
-            className="mt-2 font-semibold text-accent-strong underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="mt-1.5 font-semibold text-accent-strong underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             onClick={() => {
               upload.reset();
               if (resumeFile) upload.mutate(resumeFile);
@@ -1104,20 +1167,23 @@ export default function OnboardingPage() {
     <div className="space-y-3">
       <p className="text-xs text-ink-soft">
         {hasResumeSignal
-          ? "Replace or refresh your resume anytime from the upload bar above."
-          : "Use the upload bar above to add a PDF — Chanakya builds your profile from it."}
+          ? "Replace or refresh your resume anytime with Upload Resume above."
+          : "Use Upload Resume above to add a PDF — Chanakya builds your profile from it."}
       </p>
       <Link
         to="/readiness"
-        className="block rounded-2xl border border-accent/25 bg-accent-soft/50 p-3 transition hover:-translate-y-0.5 hover:bg-accent-soft hover:shadow-card"
+        className="block rounded-2xl border border-accent/30 bg-gradient-to-br from-accent-soft to-surface p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-card"
         data-testid="readiness-onboarding-card"
       >
         <h2 className="text-sm font-semibold text-accent-strong">
           Check how ready your resume is for interviews
         </h2>
-        <p className="mt-1 text-xs text-ink-soft">
+        <p className="mt-1 text-xs leading-relaxed text-ink-soft">
           See which claims interviewers often ask about — without judging honesty.
         </p>
+        <span className="mt-2 inline-flex text-[11px] font-semibold text-accent">
+          Open readiness review →
+        </span>
       </Link>
     </div>
   );
@@ -1129,19 +1195,41 @@ export default function OnboardingPage() {
       style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
     >
       <div
-        className="pointer-events-none absolute -left-16 top-8 h-56 w-56 rounded-full bg-accent/15 blur-3xl"
+        className="pointer-events-none absolute -left-20 top-4 h-64 w-64 rounded-full bg-accent/10 blur-3xl"
         aria-hidden
       />
       <div
-        className="pointer-events-none absolute -right-10 bottom-10 h-64 w-64 rounded-full bg-accent-soft blur-3xl"
+        className="pointer-events-none absolute -right-16 bottom-8 h-72 w-72 rounded-full bg-accent-soft blur-3xl"
         aria-hidden
       />
 
       <div
-        className="relative z-10 mb-2 shrink-0 space-y-1.5"
+        className="relative z-10 mb-2.5 shrink-0 space-y-1.5"
         data-testid="resume-upload-bar"
       >
-        {resumeDropzone}
+        <div className="flex flex-wrap items-center gap-3">
+          {resumeDropzone}
+          <div
+            className="min-w-0 flex-1"
+            data-testid="onboarding-progress"
+            aria-label={`Profile ${profilePercent}% complete`}
+          >
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-[11px] font-medium text-ink-soft">
+                Onboarding progress
+              </span>
+              <span className="text-[11px] font-semibold text-accent-strong">
+                {profilePercent}%
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-accent-soft">
+              <div
+                className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                style={{ width: `${profilePercent}%` }}
+              />
+            </div>
+          </div>
+        </div>
         {resumeStatus}
       </div>
 
@@ -1149,7 +1237,7 @@ export default function OnboardingPage() {
         role="tablist"
         aria-label="Onboarding views"
         data-testid="mobile-pane-switcher"
-        className="relative z-10 mb-2 flex shrink-0 gap-1 rounded-2xl border border-line/80 bg-surface/80 p-1 backdrop-blur-md lg:hidden"
+        className="relative z-10 mb-2.5 flex shrink-0 gap-1 rounded-2xl border border-line/80 bg-surface/90 p-1 backdrop-blur-md lg:hidden"
       >
         <button
           type="button"
@@ -1190,11 +1278,11 @@ export default function OnboardingPage() {
         </button>
       </div>
 
-      <div className="relative z-10 grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[minmax(0,1.62fr)_minmax(0,1fr)]">
+      <div className="relative z-10 grid min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:gap-4">
         <section
           data-testid="onboarding-chat-panel"
           aria-label="Coach chat"
-          className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-3xl border border-line/80 bg-surface/85 shadow-card backdrop-blur-md ${
+          className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-surface shadow-card ${
             mobilePane === "chat" ? "flex" : "hidden lg:flex"
           }`}
         >
@@ -1257,10 +1345,10 @@ export default function OnboardingPage() {
                 stickToBottomRef.current = near;
                 if (near) setShowNewPill(false);
               }}
-              className="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+              className="min-h-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-5 sm:px-6 sm:py-6"
             >
               {messages.length === 0 && (
-                <div className="rounded-2xl border border-dashed border-line bg-accent-soft/30 px-4 py-8 text-center">
+                <div className="rounded-2xl border border-dashed border-line bg-accent-soft/40 px-5 py-10 text-center">
                   <div className="mx-auto mb-3 flex justify-center">
                     <CoachAvatar mood="happy" size="lg" />
                   </div>
@@ -1268,15 +1356,15 @@ export default function OnboardingPage() {
                     {finished
                       ? "What would you like to update?"
                       : vaultItems.length > 0
-                        ? "Ready when you are ✨"
-                        : "Hi! Upload a resume or say hello 👋"}
+                        ? "Ready when you are"
+                        : "Hi! Upload a resume or say hello"}
                   </p>
-                  <p className="mx-auto mt-1 max-w-sm text-xs text-ink-soft">
+                  <p className="mx-auto mt-1.5 max-w-sm text-xs leading-relaxed text-ink-soft">
                     {finished
                       ? "New skills, projects, or education details go straight into your vault."
                       : vaultItems.length > 0
                         ? "We'll chat about your experience one question at a time."
-                        : "Drop a PDF on the right, or tell me about a project you've built."}
+                        : "Use Upload Resume above, or tell me about a project you've built."}
                   </p>
                 </div>
               )}
@@ -1299,7 +1387,7 @@ export default function OnboardingPage() {
                 return (
                   <div
                     key={key}
-                    className={`flex max-w-[85%] gap-2 sm:max-w-[min(85%,36rem)] ${
+                    className={`flex max-w-[92%] gap-2.5 sm:max-w-[min(90%,42rem)] ${
                       m.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
                     } ${enterClass}`}
                   >
@@ -1315,12 +1403,12 @@ export default function OnboardingPage() {
                     )}
                     <div className="min-w-0">
                       <div
-                        className={`min-w-0 break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm [overflow-wrap:anywhere] ${
+                        className={`min-w-0 break-words rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap shadow-sm [overflow-wrap:anywhere] ${
                           m.role === "user"
                             ? "rounded-br-md bg-accent text-white"
                             : m.role === "pending"
-                              ? "rounded-bl-md border border-line bg-accent-soft/50 text-ink-soft"
-                              : "rounded-bl-md border border-line bg-page/80 text-ink"
+                              ? "rounded-bl-md border border-line bg-accent-soft/60 text-ink-soft"
+                              : "rounded-bl-md border border-line/80 bg-accent-soft/35 text-ink"
                         }`}
                       >
                         {m.role === "pending" ? (
@@ -1716,7 +1804,7 @@ export default function OnboardingPage() {
       </div>
 
       <div
-        className="pointer-events-none fixed inset-x-3 z-50 flex flex-col items-stretch gap-2 bottom-[max(5.75rem,calc(env(safe-area-inset-bottom)+4.5rem))] sm:inset-x-auto sm:bottom-auto sm:right-4 sm:left-auto sm:top-[max(0.75rem,env(safe-area-inset-top))] sm:w-80 lg:top-16"
+        className="pointer-events-none fixed inset-x-3 z-40 flex flex-col items-stretch gap-2 bottom-[max(5.75rem,calc(env(safe-area-inset-bottom)+4.5rem))] sm:inset-x-auto sm:right-4 sm:left-auto sm:bottom-6 sm:top-auto sm:w-72"
         style={
           keyboardInset > 0
             ? { bottom: `calc(${keyboardInset}px + 5.5rem)` }

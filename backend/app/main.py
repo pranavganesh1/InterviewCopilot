@@ -26,16 +26,23 @@ from app.services.events import connect_nats
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.gateway.llm import close_http_client, get_http_client
+
     app.state.mongo_client = get_mongo_client()
     app.state.mongo_db = app.state.mongo_client[get_settings().mongo_db]
     with suppress(Exception):
         # Audit #9: keep conversation lookups indexed from day one.
         await app.state.mongo_db.onboarding_conversations.create_index("user_id", unique=True)
     app.state.nats = await connect_nats()
+    # Warm the shared LiteLLM HTTP client (keepalive) once at startup.
+    with suppress(Exception):
+        await get_http_client()
     yield
     if app.state.nats is not None:
         with suppress(Exception):
             await app.state.nats.drain()
+    with suppress(Exception):
+        await close_http_client()
     app.state.mongo_client.close()
 
 

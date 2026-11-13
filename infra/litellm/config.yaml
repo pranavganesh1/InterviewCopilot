@@ -36,7 +36,7 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY
 
 litellm_settings:
-  # Our gateway owns 429 backoff (45s/90s) — LiteLLM-internal instant retries
-  # would re-trigger Groq's cooldown during the gateway's waits.
+  # Our gateway owns 429 backoff / fallback fan-out. LiteLLM-internal retries
+  # would multiply provider calls and worsen rate limits.
   num_retries: 0
   timeout: 120

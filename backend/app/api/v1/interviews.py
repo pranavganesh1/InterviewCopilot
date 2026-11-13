@@ -15,7 +15,7 @@ from app.api.v1.schemas.interviews import (
     TurnResult,
 )
 from app.db.sqlalchemy import get_db
-from app.gateway.llm import LLMGatewayError
+from app.gateway.llm import LLMGatewayError, gateway_error_detail
 from app.models.user import User
 from app.services import interview_service
 
@@ -100,11 +100,12 @@ async def start_session(
             persona_id=(body.persona_id if body else "balanced"),
             claim_seeds=(body.claim_seeds if body else None),
             mongo_db=getattr(request.app.state, "mongo_db", None),
+            request_id=request.headers.get("x-request-id"),
         )
     except LLMGatewayError as exc:
         raise HTTPException(
             status_code=503,
-            detail="The LLM provider is rate-limited right now — please retry in a minute.",
+            detail=gateway_error_detail(exc),
         ) from exc
     except LookupError as exc:
         detail = {

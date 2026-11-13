@@ -59,6 +59,7 @@ export default function InterviewPage() {
   } | null>(null);
   /** Which turn is on screen; null = follow the live open question. */
   const [viewTurnIndex, setViewTurnIndex] = useState<number | null>(null);
+  const [stillEvaluating, setStillEvaluating] = useState(false);
 
   const session = useQuery({
     queryKey: ["session", sessionId],
@@ -73,7 +74,7 @@ export default function InterviewPage() {
   }, []);
 
   // Quiet time-remaining display (presentation only — the backend enforces
-    // the actual deadline). Final 5 minutes turn the text red.
+  // the actual deadline). Final 5 minutes turn the text red.
   const minutesLeft = (() => {
     const sess = session.data?.session;
     if (!sess || !sess.created_at || !sess.duration_minutes) return null;
@@ -104,6 +105,15 @@ export default function InterviewPage() {
       void session.refetch();
     },
   });
+
+  useEffect(() => {
+    if (!submit.isPending) {
+      setStillEvaluating(false);
+      return;
+    }
+    const t = window.setTimeout(() => setStillEvaluating(true), 12_000);
+    return () => window.clearTimeout(t);
+  }, [submit.isPending]);
 
   const assist = useMutation({
     mutationFn: () =>
@@ -164,37 +174,55 @@ export default function InterviewPage() {
     if (!requestLeave({ kind: "href", href, focus: source })) navigate(href);
   };
   const isGuided = session.data?.session.mode === "guided";
-  const openQuestion = [...turns].reverse().find((t) => t.answer === null);
+  const isUnanswered = (t: Turn | null | undefined) =>
+    !!t && (t.answer === null || t.answer === undefined || t.answer === "");
+  const openQuestion = [...turns].reverse().find((t) => isUnanswered(t));
+  const latestTurn = turns.length ? turns[turns.length - 1] : null;
   const maxTurns = session.data?.session.max_turns ?? DEFAULT_MAX_TURNS;
-  const answeredCount = turns.filter((t) => t.answer !== null).length;
+  const answeredCount = turns.filter((t) => !isUnanswered(t)).length;
 
   const focusIndex =
     viewTurnIndex ??
     openQuestion?.turn_index ??
-    turns[turns.length - 1]?.turn_index ??
+    latestTurn?.turn_index ??
     1;
   const focusTurn =
     turns.find((t) => t.turn_index === focusIndex) ?? openQuestion ?? null;
 
   const awaitingAnswer =
-    !interviewDone && !!focusTurn && focusTurn.answer === null;
+    !interviewDone && !!focusTurn && isUnanswered(focusTurn);
+  // Answer was saved but evaluation / next question never landed (e.g. LLM
+  // failure after persist). Backend allows retrying the same turn — show Submit.
+  const needsSubmitRetry =
+    !interviewDone &&
+    !!focusTurn &&
+    !!latestTurn &&
+    focusTurn.turn_index === latestTurn.turn_index &&
+    !isUnanswered(focusTurn) &&
+    !focusTurn.evaluation &&
+    !openQuestion;
+  const canSubmitAnswer = awaitingAnswer || needsSubmitRetry;
   const openAssistanceLevel = focusTurn?.assistance_level ?? 0;
   const focusKind = focusTurn ? resolveKind(focusTurn) : "text";
   const assistMaxLevel =
     reportedMaxLevel ?? (focusKind === "coding" ? 5 : 3);
   const canAssist =
     isGuided &&
-    awaitingAnswer &&
+    canSubmitAnswer &&
     openAssistanceLevel < assistMaxLevel &&
     !submit.isPending;
-  const showCodingWorkspace = awaitingAnswer && focusKind === "coding";
+  const showCodingWorkspace = canSubmitAnswer && focusKind === "coding";
 
   const focusEvaluation =
     focusTurn?.evaluation ??
     (lastEvaluation && lastEvaluation.turnIndex === focusTurn?.turn_index
       ? lastEvaluation.evaluation
       : undefined);
-  const showFeedback = !!focusTurn && focusTurn.answer !== null && !!focusEvaluation;
+  const showFeedback =
+    !!focusTurn &&
+    !isUnanswered(focusTurn) &&
+    !!focusEvaluation &&
+    !needsSubmitRetry;
 
   const progressNum = interviewDone
     ? answeredCount
@@ -203,7 +231,7 @@ export default function InterviewPage() {
     ? "Completed"
     : submit.isPending
       ? "Evaluating"
-      : awaitingAnswer
+      : canSubmitAnswer
         ? "Awaiting answer"
         : showFeedback
           ? "Feedback ready"
@@ -211,13 +239,20 @@ export default function InterviewPage() {
 
   const canGoNext =
     !!focusTurn &&
-    focusTurn.answer !== null &&
+    !isUnanswered(focusTurn) &&
+    !needsSubmitRetry &&
     !submit.isPending &&
     (interviewDone || !!openQuestion);
 
+  // Prefill the composer when recovering a stuck saved answer.
+  useEffect(() => {
+    if (!needsSubmitRetry || !focusTurn?.answer) return;
+    setAnswer((prev) => (prev.trim() ? prev : String(focusTurn.answer)));
+  }, [needsSubmitRetry, focusTurn?.turn_index, focusTurn?.answer]);
+
   const sendText = () => {
     const a = answer.trim();
-    if (!a || submit.isPending || !awaitingAnswer || !focusTurn) return;
+    if (!a || submit.isPending || !canSubmitAnswer || !focusTurn) return;
     submit.mutate({ answer: a, turnIndex: focusTurn.turn_index });
   };
 
@@ -304,7 +339,7 @@ export default function InterviewPage() {
                   minutesLeft <= 5 ? "text-red-600" : "text-ink-faint"
                 }`}
               >
-                {minutesLeft} min left
+                {minutesLeft <= 0 ? "Time is up" : `${minutesLeft} min left`}
               </p>
             )}
           </div>
@@ -322,6 +357,17 @@ export default function InterviewPage() {
           )}
         </div>
       </div>
+
+      {!interviewDone && minutesLeft != null && minutesLeft <= 0 && (
+        <div
+          className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"
+          data-testid="interview-deadline-passed"
+          role="status"
+        >
+          The interview deadline has passed. Finish &amp; Exit to save your progress —
+          new answers cannot be submitted.
+        </div>
+      )}
 
       <div
         className="h-1 shrink-0 overflow-hidden rounded-full bg-line"
@@ -347,9 +393,9 @@ export default function InterviewPage() {
         {Array.from({ length: maxTurns }, (_, i) => {
           const n = i + 1;
           const turn = turns.find((t) => t.turn_index === n);
-          const answered = !!turn && turn.answer !== null;
+          const answered = !!turn && !isUnanswered(turn);
           const isCurrent = n === focusIndex;
-          const reachable = answered || turn?.answer === null;
+          const reachable = answered || isUnanswered(turn);
           return (
             <button
               key={n}
@@ -479,7 +525,7 @@ export default function InterviewPage() {
                     {focusTurn.probe_label}
                   </span>
                 )}
-                {awaitingAnswer && (
+                {canSubmitAnswer && (
                   <span className="rounded-md bg-accent-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-strong">
                     Current
                   </span>
@@ -497,7 +543,7 @@ export default function InterviewPage() {
               )}
             </section>
 
-            {focusTurn.answer !== null && (
+            {!isUnanswered(focusTurn) && !needsSubmitRetry && (
               <section className="shrink-0 rounded-lg border border-line bg-page px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-ink sm:px-5">
                 <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
                   Your answer
@@ -507,8 +553,13 @@ export default function InterviewPage() {
             )}
 
             {submit.isPending && (
-              <div className="rounded-lg border border-dashed border-line bg-page px-4 py-3 text-sm text-ink-soft">
-                Evaluating your answer… please wait.
+              <div
+                className="rounded-lg border border-dashed border-line bg-page px-4 py-3 text-sm text-ink-soft"
+                data-testid="interview-evaluating"
+              >
+                {stillEvaluating
+                  ? "Still evaluating… this can take a moment."
+                  : "Evaluating your answer… please wait."}
               </div>
             )}
 
@@ -540,7 +591,7 @@ export default function InterviewPage() {
               </div>
             )}
 
-            {!showCodingWorkspace && awaitingAnswer && (
+            {!showCodingWorkspace && canSubmitAnswer && (
               <div className="space-y-2" data-testid="assistance-panel">
                 {(focusTurn.assistance_events ?? []).map((event) => (
                   <div
@@ -571,7 +622,7 @@ export default function InterviewPage() {
               </div>
             )}
 
-            {awaitingAnswer && focusTurn.question_type === "mcq" && (
+            {canSubmitAnswer && focusTurn.question_type === "mcq" && (
               <McqOptions
                 options={focusTurn.options ?? []}
                 selected={answer}
@@ -580,7 +631,7 @@ export default function InterviewPage() {
               />
             )}
 
-            {awaitingAnswer && focusTurn.question_type === "numeric" && (
+            {canSubmitAnswer && focusTurn.question_type === "numeric" && (
               <label className="flex min-w-0 items-center gap-2 rounded-lg border border-line bg-white p-3">
                 <input
                   data-testid="numeric-answer"
@@ -598,17 +649,23 @@ export default function InterviewPage() {
               </label>
             )}
 
-            {awaitingAnswer &&
+            {canSubmitAnswer &&
               focusTurn.question_type !== "mcq" &&
               focusTurn.question_type !== "numeric" && (
               <div
                 data-testid="answer-composer"
-                className="flex min-h-[40vh] flex-1 flex-col rounded-lg border border-line bg-white p-3 sm:min-h-0 sm:p-4"
+                className="flex min-h-0 flex-1 flex-col rounded-lg border border-line bg-white p-3 sm:p-4"
               >
+                {needsSubmitRetry && (
+                  <p className="mb-2 shrink-0 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Your answer was saved but not fully evaluated yet. Edit if
+                    needed, then submit again to continue.
+                  </p>
+                )}
                 {focusTurn.scenario && (
                   <p
                     data-testid="case-scenario"
-                    className="mb-3 whitespace-pre-wrap rounded-md bg-amber-50 p-3 text-sm leading-relaxed text-amber-950"
+                    className="mb-3 shrink-0 whitespace-pre-wrap rounded-md bg-amber-50 p-3 text-sm leading-relaxed text-amber-950"
                   >
                     {focusTurn.scenario}
                   </p>
@@ -616,16 +673,16 @@ export default function InterviewPage() {
                 {focusTurn.code_snippet && (
                   <pre
                     data-testid="code-snippet"
-                    className="mb-3 max-w-full overflow-x-auto rounded-md bg-stone-900 p-3 font-mono text-xs leading-relaxed text-stone-100"
+                    className="mb-3 max-h-40 max-w-full shrink-0 overflow-x-auto overflow-y-auto rounded-md bg-stone-900 p-3 font-mono text-xs leading-relaxed text-stone-100"
                   >
                     {focusTurn.code_snippet}
                   </pre>
                 )}
-                <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-stone-500">
+                <label className="mb-2 block shrink-0 text-xs font-medium uppercase tracking-wide text-stone-500">
                   Your answer · Q{focusTurn.turn_index}/{maxTurns}
                 </label>
                 {isCodeFriendly(focusTurn.question_type) && (
-                  <label className="mb-2 flex items-center gap-2 text-xs text-stone-500">
+                  <label className="mb-2 flex shrink-0 items-center gap-2 text-xs text-stone-500">
                     Language
                     <select
                       data-testid="answer-language"
@@ -656,23 +713,32 @@ export default function InterviewPage() {
                       ? "Type your answer… (optional hints available)"
                       : "Type your answer… (no hints in strict mode!)"
                   }
-                  className={`min-h-[40vh] w-full flex-1 resize-none rounded-md border border-line bg-surface px-4 py-3 text-base leading-relaxed outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20 sm:min-h-[12rem] ${
+                  className={`min-h-[8rem] w-full flex-1 resize-none rounded-md border border-line bg-surface px-4 py-3 text-base leading-relaxed outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20 sm:min-h-[10rem] ${
                     isCodeFriendly(focusTurn.question_type) ? "font-mono" : ""
                   }`}
                   disabled={submit.isPending}
                 />
+                <button
+                  type="button"
+                  onClick={sendText}
+                  disabled={submit.isPending || !answer.trim()}
+                  data-testid="submit-answer-inline"
+                  className="mt-3 w-full shrink-0 rounded-md bg-accent px-6 py-3 text-sm font-bold text-white hover:bg-accent-strong disabled:opacity-40 sm:w-auto"
+                >
+                  {submit.isPending ? "Evaluating…" : "Submit Answer"}
+                </button>
               </div>
             )}
 
             {submit.isError && (
-              <p className="text-sm text-red-600">
+              <p className="shrink-0 text-sm text-red-600">
                 {submit.error instanceof Error
                   ? submit.error.message
                   : "Submission failed. Try again."}
               </p>
             )}
             {!showCodingWorkspace && assist.error instanceof Error && (
-              <p className="text-sm text-red-600">{assist.error.message}</p>
+              <p className="shrink-0 text-sm text-red-600">{assist.error.message}</p>
             )}
           </>
         ) : (
@@ -689,17 +755,20 @@ export default function InterviewPage() {
         )}
       </div>
 
-      {/* Sticky action bar */}
+      {/* Fixed action dock — always on-screen for Submit / Next / Leave. */}
       {!showCodingWorkspace && (
-        <div className="mt-3 flex shrink-0 flex-col gap-2 border-t border-stone-200/80 bg-page pt-3 sm:flex-row sm:flex-wrap sm:items-center">
-          {awaitingAnswer && (
+        <div
+          className="sticky bottom-0 z-20 mt-3 flex shrink-0 flex-col gap-2 border-t border-stone-200 bg-page pt-3 sm:flex-row sm:flex-wrap sm:items-center"
+          data-testid="interview-action-dock"
+        >
+          {canSubmitAnswer && (
             <>
               <button
                 type="button"
                 onClick={sendText}
                 disabled={submit.isPending || !answer.trim()}
                 data-testid="submit-answer"
-                className="w-full rounded-md bg-accent px-6 py-3 text-sm font-bold text-white hover:bg-accent-strong disabled:opacity-40 sm:w-auto"
+                className="w-full rounded-md bg-accent px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-accent-strong disabled:opacity-40 sm:w-auto"
               >
                 {submit.isPending ? "Evaluating…" : "Submit Answer"}
               </button>

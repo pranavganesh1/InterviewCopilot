@@ -1,10 +1,8 @@
 from typing import Literal, TypedDict
 
-import httpx
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-from app.core.config import get_settings
 from app.gateway.structured import structured_completion
 
 EVIDENCE_PROMPT = """You are InterviewCopilot's evidence extractor. For each question-answer
@@ -89,21 +87,23 @@ class EvidenceState(TypedDict, total=False):
 
 
 async def run_feedback_agent(*, payload: dict, meta: dict | None = None) -> FeedbackReportContent:
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        evidence = await structured_completion(
-            client,
-            system=EVIDENCE_PROMPT,
-            user_payload=payload,
-            schema=_EvidenceList,
-            meta=meta,
-        )
-        return await structured_completion(
-            client,
-            system=ASSESS_PROMPT,
-            user_payload={**payload, "extracted_evidence": evidence.model_dump()["items"]},
-            schema=FeedbackReportContent,
-            meta=meta,
-        )
+    # Background worker — shared client; still two steps (evidence → assess).
+    evidence = await structured_completion(
+        system=EVIDENCE_PROMPT,
+        user_payload=payload,
+        schema=_EvidenceList,
+        meta=meta,
+        max_tokens=900,
+        timeout_s=45.0,
+    )
+    return await structured_completion(
+        system=ASSESS_PROMPT,
+        user_payload={**payload, "extracted_evidence": evidence.model_dump()["items"]},
+        schema=FeedbackReportContent,
+        meta=meta,
+        max_tokens=1200,
+        timeout_s=45.0,
+    )
 
 
 class _EvidenceItem(BaseModel):

@@ -24,9 +24,12 @@ def _stub_question_plan_llm(monkeypatch):
     LLM path is covered by dedicated mocked tests in test_question_plan.py.
     """
 
-    async def _stub(brief_content, n):
+    async def _stub(brief_content, n, **kwargs):
         return question_plan.deterministic_question_plan(
-            brief_content, n, seed=(brief_content or {}).get("plan_seed")
+            brief_content,
+            n,
+            seed=(brief_content or {}).get("plan_seed"),
+            duration_minutes=kwargs.get("duration_minutes"),
         )
 
     monkeypatch.setattr(

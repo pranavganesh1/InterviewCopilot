@@ -23,7 +23,13 @@ const PROJECT_FIELD_LABELS: Record<string, string> = {
   features: "Features",
 };
 
-type ProfileTab = "skills" | "projects" | "education" | "resume";
+type ProfileTab =
+  | "skills"
+  | "projects"
+  | "education"
+  | "experience"
+  | "achievements"
+  | "resume";
 
 function invalidateVaultQueries(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["onboarding-state"] });
@@ -174,18 +180,26 @@ export function VaultSidebar({
   const skills = items.filter((i) => i.category === "skill");
   const projects = items.filter((i) => i.category === "project");
   const education = items.filter((i) => i.category === "education");
+  const experience = items.filter((i) =>
+    ["internship", "experience"].includes((i.category || "").toLowerCase()),
+  );
+  const achievements = items.filter(
+    (i) => (i.category || "").toLowerCase() === "achievement",
+  );
   const busy = remove.isPending || save.isPending;
 
   const tabs: { id: ProfileTab; label: string; count: number }[] = [
     { id: "skills", label: "Skills", count: skills.length },
     { id: "projects", label: "Projects", count: projects.length },
     { id: "education", label: "Education", count: education.length },
+    { id: "experience", label: "Experience", count: experience.length },
+    { id: "achievements", label: "Achievements", count: achievements.length },
     { id: "resume", label: "Resume", count: 0 },
   ];
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-line/80 bg-surface/85 shadow-card backdrop-blur-md"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-line/70 bg-surface shadow-card"
       data-testid="profile-panel"
     >
       <div className="flex shrink-0 items-center gap-3 border-b border-line/70 px-4 py-3">
@@ -250,7 +264,7 @@ export function VaultSidebar({
         role="tablist"
         aria-label="Profile sections"
         data-testid="profile-tabs"
-        className="relative flex shrink-0 gap-1 border-b border-line/70 px-2 pt-2"
+        className="relative flex shrink-0 gap-0.5 overflow-x-auto border-b border-line/70 px-1.5 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {tabs.map((t) => {
           const selected = tab === t.id;
@@ -275,7 +289,7 @@ export function VaultSidebar({
                   setTab(tabs[(idx - 1 + tabs.length) % tabs.length].id);
                 }
               }}
-              className={`relative min-h-11 flex-1 rounded-t-lg px-1 text-[11px] font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:text-xs ${
+              className={`relative min-h-10 shrink-0 rounded-t-lg px-2 text-[10px] font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-2.5 sm:text-[11px] ${
                 selected ? "text-accent-strong" : "text-ink-soft hover:text-ink"
               }`}
             >
@@ -284,7 +298,7 @@ export function VaultSidebar({
                 <span className="ml-1 text-ink-faint">{t.count}</span>
               )}
               {selected && (
-                <span className="profile-tab-indicator absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent" />
+                <span className="profile-tab-indicator absolute inset-x-1.5 bottom-0 h-0.5 rounded-full bg-accent" />
               )}
             </button>
           );
@@ -586,6 +600,141 @@ export function VaultSidebar({
                   );
                 })}
               </ol>
+            )}
+          </div>
+        )}
+
+        {!loading && !errorMessage && tab === "experience" && (
+          <div
+            role="tabpanel"
+            id="profile-panel-experience"
+            aria-labelledby="profile-tab-experience"
+            data-testid="profile-tabpanel-experience"
+            className="space-y-2 profile-item-fade"
+          >
+            {experience.length === 0 ? (
+              <EmptyState
+                title="No internships yet"
+                body="Internships and roles from your resume or chat appear here."
+              />
+            ) : (
+              experience.map((item) => {
+                const d = item.details || {};
+                const org = String(d.organization || d.company || d.employer || "").trim();
+                const role = String(d.role || d.title || item.title).trim();
+                const dates = String(d.dates || d.period || d.year || "").trim();
+                const summary = String(d.contribution || d.outcome || d.description || "").trim();
+                return (
+                  <article
+                    key={item.id}
+                    className="rounded-2xl border border-line/80 bg-surface p-3 transition hover:-translate-y-0.5 hover:shadow-card"
+                  >
+                    <p className="text-sm font-semibold text-ink">{role}</p>
+                    {org && <p className="text-xs text-ink-soft">{org}</p>}
+                    {dates && (
+                      <p className="mt-1 text-[11px] text-ink-faint">{dates}</p>
+                    )}
+                    {summary && (
+                      <p className="mt-1.5 line-clamp-3 text-xs text-ink-soft">{summary}</p>
+                    )}
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        className="text-[11px] font-medium text-accent-strong hover:underline"
+                        onClick={() => setEditingId(item.id)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${item.title}`}
+                        disabled={busy}
+                        className="text-[11px] text-ink-faint hover:text-red-600 disabled:opacity-40"
+                        onClick={() => remove.mutate(item.id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    {editingId === item.id && (
+                      <div className="mt-2">
+                        <ProjectEditForm
+                          item={item}
+                          busy={busy}
+                          onCancel={() => setEditingId(null)}
+                          onSave={(title, details) =>
+                            save.mutate({ id: item.id, title, details })
+                          }
+                        />
+                      </div>
+                    )}
+                  </article>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {!loading && !errorMessage && tab === "achievements" && (
+          <div
+            role="tabpanel"
+            id="profile-panel-achievements"
+            aria-labelledby="profile-tab-achievements"
+            data-testid="profile-tabpanel-achievements"
+            className="space-y-2 profile-item-fade"
+          >
+            {achievements.length === 0 ? (
+              <EmptyState
+                title="No achievements yet"
+                body="Awards, publications, and highlights show up here when extracted."
+              />
+            ) : (
+              <ul className="space-y-2">
+                {achievements.map((item) => {
+                  const d = item.details || {};
+                  const detail = String(
+                    d.description || d.outcome || d.impact || "",
+                  ).trim();
+                  return (
+                    <li
+                      key={item.id}
+                      className="rounded-2xl border border-line/80 bg-surface p-3 transition hover:-translate-y-0.5 hover:shadow-card"
+                    >
+                      <p className="text-sm font-semibold text-ink">{item.title}</p>
+                      {detail && (
+                        <p className="mt-1 text-xs text-ink-soft">{detail}</p>
+                      )}
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          className="text-[11px] font-medium text-accent-strong hover:underline"
+                          onClick={() => setEditingId(item.id)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${item.title}`}
+                          disabled={busy}
+                          className="text-[11px] text-ink-faint hover:text-red-600 disabled:opacity-40"
+                          onClick={() => remove.mutate(item.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      {editingId === item.id && (
+                        <div className="mt-2">
+                          <SkillEditForm
+                            title={item.title}
+                            busy={busy}
+                            onCancel={() => setEditingId(null)}
+                            onSave={(title) => save.mutate({ id: item.id, title })}
+                          />
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </div>
         )}

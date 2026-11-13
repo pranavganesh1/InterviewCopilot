@@ -1,7 +1,7 @@
 import re
+import time
 from typing import Literal, TypedDict
 
-import httpx
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -31,7 +31,7 @@ from app.gateway.structured import structured_completion
 
 log = get_logger(__name__)
 
-_MAX_REPAIR_ATTEMPTS = 2  # initial call + up to 2 repairs = 3 LLM calls max
+_MAX_REPAIR_ATTEMPTS = 1  # initial call + 1 repair max (force_unique afterward)
 
 PERSONA_BLOCK = """
 Persona (human interviewer):
@@ -122,10 +122,21 @@ Rules:
 - Progress difficulty with questions_asked: early questions foundational, later
   ones deeper (edge cases, complexity, trade-offs, implementation).
 - Stay relevant to the selected track. Do not invent unrelated domains.
-- After each answer: evaluate coverage honestly, then either ask ONE follow-up
-  probing a gap, move to the next area, or decide the interview is complete.
-- HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
-  MUST choose next_area (from remaining_areas) or complete — never another follow-up.
+- After each answer: evaluate coverage honestly. Use follow_up ONLY when coverage
+  is none or partial and a genuine clarification is needed. When coverage is good
+  or excellent, choose next_area and ask the next planned subject/objective —
+  never a soft paraphrase of the same concept.
+- Depth: aim for about topic_budget questions on the current subject before
+  leaving. Use question_plan_slot.topic when present — do not ignore it.
+- HARD LIMIT (follow_up only): at most one follow-up phrasing per area. If
+  turns_in_current_area >= 2 you MUST choose next_area — never another follow_up.
+  next_area may stay on the same subject while the plan block continues; when
+  turns_in_current_area >= topic_budget OR the plan slot topic differs, you MUST
+  switch to that new subject (or remaining_areas).
+- Do NOT wait for the candidate to say "next topic". Advance automatically.
+- Cover multiple planned subjects across the interview; do not stay on one concept.
+- Avoid repeating the same ask with slightly different wording.
+- If the candidate cannot answer, acknowledge briefly in evaluation and move on.
 - PACING (the interview is TIMED): minutes_remaining is the time budget. If
   minutes_remaining <= 5 you MUST return decision="complete" with next_question=""
   after evaluating the answer. With 25-50% of time left, start covering the most
@@ -177,10 +188,21 @@ Rules:
   not been covered yet (see covered_areas).
 - Progress difficulty with questions_asked: early foundational, later deeper.
 - Stay relevant to the selected track. Do not invent unrelated domains.
-- After each answer: evaluate coverage honestly, then either ask ONE follow-up
-  probing a gap, move to the next area, or decide the interview is complete.
-- HARD LIMIT: at most one follow-up per area. If turns_in_current_area >= 2 you
-  MUST choose next_area (from remaining_areas) or complete — never another follow-up.
+- After each answer: evaluate coverage honestly. Use follow_up ONLY when coverage
+  is none or partial and a genuine clarification is needed. When coverage is good
+  or excellent, choose next_area and ask the next planned subject/objective —
+  never a soft paraphrase of the same concept.
+- Depth: aim for about topic_budget questions on the current subject before
+  leaving. Use question_plan_slot.topic when present — do not ignore it.
+- HARD LIMIT (follow_up only): at most one follow-up phrasing per area. If
+  turns_in_current_area >= 2 you MUST choose next_area — never another follow_up.
+  next_area may stay on the same subject while the plan block continues; when
+  turns_in_current_area >= topic_budget OR the plan slot topic differs, you MUST
+  switch to that new subject (or remaining_areas).
+- Do NOT wait for the candidate to say "next topic". Advance automatically.
+- Cover multiple planned subjects across the interview; do not stay on one concept.
+- Avoid repeating the same ask with slightly different wording.
+- If the candidate cannot answer, acknowledge briefly in evaluation and move on.
 - PACING (the interview is TIMED): minutes_remaining is the time budget. If
   minutes_remaining <= 5 you MUST return decision="complete" with next_question=""
   after evaluating the answer. With 25-50% of time left, start covering the most
@@ -361,6 +383,11 @@ def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
     turns_in_area = int(payload.get("turns_in_current_area") or 0)
     if decision.decision == "follow_up" and turns_in_area >= 2:
         return "follow_up not allowed when turns_in_current_area >= 2"
+    if decision.decision == "follow_up" and _evaluation_coverage(decision) in (
+        "good",
+        "excellent",
+    ):
+        return "follow_up not allowed when coverage is already good/excellent"
 
     remaining_slots = payload.get("questions_remaining")
     if (
@@ -402,26 +429,118 @@ def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
     return None
 
 
+def _evaluation_coverage(decision: TurnDecision) -> str:
+    ev = getattr(decision, "evaluation", None)
+    if ev is None:
+        return ""
+    return (getattr(ev, "coverage", None) or "").strip().lower()
+
+
+def _planned_topic(payload: dict) -> str:
+    slot = payload.get("question_plan_slot")
+    if isinstance(slot, dict):
+        return (slot.get("topic") or "").strip()
+    return ""
+
+
+def _topic_budget(payload: dict) -> int:
+    raw = payload.get("topic_budget")
+    try:
+        return max(2, min(5, int(raw)))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _force_topic(decision: TurnDecision, topic: str) -> TurnDecision:
+    return decision.model_copy(
+        update={
+            "decision": "next_area",
+            "question_area": topic,
+        }
+    )
+
+
+def _progression_target(payload: dict, current: str) -> str | None:
+    """Best next subject: distinct planned slot, then remaining areas, else planned."""
+    remaining = list(payload.get("remaining_areas") or [])
+    planned = _planned_topic(payload)
+    current_key = (current or "").strip().lower()
+    if planned and planned.lower() != current_key:
+        return planned
+    for topic in remaining:
+        text = (topic or "").strip()
+        if text and text.lower() != current_key:
+            return text
+    # Scan full plan for the next different subject (resume / refresh safe).
+    from app.agents.question_plan import next_distinct_plan_topic
+
+    distinct = next_distinct_plan_topic(
+        payload.get("question_plan"),
+        questions_asked=int(payload.get("questions_asked") or 0),
+        current=current,
+    )
+    if distinct:
+        return distinct
+    return planned or None
+
+
 def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
     """Deterministic mode/policy fixes that do not require another LLM call."""
     turns_in_area = int(payload.get("turns_in_current_area") or 0)
     remaining = list(payload.get("remaining_areas") or [])
     remaining_slots = payload.get("questions_remaining")
     mode = (payload.get("mode") or "strict").lower()
+    current = (payload.get("current_area") or "").strip()
+    planned = _planned_topic(payload)
+    budget = _topic_budget(payload)
+    coverage = _evaluation_coverage(decision)
 
     if remaining_slots is not None and int(remaining_slots) <= 0:
         return decision.model_copy(update={"decision": "complete", "next_question": ""})
 
+    # Sufficient answers must advance — soft follow-ups must not burn the plan.
+    if decision.decision == "follow_up" and coverage in ("good", "excellent"):
+        target = _progression_target(payload, current) or planned or current
+        if target:
+            decision = _force_topic(decision, target)
+        else:
+            decision = decision.model_copy(update={"decision": "next_area"})
+
     if decision.decision == "follow_up" and turns_in_area >= 2:
-        if remaining:
-            decision = decision.model_copy(
-                update={
-                    "decision": "next_area",
-                    "question_area": remaining[0],
-                }
-            )
+        target = _progression_target(payload, current)
+        if target:
+            decision = _force_topic(decision, target)
         else:
             return decision.model_copy(update={"decision": "complete", "next_question": ""})
+
+    # Finish the subject block, then leave — do not linger indefinitely.
+    if decision.decision != "complete" and current and turns_in_area >= budget:
+        target = _progression_target(payload, current)
+        if target:
+            decision = _force_topic(decision, target)
+
+    # Plan already advanced to a new subject — honor it once depth is underway.
+    if (
+        decision.decision != "complete"
+        and current
+        and planned
+        and planned.lower() != current.lower()
+        and turns_in_area >= 2
+    ):
+        decision = _force_topic(decision, planned)
+
+    # next_area that stays on the same label while other subjects remain → move on.
+    decided_area = (decision.question_area or "").strip()
+    if (
+        decision.decision == "next_area"
+        and current
+        and decided_area
+        and decided_area.lower() == current.lower()
+        and turns_in_area >= 2
+    ):
+        target = _progression_target(payload, current)
+        if target and target.lower() != current.lower():
+            decision = _force_topic(decision, target)
 
     if decision.decision == "complete" and not _plan_still_open(payload, remaining_slots):
         return decision.model_copy(update={"next_question": decision.next_question or ""})
@@ -446,7 +565,9 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
                 "decision": "next_area",
                 "next_question": (decision.next_question or "").strip()
                 or "Continue with the next planned objective.",
-                "question_area": (decision.question_area or "").strip() or "General",
+                "question_area": planned
+                or (decision.question_area or "").strip()
+                or "General",
             }
         )
     decision = _prefer_unused_bank(decision, payload)
@@ -484,10 +605,23 @@ def _prompt_payload(payload: dict) -> dict:
     history = [str(q) for q in payload.get("prior_track_questions") or [] if q]
     areas = [str(area) for area in payload.get("prior_areas") or [] if area]
     visible = {key: value for key, value in payload.items() if key != "prior_fingerprints"}
+    transcript = list(visible.get("transcript") or [])
+    if len(transcript) > 6:
+        visible["transcript"] = transcript[-6:]
+    bank = list(visible.get("question_bank") or [])
+    if len(bank) > 12:
+        visible["question_bank"] = bank[:12]
+    brief = visible.get("brief")
+    if isinstance(brief, dict):
+        brief = dict(brief)
+        brief_bank = list(brief.get("question_bank") or [])
+        if len(brief_bank) > 12:
+            brief["question_bank"] = brief_bank[:12]
+        visible["brief"] = brief
     return {
         **visible,
-        "prior_areas": areas[-24:],
-        "prior_track_questions": [q[:160] for q in history[-40:]],
+        "prior_areas": areas[-12:],
+        "prior_track_questions": [q[:140] for q in history[-20:]],
     }
 
 
@@ -590,6 +724,15 @@ def _prefer_unused_bank(decision: TurnDecision, payload: dict) -> TurnDecision:
         steered = [entry for entry in unused if (entry.get("area") or "") not in set(avoid)]
         if steered:
             unused = steered
+    planned = _planned_topic(payload).lower()
+    if planned:
+        on_topic = [
+            entry
+            for entry in unused
+            if (entry.get("area") or "").strip().lower() == planned
+        ]
+        if on_topic:
+            unused = on_topic
     if not unused:
         return decision
     current = (decision.next_question or "").strip()
@@ -878,48 +1021,53 @@ async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, li
     if is_code:
         system = f"{EVALUATE_SYSTEM_PROMPT}\n{CODING_STATIC_REVIEW_RULES}"
 
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        ev = await structured_completion(
-            client,
-            system=system,
-            user_payload=eval_payload,
-            schema=AnswerEvaluation,
-            model=payload.get("model") or "structured-json",
-            temperature=0,
-        )
-        issues = evaluation_inconsistencies(ev, is_code=is_code)
-        if not issues:
-            return ev, checks
-
-        checks.extend(issues)
-        repair_payload = {
-            **eval_payload,
-            "repair_note": (
-                "Your previous evaluation was inconsistent: "
-                f"{', '.join(issues)}. Fix strengths/gaps to match the coverage "
-                "label. Return valid JSON only."
-            ),
-        }
-        try:
-            ev = await structured_completion(
-                client,
-                system=system,
-                user_payload=repair_payload,
-                schema=AnswerEvaluation,
-                temperature=0,
-            )
-        except Exception as exc:
-            log.warning("eval_repair_failed", error=str(exc)[:160])
-            checks.append("repair_failed")
-            return _safe_eval_fallback(ev, issues), checks
-
-        issues2 = evaluation_inconsistencies(ev, is_code=is_code)
-        if issues2:
-            checks.append("fallback_after_repair")
-            checks.extend(issues2)
-            return _safe_eval_fallback(ev, issues2), checks
-        checks.append("repaired")
+    ev = await structured_completion(
+        system=system,
+        user_payload=eval_payload,
+        schema=AnswerEvaluation,
+        model=payload.get("model") or "structured-json",
+        temperature=0,
+        max_tokens=500,
+        repair_attempts=1,
+        max_attempts=1,
+        timeout_s=18.0,
+    )
+    issues = evaluation_inconsistencies(ev, is_code=is_code)
+    if not issues:
         return ev, checks
+
+    checks.extend(issues)
+    repair_payload = {
+        **eval_payload,
+        "repair_note": (
+            "Your previous evaluation was inconsistent: "
+            f"{', '.join(issues)}. Fix strengths/gaps to match the coverage "
+            "label. Return valid JSON only."
+        ),
+    }
+    try:
+        ev = await structured_completion(
+            system=system,
+            user_payload=repair_payload,
+            schema=AnswerEvaluation,
+            temperature=0,
+            max_tokens=500,
+            repair_attempts=1,
+            max_attempts=1,
+            timeout_s=14.0,
+        )
+    except Exception as exc:
+        log.warning("eval_repair_failed", error=str(exc)[:160])
+        checks.append("repair_failed")
+        return _safe_eval_fallback(ev, issues), checks
+
+    issues2 = evaluation_inconsistencies(ev, is_code=is_code)
+    if issues2:
+        checks.append("fallback_after_repair")
+        checks.extend(issues2)
+        return _safe_eval_fallback(ev, issues2), checks
+    checks.append("repaired")
+    return ev, checks
 
 
 async def run_interviewer_turn(
@@ -978,60 +1126,77 @@ async def run_interviewer_turn(
             )
         return d.model_copy(update={"rubric_version": RUBRIC_VERSION})
 
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
+    turn_started = time.monotonic()
+    decision = await structured_completion(
+        system=system,
+        user_payload=_prompt_payload(routed),
+        schema=TurnDecision,
+        meta=meta,
+        mongo_db=mongo_db,
+        max_tokens=800,
+        max_attempts=1,
+        repair_attempts=1,
+        timeout_s=22.0,
+    )
+    decision = _apply_eval_guards(decision)
+    decision = apply_local_policy(decision, routed)
+    violation = decision_violation(decision, routed)
+    if violation is None:
+        log.info(
+            "interviewer_turn_timing",
+            stage="ok",
+            elapsed_ms=int((time.monotonic() - turn_started) * 1000),
+        )
+        return decision
+
+    for attempt in range(1, _MAX_REPAIR_ATTEMPTS + 1):
+        repair_payload = {
+            **routed,
+            "repair_note": (
+                f"Your previous decision was rejected (attempt {attempt}): {violation}. "
+                "Choose a DIFFERENT next_question that is not identical, a paraphrase, "
+                "or the same learning objective as any asked_questions entry. Cover a "
+                "genuinely new concept (new algorithm, complexity angle, or technique). "
+                "Prefer remaining_areas. Return valid JSON only."
+            ),
+        }
         decision = await structured_completion(
-            client,
             system=system,
-            user_payload=_prompt_payload(routed),
+            user_payload=_prompt_payload(repair_payload),
             schema=TurnDecision,
-            meta=meta,
             mongo_db=mongo_db,
+            max_tokens=700,
+            max_attempts=1,
+            repair_attempts=1,
+            timeout_s=16.0,
         )
         decision = _apply_eval_guards(decision)
         decision = apply_local_policy(decision, routed)
         violation = decision_violation(decision, routed)
         if violation is None:
+            log.info(
+                "interviewer_turn_timing",
+                stage="repaired",
+                elapsed_ms=int((time.monotonic() - turn_started) * 1000),
+            )
             return decision
 
-        for attempt in range(1, _MAX_REPAIR_ATTEMPTS + 1):
-            repair_payload = {
-                **routed,
-                "repair_note": (
-                    f"Your previous decision was rejected (attempt {attempt}): {violation}. "
-                    "Choose a DIFFERENT next_question that is not identical, a paraphrase, "
-                    "or the same learning objective as any asked_questions entry. Cover a "
-                    "genuinely new concept (new algorithm, complexity angle, or technique). "
-                    "Prefer remaining_areas. Return valid JSON only."
-                ),
-            }
-            decision = await structured_completion(
-                client,
-                system=system,
-                user_payload=_prompt_payload(repair_payload),
-                schema=TurnDecision,
-                mongo_db=mongo_db,
-            )
-            decision = _apply_eval_guards(decision)
-            decision = apply_local_policy(decision, routed)
-            violation = decision_violation(decision, routed)
-            if violation is None:
-                return decision
-
-        log.warning(
-            "interviewer_force_unique_after_repairs",
-            violation=violation,
-            asked=len(routed.get("asked_questions") or []),
+    log.warning(
+        "interviewer_force_unique_after_repairs",
+        violation=violation,
+        asked=len(routed.get("asked_questions") or []),
+        elapsed_ms=int((time.monotonic() - turn_started) * 1000),
+    )
+    forced = force_unique_decision(decision, routed)
+    if forced.decision != "complete" and decision_violation(forced, routed):
+        reused = least_recent_text(
+            [q for q in routed.get("prior_track_questions") or [] if q],
+            [q for q in routed.get("asked_questions") or [] if q],
         )
-        forced = force_unique_decision(decision, routed)
-        if forced.decision != "complete" and decision_violation(forced, routed):
-            reused = least_recent_text(
-                [q for q in routed.get("prior_track_questions") or [] if q],
-                [q for q in routed.get("asked_questions") or [] if q],
-            )
-            if reused:
-                return forced.model_copy(update={"decision": "next_area", "next_question": reused})
-            return forced.model_copy(update={"decision": "complete", "next_question": ""})
-        return forced
+        if reused:
+            return forced.model_copy(update={"decision": "next_area", "next_question": reused})
+        return forced.model_copy(update={"decision": "complete", "next_question": ""})
+    return forced
 
 
 def build_interviewer_graph(turn_runner=run_interviewer_turn):

@@ -140,7 +140,7 @@ def attach_session_opts(
 
 
 def sanitize_vault_items(items: list[Any], *, limit: int = _MAX_VAULT_ITEMS) -> list[dict]:
-    """Projects and skills only, capped. Details are truncated plain strings."""
+    """Projects, skills, and internships, capped. Details are truncated plain strings."""
     out: list[dict] = []
     for item in items:
         category = (getattr(item, "category", None) or "").strip().lower()
@@ -159,6 +159,41 @@ def sanitize_vault_items(items: list[Any], *, limit: int = _MAX_VAULT_ITEMS) -> 
         out.append({"category": category, "title": title, "details": flat})
         if len(out) >= limit:
             break
+    return out
+
+
+def vault_plan_areas(items: list[Any], *, limit: int = 8) -> list[dict]:
+    """Resume-derived topic areas for the session question plan (no invented domains)."""
+    order = ("project", "internship", "skill", "achievement", "education")
+    guidance = {
+        "project": "Project understanding, implementation, and trade-offs",
+        "internship": "Role responsibilities, tools, and outcomes",
+        "skill": "Practical use and evidence of this skill",
+        "achievement": "How the result was measured and what the candidate owned",
+        "education": "Academic background and how it applies to the target role",
+    }
+    seen: set[str] = set()
+    by_cat: dict[str, list[dict]] = {key: [] for key in order}
+    for item in items:
+        category = (getattr(item, "category", None) or "").strip().lower()
+        if category not in by_cat:
+            continue
+        title = (getattr(item, "title", None) or "").strip()[:_MAX_TITLE_CHARS]
+        if not title:
+            continue
+        key = title.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        by_cat[category].append(
+            {"topic": title, "guidance": guidance[category]},
+        )
+    out: list[dict] = []
+    for category in order:
+        for area in by_cat[category]:
+            out.append(area)
+            if len(out) >= limit:
+                return out
     return out
 
 
@@ -373,7 +408,9 @@ def craft_resume_probe(
     return {
         "decision": "next_area",
         "next_question": cleaned,
-        "question_area": area or title[:80] or "Project experience",
+        # Label by the resume item so the session advances across projects,
+        # not by the previous question_area (which stuck interviews on one topic).
+        "question_area": title[:80] or area or "Project experience",
         "question_type": "behavioral",
         "notes_for_report": "resume_probe",
         "objective": title,
@@ -463,9 +500,11 @@ def pick_probe(
     asked = _asked_texts(turns, prior_questions)
     seed = questions_asked + len(turns)
     persona_id = str(opts.get("persona_id") or "balanced")
+    depth = follow_up_depth(turns, current_area) if last_answer else 0
 
-    # Prefer answer follow-up when an answer just landed (resume off → answer-only).
-    if last_answer and follow_up_depth(turns, current_area) < 2:
+    # Prefer answer follow-up when an answer just landed — skip once the area
+    # already has a follow-up so the plan can advance to the next topic.
+    if last_answer and depth < 2:
         probe = craft_answer_probe(
             answer=last_answer,
             area=current_area,

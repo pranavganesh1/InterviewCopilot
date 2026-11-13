@@ -25,9 +25,47 @@ MODEL_FALLBACKS: dict[str, list[str]] = {
 # evaluation_detail so reports can say which model scored the answer.
 llm_model_used: ContextVar[str | None] = ContextVar("llm_model_used", default=None)
 
-# Skip a deployment briefly after rate_limited / overloaded / timeout.
-_COOLDOWN_S = 45.0
+# Skip a deployment after rate_limited / overloaded / 5xx / timeout.
+# Cooldown length follows Retry-After when present (capped), else these defaults.
+_COOLDOWN_S = 20.0
+_COOLDOWN_MAX_S = 45.0
+_SERVER_ERROR_COOLDOWN_S = 12.0
 _model_cooldown_until: dict[str, float] = {}
+
+# Cap concurrent outbound LLM calls in this process (multi-customer safety).
+_LLM_CONCURRENCY = 8
+_llm_sem = asyncio.Semaphore(_LLM_CONCURRENCY)
+
+# Process-wide HTTP client — avoids TCP/TLS setup on every agent turn.
+_shared_client: httpx.AsyncClient | None = None
+_shared_client_lock = asyncio.Lock()
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Reuse one AsyncClient for LiteLLM calls (keepalive)."""
+    global _shared_client
+    client = _shared_client
+    if client is not None and not client.is_closed:
+        return client
+    async with _shared_client_lock:
+        client = _shared_client
+        if client is None or client.is_closed:
+            timeout = float(get_settings().llm_client_timeout)
+            _shared_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout, connect=5.0),
+                limits=httpx.Limits(max_keepalive_connections=12, max_connections=24),
+            )
+        return _shared_client
+
+
+async def close_http_client() -> None:
+    """Shutdown hook — close the shared client cleanly."""
+    global _shared_client
+    async with _shared_client_lock:
+        client = _shared_client
+        _shared_client = None
+        if client is not None and not client.is_closed:
+            await client.aclose()
 
 
 class LLMCause(StrEnum):
@@ -62,13 +100,84 @@ class LLMGatewayError(Exception):
         self.provider_code = provider_code
 
 
+def gateway_error_detail(exc: LLMGatewayError) -> dict:
+    """Map gateway failures to safe customer-facing API detail."""
+    cause = getattr(exc.cause, "value", LLMCause.unknown.value)
+    retry = exc.retry_after_seconds
+    if cause == LLMCause.rate_limited.value:
+        wait = int(retry) if retry and 1 <= retry <= 90 else 20
+        return {
+            "message": (
+                f"Temporary request limit reached. "
+                f"Please retry in about {wait} seconds."
+            ),
+            "cause": cause,
+            "retry_after_seconds": wait,
+        }
+    if cause == LLMCause.overloaded.value:
+        wait = int(retry) if retry and 1 <= retry <= 90 else 20
+        return {
+            "message": (
+                f"Temporary service overload. "
+                f"Please retry in about {wait} seconds."
+            ),
+            "cause": cause,
+            "retry_after_seconds": wait,
+        }
+    if cause == LLMCause.timeout.value:
+        return {
+            "message": "The AI took too long to reply. Please try again.",
+            "cause": cause,
+            "retry_after_seconds": int(retry) if retry else 10,
+        }
+    if cause == LLMCause.schema_rejected.value:
+        return {
+            "message": "The AI returned an invalid response. Please try again.",
+            "cause": cause,
+            "retry_after_seconds": int(retry) if retry else 8,
+        }
+    if cause == LLMCause.auth_failed.value:
+        return {
+            "message": "AI provider authentication failed. Check server configuration.",
+            "cause": cause,
+            "retry_after_seconds": int(retry) if retry else 30,
+        }
+    if cause == LLMCause.network.value:
+        return {
+            "message": "Could not reach the AI provider. Check your connection and retry.",
+            "cause": cause,
+            "retry_after_seconds": int(retry) if retry else 10,
+        }
+    return {
+        "message": "Something went wrong preparing the AI reply. Please retry in a moment.",
+        "cause": cause,
+        "retry_after_seconds": int(retry) if retry else 15,
+    }
+
+
 def _cooldown_active(model: str) -> bool:
     until = _model_cooldown_until.get(model, 0.0)
     return time.monotonic() < until
 
 
 def _set_cooldown(model: str, seconds: float | None = None) -> None:
-    _model_cooldown_until[model] = time.monotonic() + (seconds or _COOLDOWN_S)
+    secs = _COOLDOWN_S if seconds is None else float(seconds)
+    secs = max(4.0, min(secs, _COOLDOWN_MAX_S))
+    _model_cooldown_until[model] = time.monotonic() + secs
+
+
+def _cooldown_for_error(exc: LLMGatewayError) -> float | None:
+    """Seconds to cool a deployment; None = do not cool down."""
+    if exc.cause in (LLMCause.rate_limited, LLMCause.overloaded):
+        return min(
+            max(exc.retry_after_seconds or _COOLDOWN_S, 8.0),
+            _COOLDOWN_MAX_S,
+        )
+    if exc.cause == LLMCause.timeout:
+        return 8.0
+    if exc.status_code and exc.status_code >= 500:
+        return _SERVER_ERROR_COOLDOWN_S
+    return None
 
 
 def clear_model_cooldowns() -> None:
@@ -136,7 +245,7 @@ def _parse_retry_after(resp: httpx.Response | None) -> float | None:
 
 
 async def chat_completion(
-    client: httpx.AsyncClient,
+    client: httpx.AsyncClient | None = None,
     *,
     model: str,
     messages: list[dict],
@@ -154,6 +263,7 @@ async def chat_completion(
     Every successful call is logged to Mongo llm_call_logs (metadata only,
     never full prompts, per spec §7).
     """
+    http = client or await get_http_client()
     chain = [model, *MODEL_FALLBACKS.get(model, [])]
     last_error: LLMGatewayError | None = None
     chain_started = time.monotonic()
@@ -163,68 +273,122 @@ async def chat_completion(
         else min(float(get_settings().llm_client_timeout), 28.0)
     )
 
-    for idx, candidate in enumerate(chain):
-        remaining = total_budget - (time.monotonic() - chain_started)
-        if remaining < 2.0:
-            break
-        if _cooldown_active(candidate):
-            log.info(
-                "llm_model_cooldown_skip",
-                model=candidate,
-                cause=LLMCause.rate_limited.value,
-            )
-            continue
-        # Primary uses remaining budget; fallbacks stay tighter.
-        candidate_timeout = min(remaining, 15.0 if idx == 0 else 12.0)
-        try:
-            content = await _chat_once(
-                client,
-                timeout_s=candidate_timeout,
-                model=candidate,
-                messages=messages,
-                mongo_db=mongo_db,
-                request_id=request_id,
-                temperature=temperature,
-                response_format=response_format,
-                meta=meta,
-                max_attempts=max_attempts,
-                max_tokens=max_tokens,
-            )
-        except LLMGatewayError as exc:
-            last_error = exc
-            if exc.cause in (
-                LLMCause.rate_limited,
-                LLMCause.overloaded,
-                LLMCause.timeout,
-            ):
-                _set_cooldown(
-                    candidate,
-                    max(exc.retry_after_seconds or _COOLDOWN_S, 30.0),
+    causes_seen: list[str] = []
+    models_tried: list[str] = []
+    saw_rate_limit = False
+    async with _llm_sem:
+        for idx, candidate in enumerate(chain):
+            remaining = total_budget - (time.monotonic() - chain_started)
+            if remaining < 2.0:
+                break
+            if _cooldown_active(candidate):
+                # If every remaining candidate is cooling down, try this one anyway —
+                # otherwise the UI only sees instant failures for the cooldown window.
+                rest_cooling = all(_cooldown_active(m) for m in chain[idx:])
+                if not rest_cooling:
+                    log.info(
+                        "llm_model_cooldown_skip",
+                        model=candidate,
+                        cause=LLMCause.rate_limited.value,
+                    )
+                    continue
+                log.info("llm_model_cooldown_bypass", model=candidate)
+            # Reserve time for later fallbacks so a slow primary cannot burn the budget.
+            fallbacks_left = len(chain) - idx - 1
+            reserve = 4.0 * fallbacks_left
+            usable = max(3.0, remaining - reserve)
+            # Fail the primary faster so a single fallback still gets a real attempt.
+            cap = 9.0 if idx == 0 and fallbacks_left else 10.0
+            candidate_timeout = min(usable, cap)
+            models_tried.append(candidate)
+            try:
+                content = await _chat_once(
+                    http,
+                    timeout_s=candidate_timeout,
+                    model=candidate,
+                    messages=messages,
+                    mongo_db=mongo_db,
+                    request_id=request_id,
+                    temperature=temperature,
+                    response_format=response_format,
+                    meta=meta,
+                    max_attempts=max_attempts,
+                    max_tokens=max_tokens,
                 )
-            log.warning(
-                "llm_model_failed",
+            except LLMGatewayError as exc:
+                last_error = exc
+                causes_seen.append(exc.cause.value)
+                cool = _cooldown_for_error(exc)
+                if cool is not None:
+                    _set_cooldown(candidate, cool)
+                log.warning(
+                    "llm_model_failed",
+                    model=candidate,
+                    cause=exc.cause.value,
+                    status_code=exc.status_code,
+                    provider_code=exc.provider_code,
+                    retry_after_seconds=exc.retry_after_seconds,
+                    cooldown_seconds=cool,
+                    attempt=idx + 1,
+                    elapsed_ms=int((time.monotonic() - chain_started) * 1000),
+                    error=str(exc)[:200],
+                )
+                # After the first rate-limit, allow at most one more provider —
+                # do not fan out to every fallback in the same customer request.
+                if exc.cause == LLMCause.rate_limited:
+                    if saw_rate_limit:
+                        break
+                    saw_rate_limit = True
+                elif (
+                    saw_rate_limit
+                    and exc.status_code
+                    and exc.status_code >= 500
+                ):
+                    break
+                # Auth / not-found / other: try next without burning extra sleeps.
+                continue
+            llm_model_used.set(candidate)
+            log.info(
+                "llm_chat_ok",
                 model=candidate,
-                cause=exc.cause.value,
-                status_code=exc.status_code,
-                provider_code=exc.provider_code,
-                retry_after_seconds=exc.retry_after_seconds,
-                attempt=idx + 1,
+                fallback_index=idx,
+                models_tried=len(models_tried),
                 elapsed_ms=int((time.monotonic() - chain_started) * 1000),
-                error=str(exc)[:200],
             )
-            # Auth / not-found on a deployment: try next; don't burn retries.
-            continue
-        llm_model_used.set(candidate)
-        log.info(
-            "llm_chat_ok",
-            model=candidate,
-            fallback_index=idx,
-            elapsed_ms=int((time.monotonic() - chain_started) * 1000),
-        )
-        return content
-    raise last_error or LLMGatewayError(
+            return content
+    err = last_error or LLMGatewayError(
         "LLM gateway call failed", cause=LLMCause.unknown
     )
+    # Prefer the most actionable cause when the chain mixed failures.
+    if causes_seen:
+        if LLMCause.rate_limited.value in causes_seen:
+            preferred = LLMCause.rate_limited
+        elif LLMCause.overloaded.value in causes_seen:
+            preferred = LLMCause.overloaded
+        elif LLMCause.timeout.value in causes_seen:
+            preferred = LLMCause.timeout
+        elif LLMCause.schema_rejected.value in causes_seen:
+            preferred = LLMCause.schema_rejected
+        else:
+            preferred = err.cause
+        if preferred != err.cause:
+            err = LLMGatewayError(
+                str(err),
+                cause=preferred,
+                status_code=err.status_code,
+                retry_after_seconds=err.retry_after_seconds or 20.0,
+                model=err.model,
+                provider_code=err.provider_code,
+            )
+    log.warning(
+        "llm_chain_exhausted",
+        causes=causes_seen,
+        models_tried=models_tried,
+        final_cause=err.cause.value,
+        retry_after_seconds=err.retry_after_seconds,
+        elapsed_ms=int((time.monotonic() - chain_started) * 1000),
+    )
+    raise err
 
 
 async def _chat_once(
@@ -310,25 +474,34 @@ async def _chat_once(
 
         if resp.status_code == 429:
             cause = classify_http_failure(429, provider_code=provider_code)
-            delay = min(retry_after if retry_after is not None else 1.5, 2.0)
+            provider_wait = (
+                float(retry_after)
+                if retry_after is not None and retry_after > 0
+                else 30.0
+            )
+            # Same-model retry only: short jittered pause (never ignore Retry-After
+            # when surfacing the error / setting cooldown on the chain).
+            sleep_s = min(provider_wait, 2.5)
+            sleep_s = max(0.4, sleep_s * (0.6 + 0.4 * (attempt + 1) / attempts))
             log.warning(
                 "llm_gateway_http_error",
                 model=model,
                 cause=cause.value,
                 status_code=429,
                 provider_code=provider_code,
-                retry_after_seconds=retry_after or delay,
+                retry_after_seconds=provider_wait,
+                sleep_seconds=round(sleep_s, 2),
                 attempt=attempt + 1,
                 elapsed_ms=int((time.monotonic() - started) * 1000),
             )
             if attempt < attempts - 1:
-                await asyncio.sleep(delay)
+                await asyncio.sleep(sleep_s)
                 continue
             raise LLMGatewayError(
                 f"rate limited: {model}",
                 cause=cause,
                 status_code=429,
-                retry_after_seconds=retry_after or 30.0,
+                retry_after_seconds=provider_wait,
                 model=model,
                 provider_code=provider_code,
             )

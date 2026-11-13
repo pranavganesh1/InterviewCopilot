@@ -87,7 +87,9 @@ services:
     restart: "no"
     # No --reload in Docker: the Windows bind-mount __pycache__ churn triggers
 # continuous reloads that kill in-flight requests. Code changes = rebuild.
-    entrypoint: ["/app/entrypoint.sh", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # /opt/entrypoint.sh is baked into the image (not under the /app bind-mount),
+    # so Windows CRLF on the host cannot break the Linux shebang.
+    entrypoint: ["/opt/entrypoint.sh", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       APP_ENV: local
       DATABASE_URL: postgresql+asyncpg://interview:interview@postgres:5432/interviewcopilot
