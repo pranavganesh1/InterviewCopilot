@@ -95,9 +95,18 @@ def _best(entries: list[dict], seed: str, slot: dict, covered: set[str]) -> dict
         return None
     difficulty = slot.get("difficulty")
     fmt = slot.get("format")
+    planned = (slot.get("topic") or "").strip().lower()
     tier = [entry for entry in entries if not difficulty or entry.get("difficulty") == difficulty]
     typed = [entry for entry in tier if not fmt or entry.get("type") == fmt]
     pool = typed or tier or entries
+    if planned:
+        on_topic = [
+            entry
+            for entry in pool
+            if (entry.get("area") or "").strip().lower() == planned
+        ]
+        if on_topic:
+            pool = on_topic
     uncovered = [entry for entry in pool if (entry.get("area") or "") not in covered]
     choices = list(uncovered or pool)
     random.Random(seed).shuffle(choices)

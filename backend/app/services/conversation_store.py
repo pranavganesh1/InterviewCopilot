@@ -102,10 +102,18 @@ async def set_profile_review(
     return payload
 
 
+# Stage labels must never be treated as a selected vault topic.
+COACH_PHASE_LABELS = frozenset({"profile", "goals", "ready"})
+
 EMPTY_COACH_CONTEXT: dict = {
     "background": {},
     "confirmed_facts": [],
     "current_topic": None,
+    "focus_kind": None,  # project | skill | education | internship | achievement | subject
+    "focus_locked": False,  # True after explicit user selection until switch/skip
+    "last_assistant_question": None,
+    "last_question_intent": None,  # confirm_topic | explore | detail | offer_aspects | other
+    "pending_followup": None,  # e.g. offered title awaiting yes/no
     "asked_questions": [],
     "skipped_categories": [],
     "not_applicable_categories": [],
@@ -138,16 +146,33 @@ def normalize_coach_context(raw: dict | None) -> dict:
                 out.append(s[:240])
         return out[:limit]
 
+    def _opt_str(key: str, limit: int = 240) -> str | None:
+        v = raw.get(key)
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s[:limit] if s else None
+
     bg = raw.get("background") if isinstance(raw.get("background"), dict) else {}
+    topic = _opt_str("current_topic", 120)
+    if topic and topic.lower() in COACH_PHASE_LABELS:
+        topic = None
+    kind = _opt_str("focus_kind", 40)
+    if kind:
+        kind = kind.lower()
+    intent = _opt_str("last_question_intent", 40)
+    if intent:
+        intent = intent.lower()
     base.update(
         {
             "background": bg,
             "confirmed_facts": _str_list("confirmed_facts"),
-            "current_topic": (
-                str(raw["current_topic"]).strip()[:120]
-                if raw.get("current_topic")
-                else None
-            ),
+            "current_topic": topic,
+            "focus_kind": kind,
+            "focus_locked": bool(raw.get("focus_locked")),
+            "last_assistant_question": _opt_str("last_assistant_question", 320),
+            "last_question_intent": intent,
+            "pending_followup": _opt_str("pending_followup", 120),
             "asked_questions": _str_list("asked_questions", 60),
             "skipped_categories": _str_list("skipped_categories", 20),
             "not_applicable_categories": _str_list("not_applicable_categories", 20),
@@ -186,7 +211,22 @@ async def merge_coach_context(
     mongo_db: AsyncIOMotorDatabase, user_id: str, patch: dict
 ) -> dict:
     current = await get_coach_context(mongo_db, user_id)
-    merged = {**current, **{k: v for k, v in (patch or {}).items() if v is not None}}
+    # Allow clearing nullable string fields with "" ; booleans may be False.
+    clearable = {
+        "current_topic",
+        "focus_kind",
+        "last_assistant_question",
+        "last_question_intent",
+        "pending_followup",
+    }
+    merged = {**current}
+    for k, v in (patch or {}).items():
+        if v is None and k not in clearable:
+            continue
+        if k in clearable and v == "":
+            merged[k] = None
+        else:
+            merged[k] = v
     for key in (
         "confirmed_facts",
         "asked_questions",

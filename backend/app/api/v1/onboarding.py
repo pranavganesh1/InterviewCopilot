@@ -5,12 +5,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.logging import get_logger
 from app.db.sqlalchemy import get_db
-from app.gateway.llm import LLMGatewayError
+from app.gateway.llm import LLMGatewayError, gateway_error_detail
 from app.models.user import User
 from app.services import conversation_store, onboarding_service
 from app.services.preparation_goals import preferences_ready
 from app.services.vault_service import list_items
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -121,28 +124,44 @@ async def chat(
             message_id=body.message_id,
         )
     except LLMGatewayError as exc:
-        retry = exc.retry_after_seconds
-        hint = (
-            f"Please retry in about {int(retry)} seconds."
-            if retry and retry < 90
-            else "Please retry in about a minute."
-        )
         raise HTTPException(
             status_code=503,
-            detail={
-                "message": f"The interview coach is temporarily busy. {hint}",
-                "cause": getattr(exc.cause, "value", "unknown"),
-                "retry_after_seconds": int(retry) if retry else 60,
-            },
+            detail=gateway_error_detail(exc),
         ) from exc
     except HTTPException:
         raise
     except Exception as exc:
+        name = type(exc).__name__
+        # SQLAlchemy / driver / Mongo-ish names → persistence; else internal.
+        persistence = any(
+            k in name.lower()
+            for k in (
+                "sqlalchemy",
+                "operational",
+                "integrity",
+                "dbapi",
+                "mongo",
+                "pymongo",
+                "timeout",
+            )
+        ) or any(
+            k in str(exc).lower()[:120]
+            for k in ("connection refused", "server closed", "duplicate key")
+        )
+        log.warning(
+            "onboarding_chat_unhandled",
+            cause="persistence" if persistence else "internal",
+            exc_type=name,
+        )
         raise HTTPException(
             status_code=503,
             detail={
-                "message": "Something went wrong saving your reply. Please try again.",
-                "cause": "unknown",
+                "message": (
+                    "Could not save your reply. Please try again."
+                    if persistence
+                    else "Something went wrong on our side. Please try again."
+                ),
+                "cause": "persistence" if persistence else "unknown",
                 "retry_after_seconds": 15,
             },
         ) from exc
@@ -167,19 +186,9 @@ async def conversation_starter(
             request_id=request.headers.get("x-request-id"),
         )
     except LLMGatewayError as exc:
-        retry = exc.retry_after_seconds
-        hint = (
-            f"Please retry in about {int(retry)} seconds."
-            if retry and retry < 90
-            else "Please retry in about a minute."
-        )
         raise HTTPException(
             status_code=503,
-            detail={
-                "message": f"The interview coach is temporarily busy. {hint}",
-                "cause": getattr(exc.cause, "value", "unknown"),
-                "retry_after_seconds": int(retry) if retry else 60,
-            },
+            detail=gateway_error_detail(exc),
         ) from exc
 
 

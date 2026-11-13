@@ -4,16 +4,16 @@
    Radius + type scales are enforced by usage: rounded-md (controls),
    rounded-lg (cards/panels), rounded-full (pills); text-xs/sm/base/xl/3xl. */
 @theme {
-  --color-page: #fafaf9;
+  --color-page: #faf9fc;
   --color-surface: #ffffff;
-  --color-ink: #1c1917;
-  --color-ink-soft: #57534e;
-  --color-ink-faint: #a8a29e;
-  --color-line: #e7e5e4;
-  --color-accent: #1d4ed8;
-  --color-accent-strong: #1e40af;
-  --color-accent-soft: #eff6ff;
-  --shadow-card: 0 1px 2px 0 rgb(28 25 23 / 0.05);
+  --color-ink: #1e1b2e;
+  --color-ink-soft: #5b5670;
+  --color-ink-faint: #a39eb8;
+  --color-line: #ebe7f2;
+  --color-accent: #7c5cbf;
+  --color-accent-strong: #5b3f9a;
+  --color-accent-soft: #f3effa;
+  --shadow-card: 0 1px 2px 0 rgb(30 27 46 / 0.06);
 }
 
 body {
@@ -217,19 +217,6 @@ body {
   to {
     opacity: 1;
     transform: none;
-  }
-}
-
-@media (min-width: 640px) {
-  @keyframes coach-toast-in {
-    from {
-      opacity: 0;
-      transform: translateY(-6px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
   }
 }
 

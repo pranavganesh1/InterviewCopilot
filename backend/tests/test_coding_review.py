@@ -42,7 +42,7 @@ def test_no_code_execution_primitives_in_app():
 async def test_coding_eval_prompt_includes_not_executed(monkeypatch):
     seen_systems: list[str] = []
 
-    async def fake_structured(client, *, system, user_payload, schema, **kwargs):
+    async def fake_structured(client=None, *, system, user_payload, schema, **kwargs):
         seen_systems.append(system)
         return AnswerEvaluation(
             coverage="good",

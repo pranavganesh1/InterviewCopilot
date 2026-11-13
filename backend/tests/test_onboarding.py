@@ -116,7 +116,9 @@ async def test_onboarding_state_reports_completion(clean_users_table):
         )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["onboarding_complete"] is True
+    # Vault sections are optional; completion requires confirmed preferences (or finish).
+    assert body["vault_ready"] is True
+    assert body["onboarding_complete"] is False
     assert body["onboarding_finished"] is False
     assert body["missing_categories"] == []
 

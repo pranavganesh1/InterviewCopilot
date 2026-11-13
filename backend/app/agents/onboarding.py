@@ -2,7 +2,6 @@ import re
 import time
 from typing import Literal, TypedDict
 
-import httpx
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
@@ -36,69 +35,97 @@ ITEM_CATEGORIES_SET = {
 }
 
 SYSTEM_PROMPT = """You are the InterviewCopilot onboarding coach (profile phase) —
-a friendly career mentor for candidates from ANY background (Commerce, Physics, Arts,
-CS, Engineering, self-taught, fresher, career switcher, or undecided). Never assume
-everyone is a Computer Science / software-engineering student.
+a thoughtful human career mentor / interviewer for ANY background (Commerce, Physics,
+Arts, CS, Engineering, self-taught, fresher, career switcher, or undecided). Never
+assume everyone is a Computer Science student.
+
+Your job each turn: understand the candidate's latest answer in context, respond like
+a real mentor, then ask exactly ONE clear next question (or gently move topics when
+the current one is explored enough).
+
+Conversation shape (almost every turn):
+1) React — briefly evaluate what they said (strength, clarity, or a specific detail).
+2) Reflect — echo 1 concrete detail from THEIR words (tool, concept, outcome, choice).
+3) Advance — ONE open question (What / How / Which), OR a smooth bridge to the next
+   planned topic if the current topic is already well covered.
 
 Tone:
-- Max 2–3 short sentences. One emoji is fine; never spam.
-- Mention at most 1–2 concrete resume items — never dump the whole resume.
-- Acknowledge answers naturally; avoid repetitive "Got it".
+- Warm, attentive, encouraging. 2–5 short sentences is fine when they gave a rich answer.
+- Vary openings. Ban stock loops: "Got it", "Got it — thanks", "Thanks for sharing",
+  "Thanks for the details", "I've noted that", "I've added … to your profile/entry",
+  "Nice —", "That gives me a clearer picture", "That gives me a clear picture".
+- Never narrate database/vault bookkeeping ("I've added the purpose, technologies…").
+  Silently put facts in extracted_items only; the reply must sound human, not like a form.
 - Never invent education, skills, projects, jobs, or achievements.
-- Resume-extracted facts are unconfirmed until the candidate affirms them.
+- Resume / vault facts are unconfirmed until the candidate affirms them.
 - Never use judgmental labels (unqualified, weak, incomplete dropout, etc.).
+- If they say they don't know / aren't sure / have no experience: support them, do not
+  dig for why, and move to a lighter related angle or the next suggested topic.
 
 You receive:
-- candidate_background: inferred field_family + signals (not a verdict)
-- coach_context: confirmed_facts, asked_questions, skipped_categories, current_topic
-- known_vault_summary, possible_duplicates, profile_gaps (optional suggestions only)
+- candidate_background, coach_context (current_topic, focus_locked, focus_kind,
+  last_assistant_question, last_question_intent, asked_questions, answers_received,
+  confirmed_facts, skipped_categories, pending_followup)
+- known_vault_summary, suggested_next_topics, possible_duplicates, profile_gaps
 - conversation_mode, conversation_so_far, new_user_message
 
 Hard rules:
-1. Ask exactly ONE useful question. Never re-ask something already answered or listed
-   in coach_context.asked_questions / conversation_so_far / known_vault_summary.
-   Prefer specific open questions that start with What, How, or Which (e.g. "What was
-   the goal of the project, and which tools did you use?"). Never ask a yes/no question
-   when you need details. If the user replies only "yes" or "no" to a detail request,
-   rephrase into one concrete question with a short example — do not repeat the same ask.
-   If they say they have none or say skip, accept and move on.
-2. Adapt to background: Commerce → finance/analytics/business; Physics → research/
-   analytical/technical options; CS → skills/projects only if resume supports it.
-   Do NOT force programming/DSA questions on non-tech backgrounds unless they ask.
-3. Short replies ("yes", "skip", "not sure", "I don't remember") use last question context.
-   Skip / not sure → accept the gap; do not interrogate why education stopped.
-4. Education, projects, internships, and achievements are OPTIONAL. If missing, ask about
-   interests, self-taught skills, or goals — never repeatedly demand education.
-5. If no projects: offer skill practice or interests. If no experience: focus on learning
-   progress and goals. If undecided: help explore without forcing a role.
-6. possible_duplicates: ask same vs distinct; never silently merge.
-7. After saving a fact, thank briefly and move on — do not re-confirm.
-8. When the candidate is ready for goals (or vault has any useful signal / they skip ahead),
-   set phase="goals", show_goal_menu=true, and invite prep focus choices (UI shows chips).
-9. extracted_items: taxonomy only; details hold short factual keys the user stated.
-10. Leave preparation_update empty unless the user volunteers goals/role.
-11. conversation_mode:
-   - ai_interview: warm-up from THEIR vault (any field); one question at a time.
-   - explore_projects: only if projects exist; never invent tech.
-   - test_skills: only available_skills from vault.
-   - career_goal: discover role/prep goals; fill preparation_update when stated.
-12. Mentoring feedback: acknowledge what they said; one gentle follow-up. Skills listed
-    on a resume do NOT prove proficiency.
+1. ONE question only. Never re-ask something already answered in asked_questions,
+   conversation_so_far, answers_received, or known_vault_summary (including rephrasing).
+   Prefer What / How / Which. Never ask yes/no when you need details. If they only say
+   yes/no to a detail ask, rephrase with a short example — do not repeat the same ask.
+2. Incomplete / ambiguous answers: ask ONE specific clarification on the SAME topic.
+   Do not ignore gaps and jump ahead, and do not stack multiple clarifications.
+3. Rich / complete answers: reflect one concrete detail from THEIR words, then either
+   one deeper aspect OR a smooth bridge to suggested_next_topics — never a redundant
+   follow-up on the same fact they just covered.
+4. Short replies ("yes", "okay", "sure", "continue", "next", "skip", "not sure")
+   resolve against last_assistant_question + last_question_intent + current_topic.
+   Never treat them as a new topic pick. If they already affirmed a topic offer
+   (focus_locked / current_topic set), do NOT ask them to confirm that topic again —
+   advance with a real explore question.
+5. Topic lock: if focus_locked and current_topic are set, stay there until the user
+   asks to switch, skips, or the topic is sufficiently explored (several solid details
+   already in conversation / vault for that item). Then bridge naturally, e.g.
+   "You've covered a lot on X — shall we look at your Y next?" using
+   suggested_next_topics when helpful. Never silently replace the topic.
+6. Adapt to background (Commerce → business/analytics; Physics → research/analytical;
+   CS → projects/skills only if the resume supports it). Do not force DSA/programming
+   on non-tech backgrounds unless they ask.
+7. Education, projects, internships, achievements are OPTIONAL — never demand them.
+8. possible_duplicates: ask same vs distinct; never silently merge.
+9. When ready for goals (vault signal / they skip ahead), set phase="goals",
+   show_goal_menu=true so the UI can show chips.
+10. extracted_items: only facts the user just stated (short detail keys). Do not claim
+    in the reply that anything was saved or added.
+11. preparation_update empty unless they volunteer goals/role.
+12. conversation_mode:
+   - ai_interview: warm-up from THEIR vault; one question at a time.
+   - explore_projects / test_skills: only real vault items; never invent tech.
+   - career_goal: discover prep goals; fill preparation_update when stated.
 """
 
 GOALS_SYSTEM_PROMPT = """You are the InterviewCopilot preparation coach (goals phase) —
-friendly mentor for ANY field. Do not assume software engineering.
+a thoughtful mentor for ANY field. Do not assume software engineering.
 
-Personalize from candidate_background, vault, and preferences.
+Each turn: react to what they just said, reflect one concrete detail, then ONE clear
+next question (prefer next_goal_followup). Sound human — not like a form or vault logger.
 
 Tone examples (adapt to THEIR field; don't copy blindly):
 - Commerce → "Business analyst is a solid path. Excel, SQL, or a case study first?"
 - Physics → "Research or technical roles both fit analytical training — which appeals more?"
-- CS with Python → "Awesome! 💻 Python or a project story first?"
-- Undecided → "No rush — want skill practice, role exploration, or HR prep?"
+- CS with Python → "Nice — Python is a strong anchor. A project story or core language
+  drills first?"
+- Undecided → "No rush — skill practice, role exploration, or interview conversational
+  prep?"
+
+Avoid repeating "Got it" / "Thanks for sharing" / "Nice —" /
+"That gives me a clearer picture" / "I've added…". Never claim profile saves in
+the reply text. Never re-confirm a topic the candidate already chose.
 
 You receive:
-- candidate_background, coach_context, known_vault_summary, resume_highlights
+- candidate_background, coach_context, known_vault_summary, resume_highlights,
+  suggested_next_topics
 - available_skills, available_projects, suggested_roles, suggested_technical_areas,
   suggested_prep_topics
 - project_options, project_aspect_options
@@ -110,10 +137,9 @@ Rules:
 1. ONE follow-up at a time. Prefer next_goal_followup. Never repeat asked_questions.
 2. Do not re-collect resume facts unless confirming ambiguity.
 3. Offer suggested_roles / suggested_prep_topics for THEIR field; allow any direction.
-4. Mention at most 1–2 resume items. Never invent facts or claim verification.
+4. Mention at most 1–2 resume items. Never invent facts or claim verification/saves.
 5. If no projects: skip project deep-dive pressure; offer skills/goals/behavioral instead.
-6. technical interest for non-CS → interpret as domain/analytical prep, not forced DSA,
-   unless they ask for programming.
+6. technical interest for non-CS → domain/analytical prep, not forced DSA, unless asked.
 7. When follow-ups covered (next_goal_followup null), confirm prefs, phase="ready", summary.
 8. show_goal_menu=true only when interests empty.
 9. Warm, concise reply. Support changing focus / "I'm not sure yet" anytime.
@@ -124,9 +150,11 @@ already finished onboarding. They are revisiting to edit or enrich their vault o
 
 Rules:
 - Do NOT restart the intake questionnaire.
-- Acknowledge updates briefly. Ask at most one clarifying question when needed.
+- Respond like a mentor: brief natural acknowledgment + at most one clarifying question.
+- Never say "I've added…" / "saved to your profile" in the reply; use extracted_items
+  silently when they state new facts.
 - Interpret short yes/no/skip answers from conversation context.
-- Record new vault facts in extracted_items; goal changes in preparation_update.
+- Goal changes go in preparation_update.
 - Always set phase="ready" and onboarding_complete=true.
 """
 
@@ -359,13 +387,105 @@ def is_ack_only(message: str) -> bool:
     return t in acks
 
 
+_PERSISTENCE_CLAIM_RE = re.compile(
+    r"(?i)(?:i(?:'ve| have)\s+(?:added|saved|updated|noted|recorded|stored)\b"
+    r"[^.?!\n]{0,160}(?:profile|vault|entry|project|skills?|details?)[^.?!\n]{0,80}[.!]?\s*)"
+)
+
+
+def sanitize_coach_reply(reply: str) -> str:
+    """Strip vault-bookkeeping phrases the model sometimes invents."""
+    text = (reply or "").strip()
+    if not text:
+        return text
+    cleaned = _PERSISTENCE_CLAIM_RE.sub("", text)
+    # Drop leading stock acks / filler bridges when more substance follows.
+    cleaned = re.sub(
+        r"(?i)^(?:(?:got it|thanks for(?: the)?(?: sharing|details)?|"
+        r"nice|that gives me a clear(?:er)? picture(?: of [^.?!,—\-]*)?)\b"
+        r"[.!,—\-\s]*)+",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,—-")
+    return cleaned or text
+
+
+def is_affirmative(message: str) -> bool:
+    t = _norm_msg(message)
+    return t in {
+        "yes",
+        "y",
+        "yep",
+        "yeah",
+        "sure",
+        "ok",
+        "okay",
+        "k",
+        "alright",
+        "all right",
+        "go ahead",
+        "continue",
+        "next",
+        "lets start",
+        "let's start",
+        "let us start",
+        "lets us start",
+        "start",
+        "ready",
+    }
+
+
+def is_negative_or_skip(message: str) -> bool:
+    t = _norm_msg(message)
+    return t in {
+        "no",
+        "n",
+        "nope",
+        "nah",
+        "skip",
+        "pass",
+        "not sure",
+        "idk",
+        "i don't know",
+        "i dont know",
+        "none",
+        "nothing",
+        "later",
+    }
+
+
+def wants_topic_switch(message: str) -> bool:
+    """True when the user asks to leave the current focus for something else."""
+    low = (message or "").strip().lower()
+    if not low:
+        return False
+    cues = (
+        "another topic",
+        "different topic",
+        "different project",
+        "another project",
+        "different skill",
+        "another skill",
+        "switch to",
+        "change topic",
+        "talk about something else",
+        "something else",
+        "move on",
+        "next topic",
+        "instead",
+    )
+    return any(c in low for c in cues)
+
+
 def ensure_nonempty_reply(
     reply: str,
     *,
     vault_summary: list[dict] | None = None,
     duplicates_resolved: str | None = None,
+    coach_context: dict | None = None,
 ) -> str:
-    text = (reply or "").strip()
+    text = sanitize_coach_reply(reply or "")
     if text:
         return text
     if duplicates_resolved == "keep_both":
@@ -377,6 +497,9 @@ def ensure_nonempty_reply(
             "Merged those into one entry. What was the goal of that item, "
             "and which tools did you use?"
         )
+    focused = continue_topic_reply(coach_context, vault_summary)
+    if focused:
+        return focused
     projects = [
         str(i.get("title") or "")
         for i in (vault_summary or [])
@@ -400,8 +523,13 @@ def ensure_nonempty_reply(
     )
 
 
-def ack_followup_question(vault_summary: list[dict] | None = None) -> str:
-    return ensure_nonempty_reply("", vault_summary=vault_summary)
+def ack_followup_question(
+    vault_summary: list[dict] | None = None,
+    coach_context: dict | None = None,
+) -> str:
+    return ensure_nonempty_reply(
+        "", vault_summary=vault_summary, coach_context=coach_context
+    )
 
 
 _PRACTISE_RE = re.compile(
@@ -473,12 +601,591 @@ def practise_followup_reply(subject: str) -> str:
     )
 
 
+# Cross-domain resume abbreviations → related tokens for vault matching.
+# Not domain-specific routing — expands both user text and vault text equally.
+_TOPIC_SYNONYM_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"dbms", "database", "databases", "sql", "rdbms"}),
+    frozenset({"ml", "machine", "learning", "machinelearning"}),
+    frozenset({"ai", "artificial", "intelligence"}),
+    frozenset({"nlp", "natural", "language", "processing"}),
+    frozenset({"cv", "computer", "vision"}),
+    frozenset({"ui", "ux", "frontend", "front", "end"}),
+    frozenset({"backend", "server", "api"}),
+    frozenset({"dsa", "algorithms", "datastructures", "structures"}),
+    frozenset({"oop", "object", "oriented"}),
+    frozenset({"hr", "human", "resources", "behavioral"}),
+    frozenset({"finance", "accounting", "commerce", "excel"}),
+    frozenset({"internship", "intern", "placement"}),
+)
+
+_TOPIC_FOCUS_CUES = (
+    "project",
+    "skill",
+    "internship",
+    "education",
+    "degree",
+    "course",
+    "subject",
+    "want",
+    "explore",
+    "discuss",
+    "talk about",
+    "let's",
+    "lets",
+    "focus",
+    "about my",
+    "dive into",
+    "go with",
+    "prepare",
+    "prep",
+    "my ",
+)
+
+_FOCUSABLE_CATEGORIES = frozenset(
+    {"project", "skill", "internship", "education", "achievement"}
+)
+
+_STOP_TOKENS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "want",
+        "like",
+        "into",
+        "about",
+        "please",
+        "would",
+        "could",
+        "have",
+        "been",
+        "your",
+        "mine",
+        "just",
+        "some",
+        "more",
+        "next",
+        "talk",
+        "discuss",
+        "explore",
+        "focus",
+        "prep",
+        "prepare",
+        "preparation",
+    }
+)
+
+
+def _tokens(text: str) -> set[str]:
+    return {
+        t
+        for t in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(t) >= 2 and t not in _STOP_TOKENS
+    }
+
+
+def _expand_tokens(tokens: set[str]) -> set[str]:
+    out = set(tokens)
+    for group in _TOPIC_SYNONYM_GROUPS:
+        if tokens & group:
+            out |= set(group)
+    return out
+
+
+def _vault_item_blob(item: dict) -> str:
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    parts = [str(item.get("title") or "")]
+    for v in details.values():
+        if v is not None and str(v).strip():
+            parts.append(str(v))
+    return " ".join(parts)
+
+
+def _topic_match_score(message_low: str, item: dict) -> int:
+    title = str(item.get("title") or "").strip()
+    title_low = title.lower()
+    if not title_low:
+        return 0
+    if title_low in message_low or message_low.strip() == title_low:
+        return 100
+    msg_toks = _expand_tokens(_tokens(message_low))
+    item_toks = _expand_tokens(_tokens(_vault_item_blob(item)))
+    if not msg_toks or not item_toks:
+        return 0
+    overlap = msg_toks & item_toks
+    score = 0
+    for tok in overlap:
+        score += 18 if len(tok) >= 4 else 10
+    # Prefer matching the category the user named.
+    cat = (item.get("category") or "").lower()
+    if cat and cat in message_low:
+        score += 8
+    # Title-token hits are stronger than detail-only hits.
+    title_toks = _expand_tokens(_tokens(title_low))
+    score += 6 * len(msg_toks & title_toks)
+    return score
+
+
+def _compact_details(details: dict | None) -> dict[str, str]:
+    if not isinstance(details, dict):
+        return {}
+    return {
+        str(k)[:40]: str(v)[:160]
+        for k, v in list(details.items())[:6]
+        if v is not None and str(v).strip()
+    }
+
+
+def find_vault_item_by_title(
+    title: str | None, vault_summary: list[dict] | None = None
+) -> dict | None:
+    want = (title or "").strip().lower()
+    if not want:
+        return None
+    for item in vault_summary or []:
+        if not isinstance(item, dict):
+            continue
+        t = str(item.get("title") or "").strip()
+        if t.lower() == want:
+            return item
+    for item in vault_summary or []:
+        if not isinstance(item, dict):
+            continue
+        t = str(item.get("title") or "").strip().lower()
+        if t and (want in t or t in want):
+            return item
+    return None
+
+
+def classify_topic_focus(
+    message: str,
+    vault_summary: list[dict] | None = None,
+    *,
+    coach_context: dict | None = None,
+) -> dict | None:
+    """Match any vault project/skill/education item the user just selected — no LLM."""
+    text = (message or "").strip()
+    if not text or len(text) > 200:
+        return None
+    # Short acks are continuations / confirmations — never new topic picks.
+    if is_ack_only(text) or is_negative_or_skip(text):
+        return None
+    low = text.lower()
+    if any(
+        k in low
+        for k in ("practise", "practice", "interview me", "mock interview", "quiz me")
+    ):
+        return None
+    # Require an explicit selection cue unless the message is basically a vault title.
+    titles = [
+        str(i.get("title") or "").strip().lower()
+        for i in (vault_summary or [])
+        if isinstance(i, dict) and i.get("title")
+    ]
+    looks_like_title = any(
+        t and (t == low or t in low or low in t) for t in titles if len(t) >= 3
+    )
+    if not looks_like_title and not any(cue in low for cue in _TOPIC_FOCUS_CUES):
+        return None
+    if not wants_topic_switch(text):
+        ctx = coach_context or {}
+        locked = bool(ctx.get("focus_locked")) and ctx.get("current_topic")
+        # If already locked on a topic and the message does not name a different
+        # vault item clearly, keep going via continue path (not a re-select).
+        if locked and not looks_like_title:
+            # Still allow selecting a different item when match score is strong.
+            pass
+
+    candidates = [
+        i
+        for i in (vault_summary or [])
+        if isinstance(i, dict)
+        and (i.get("category") or "").lower() in _FOCUSABLE_CATEGORIES
+        and (i.get("title") or "").strip()
+    ]
+    if not candidates:
+        return None
+    best: dict | None = None
+    best_score = 0
+    for item in candidates:
+        score = _topic_match_score(low, item)
+        if score > best_score:
+            best_score = score
+            best = item
+    if not best or best_score < 12:
+        return None
+    # Don't "re-select" the same locked topic as a brand-new focus event when the
+    # user is clearly answering (long message without selection cues) — callers
+    # still may use this for explicit re-mentions.
+    cat = (best.get("category") or "project").lower()
+    return {
+        "title": str(best.get("title") or "").strip()[:80],
+        "category": cat,
+        "kind": cat,
+        "details": _compact_details(
+            best.get("details") if isinstance(best.get("details"), dict) else {}
+        ),
+        "score": best_score,
+    }
+
+
+def classify_project_focus(
+    message: str, vault_summary: list[dict] | None = None
+) -> dict | None:
+    """Backward-compatible alias — prefers projects when several categories match."""
+    focused = classify_topic_focus(message, vault_summary)
+    return focused
+
+
+def resolve_topic_confirmation(
+    message: str,
+    vault_summary: list[dict] | None = None,
+    coach_context: dict | None = None,
+    history: list[dict] | None = None,
+) -> dict | None:
+    """Map yes/ok to a pending offered topic — not a random vault entry.
+
+    Returns None when the candidate is already locked on that topic so the
+    continuation path can ask a real next question instead of re-confirming.
+    """
+    if not is_affirmative(message):
+        return None
+    ctx = coach_context or {}
+    if (ctx.get("last_question_intent") or "") != "confirm_topic":
+        return None
+    pending = (ctx.get("pending_followup") or "").strip()
+    if not pending:
+        # Fall back to a title quoted in the last assistant message.
+        last = (ctx.get("last_assistant_question") or "").strip()
+        if not last and history:
+            for msg in reversed(history):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    last = str(msg["content"])
+                    break
+        m = re.search(r"[“\"]([^”\"]+)[”\"]", last or "")
+        if m:
+            pending = m.group(1).strip()
+    if not pending:
+        return None
+    current = (ctx.get("current_topic") or "").strip()
+    if (
+        ctx.get("focus_locked")
+        and current
+        and current.lower() == pending.lower()
+    ):
+        # Already exploring this topic — do not restart the opening question.
+        return None
+    item = find_vault_item_by_title(pending, vault_summary)
+    if not item:
+        return {
+            "title": pending[:80],
+            "category": "subject",
+            "kind": "subject",
+            "details": {},
+            "score": 50,
+        }
+    cat = (item.get("category") or "project").lower()
+    return {
+        "title": str(item.get("title") or "").strip()[:80],
+        "category": cat,
+        "kind": cat,
+        "details": _compact_details(
+            item.get("details") if isinstance(item.get("details"), dict) else {}
+        ),
+        "score": 90,
+    }
+
+
+def topic_focus_reply(item: dict) -> str:
+    """Concrete next question from vault facts — never invent details."""
+    title = (item.get("title") or "this topic").strip()
+    kind = (item.get("kind") or item.get("category") or "topic").lower()
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    purpose = str(
+        details.get("purpose")
+        or details.get("description")
+        or details.get("overview")
+        or details.get("summary")
+        or ""
+    ).strip()
+    tech = str(
+        details.get("technologies")
+        or details.get("tools")
+        or details.get("stack")
+        or details.get("database")
+        or details.get("skills")
+        or ""
+    ).strip()
+    if kind == "skill":
+        lead = f"Let's dig into your {title} experience."
+        return (
+            f"{lead} How have you used it in a real task or project, "
+            "and what was the outcome?"
+        )
+    if kind == "education":
+        lead = f"I'd like to understand your path through {title}."
+        return (
+            f"{lead} What did you focus on most, "
+            "and which course or topic felt strongest?"
+        )
+    if kind == "internship":
+        lead = f"Your {title} internship sounds worth unpacking."
+        return (
+            f"{lead} What was your main responsibility, "
+            "and what did you deliver?"
+        )
+    lead = f"I'd love to explore your “{title}” project with you."
+    if purpose:
+        lead = f"{lead} From what I see, it was about {purpose[:120]}."
+    if tech:
+        first = tech.split(",")[0].strip() or tech
+        return (
+            f"{lead} What was the main purpose of the system, "
+            f"and how did you use {first}?"
+        )
+    return (
+        f"{lead} What was the main purpose, "
+        "and which tools or methods did you use?"
+    )
+
+
+def project_focus_reply(project: dict) -> str:
+    """Backward-compatible alias for topic_focus_reply."""
+    return topic_focus_reply(project)
+
+
+def _probe_already_asked(probe: str, asked: list[str], last_q: str) -> bool:
+    fp = _question_fingerprint(probe)
+    hay = [_question_fingerprint(a) for a in asked if a]
+    if last_q:
+        hay.append(_question_fingerprint(last_q))
+    if not fp:
+        return False
+    return any(fp[:48] in h or h[:48] in fp for h in hay if h)
+
+
+def _pick_probe(probes: list[str], *, asked: list[str], last_q: str, offset: int) -> str:
+    unused = [p for p in probes if not _probe_already_asked(p, asked, last_q)]
+    pool = unused or probes
+    return pool[offset % len(pool)]
+
+
+_PROJECT_PROBES = (
+    "What problem were you solving, and who was it for?",
+    "Walk me through one design or implementation choice you made and why.",
+    "What broke or surprised you while building it, and how did you handle that?",
+    "If an interviewer asked for the strongest result, what would you point to?",
+)
+_SKILL_PROBES = (
+    "Walk me through one concrete example where you applied it — situation and result?",
+    "What part of it still feels hardest to explain clearly in an interview?",
+    "How would you teach the core idea to someone new in two minutes?",
+)
+_EDU_PROBES = (
+    "Which concept from it would you explain confidently in an interview, and why?",
+    "What assignment or lab forced you to apply it for real?",
+    "How does it connect to the role or field you want next?",
+)
+_INTERN_PROBES = (
+    "What was your main responsibility, and what did you deliver?",
+    "What feedback or result are you most proud of?",
+    "Which skill from that experience transfers most to your next role?",
+)
+_GENERIC_PROBES = (
+    "What else should an interviewer really understand about it?",
+    "Which part would you highlight first in a short interview story?",
+    "What would you do differently if you revisited it now?",
+)
+
+
+def continue_topic_reply(
+    coach_context: dict | None = None,
+    vault_summary: list[dict] | None = None,
+) -> str | None:
+    """Follow up on the locked/current topic instead of jumping to vault[0]."""
+    ctx = coach_context or {}
+    topic = (ctx.get("current_topic") or "").strip()
+    if not topic:
+        return None
+    item = find_vault_item_by_title(topic, vault_summary)
+    kind = (ctx.get("focus_kind") or (item or {}).get("category") or "topic").lower()
+    details = _compact_details((item or {}).get("details") if item else {})
+    answers_n = len(ctx.get("answers_received") or [])
+    asked = [str(a) for a in (ctx.get("asked_questions") or []) if a]
+    last_q = str(ctx.get("last_assistant_question") or "")
+    tech = str(
+        details.get("technologies")
+        or details.get("tools")
+        or details.get("stack")
+        or ""
+    ).strip()
+    first_tech = (tech.split(",")[0].strip() if tech else "") or ""
+
+    # Enough depth → natural bridge (no stock "clearer picture" filler).
+    if answers_n >= 3:
+        nxt_list = suggested_next_topics(vault_summary, topic)
+        if nxt_list:
+            nxt = nxt_list[0]
+            if nxt["kind"] == "skill":
+                return (
+                    f"You've covered a lot on “{topic}”. "
+                    f"Next, I'd like to understand your {nxt['title']} — "
+                    "what have you used it for?"
+                )
+            return (
+                f"You've covered a lot on “{topic}”. "
+                f"Shall we look at your “{nxt['title']}” {nxt['kind']} next — "
+                "what was the main goal?"
+            )
+
+    if kind == "project":
+        probes = list(_PROJECT_PROBES)
+        if first_tech:
+            probes.insert(
+                1,
+                f"How did you decide to use {first_tech}, "
+                "and what challenge did that choice create?",
+            )
+        probe = _pick_probe(probes, asked=asked, last_q=last_q, offset=answers_n)
+        return f"Staying with “{topic}” — {probe}"
+    if kind == "skill":
+        probe = _pick_probe(
+            list(_SKILL_PROBES), asked=asked, last_q=last_q, offset=answers_n
+        )
+        return f"On {topic}: {probe}"
+    if kind == "education":
+        probe = _pick_probe(
+            list(_EDU_PROBES), asked=asked, last_q=last_q, offset=answers_n
+        )
+        return f"About {topic} — {probe}"
+    if kind == "internship":
+        probe = _pick_probe(
+            list(_INTERN_PROBES), asked=asked, last_q=last_q, offset=answers_n
+        )
+        return f"About your {topic} experience — {probe}"
+    probe = _pick_probe(
+        list(_GENERIC_PROBES), asked=asked, last_q=last_q, offset=answers_n
+    )
+    return f"Continuing with “{topic}” — {probe}"
+
+
+def suggested_next_topics(
+    vault_summary: list[dict] | None,
+    current_topic: str | None,
+    *,
+    limit: int = 4,
+) -> list[dict]:
+    """Other vault items the coach can bridge to after the current focus."""
+    current = (current_topic or "").strip().lower()
+    out: list[dict] = []
+    for item in vault_summary or []:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        cat = (item.get("category") or "").lower()
+        if not title or cat not in _FOCUSABLE_CATEGORIES:
+            continue
+        if title.lower() == current:
+            continue
+        out.append({"title": title[:80], "kind": cat})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def infer_question_intent(reply: str) -> str:
+    """Classify the coach's last ask so short replies resolve correctly.
+
+    Explore/detail beats confirm when the reply already asks What/How/Which —
+    bare phrases like "focus on" must not force another confirmation loop.
+    """
+    text = reply or ""
+    low = text.lower()
+    has_q = "?" in text
+    open_ask = any(
+        p in low
+        for p in (
+            "what was",
+            "what did",
+            "what have",
+            "how did",
+            "how have",
+            "how would",
+            "which ",
+            "tell me",
+            "walk me",
+        )
+    )
+    if has_q and open_ask:
+        return "explore"
+    invite = any(
+        p in low
+        for p in (
+            "would you like",
+            "want to discuss",
+            "shall we look",
+            "shall we dig",
+            "shall we explore",
+            "should we explore",
+            "want me to focus",
+            "ready to talk about",
+        )
+    )
+    if invite and not open_ask:
+        return "confirm_topic"
+    if has_q:
+        return "detail"
+    return "other"
+
+
+def extract_pending_topic(reply: str) -> str | None:
+    m = re.search(r"[“\"]([^”\"]+)[”\"]", reply or "")
+    if m:
+        return m.group(1).strip()[:120]
+    m = re.search(
+        r"(?i)(?:your|the)\s+[“\"]?([A-Za-z0-9][^?”\"]{1,80}?)[”\"]?\s+"
+        r"(?:project|skill|internship|course|topic)",
+        reply or "",
+    )
+    if m:
+        return m.group(1).strip()[:120]
+    return None
+
+
 def _approx_chars(messages: list[dict]) -> int:
     return sum(len(str(m.get("content") or "")) for m in messages)
 
 
+def compact_vault_for_llm(
+    vault_summary: list[dict] | None, *, limit: int = 20
+) -> list[dict]:
+    """Send titles + short detail snippets — not full resume blobs every turn."""
+    out: list[dict] = []
+    for item in (vault_summary or [])[:limit]:
+        if not isinstance(item, dict):
+            continue
+        details = item.get("details") if isinstance(item.get("details"), dict) else {}
+        slim: dict[str, str] = {}
+        for key, value in list(details.items())[:4]:
+            text = " ".join(str(value or "").split())
+            if text:
+                slim[str(key)[:32]] = text[:120]
+        out.append(
+            {
+                "category": str(item.get("category") or "")[:40],
+                "title": str(item.get("title") or "")[:80],
+                "details": slim,
+            }
+        )
+    return out
+
+
 def trim_history_for_llm(
-    history: list[dict] | None, *, max_chars: int = 6000
+    history: list[dict] | None, *, max_chars: int = 3500
 ) -> list[dict]:
     """Keep recent turns under a char budget; summarise older ones without LLM."""
     msgs = [
@@ -487,7 +1194,7 @@ def trim_history_for_llm(
         if m.get("content")
     ]
     if _approx_chars(msgs) <= max_chars:
-        return msgs[-18:]
+        return msgs[-12:]
     kept: list[dict] = []
     used = 0
     for msg in reversed(msgs):
@@ -561,36 +1268,52 @@ async def run_onboarding_turn(
     )
 
     payload = {
-        "known_vault_summary": vault_summary,
+        "known_vault_summary": compact_vault_for_llm(vault_summary),
         "candidate_background": bg,
         "coach_context": {
-            "confirmed_facts": ctx.get("confirmed_facts") or [],
-            "asked_questions": (ctx.get("asked_questions") or [])[-20:],
+            "confirmed_facts": (ctx.get("confirmed_facts") or [])[-12:],
+            "asked_questions": (ctx.get("asked_questions") or [])[-12:],
             "skipped_categories": ctx.get("skipped_categories") or [],
             "not_applicable_categories": ctx.get("not_applicable_categories") or [],
             "current_topic": ctx.get("current_topic"),
+            "focus_kind": ctx.get("focus_kind"),
+            "focus_locked": bool(ctx.get("focus_locked")),
+            "last_assistant_question": (ctx.get("last_assistant_question") or "")[:320],
+            "last_question_intent": ctx.get("last_question_intent"),
+            "pending_followup": ctx.get("pending_followup"),
+            "answers_received": (ctx.get("answers_received") or [])[-8:],
             "proceed_to_goals": bool(ctx.get("proceed_to_goals")),
         },
-        "possible_duplicates": possible_duplicates or [],
+        "suggested_next_topics": suggested_next_topics(
+            vault_summary, ctx.get("current_topic")
+        ),
+        "possible_duplicates": (possible_duplicates or [])[:6],
         "profile_gaps": profile_gaps
         or compute_profile_gaps(vault_summary, coach_context=ctx),
         "current_preparation_preferences": prefs,
         "next_goal_followup": next_goal_followup(prefs),
-        "available_skills": skills,
-        "available_projects": projects,
-        "suggested_roles": options.get("suggested_roles", []),
-        "suggested_technical_areas": options.get("suggested_technical_areas", []),
-        "suggested_prep_topics": options.get("suggested_prep_topics")
-        or bg.get("suggested_prep_topics", []),
-        "project_options": options.get("project_options", []),
-        "project_aspect_options": options.get("project_aspect_options", []),
-        "resume_highlights": options.get("resume_highlights", {}),
+        "available_skills": (skills or [])[:16],
+        "available_projects": (projects or [])[:12],
+        "suggested_roles": (options.get("suggested_roles") or [])[:8],
+        "suggested_technical_areas": (options.get("suggested_technical_areas") or [])[:8],
+        "suggested_prep_topics": (
+            options.get("suggested_prep_topics") or bg.get("suggested_prep_topics") or []
+        )[:8],
+        "project_options": (options.get("project_options") or [])[:8],
+        "project_aspect_options": (options.get("project_aspect_options") or [])[:8],
+        "resume_highlights": options.get("resume_highlights") or {},
         "goal_interest_labels": GOAL_INTEREST_LABELS,
         "conversation_mode": mode,
         "conversation_so_far": trim_history_for_llm(prior),
         "new_user_message": message,
         "already_finished": already_finished,
         "phase": current_phase,
+        "reply_style": (
+            "Mentor voice: react + reflect one detail from new_user_message, "
+            "then exactly one new question. Never claim vault saves. Never re-ask "
+            "or re-confirm something already in answers_received / asked_questions / "
+            "current_topic. Short yes/ok means continue — not a new questionnaire."
+        ),
     }
 
     if already_finished:
@@ -601,20 +1324,18 @@ async def run_onboarding_turn(
         system = SYSTEM_PROMPT
 
     # One structured call: reply + extraction together. Fail over fast on 429
-    # (max_attempts=1) so the UI's 30s budget is not burned on retries.
+    # (max_attempts=1). Shared HTTP client avoids per-turn connection setup.
     llm_started = time.monotonic()
-    async with httpx.AsyncClient(timeout=22.0) as client:
-        turn = await structured_completion(
-            client,
-            system=system,
-            user_payload=payload,
-            schema=OnboardingTurn,
-            meta=meta,
-            max_attempts=1,
-            max_tokens=700,
-            timeout_s=20.0,
-            repair_attempts=1,
-        )
+    turn = await structured_completion(
+        system=system,
+        user_payload=payload,
+        schema=OnboardingTurn,
+        meta=meta,
+        max_attempts=1,
+        max_tokens=550,
+        timeout_s=18.0,
+        repair_attempts=1,
+    )
     log.info(
         "onboarding_llm_timing",
         stage="structured_turn",
@@ -653,7 +1374,9 @@ async def run_onboarding_turn(
         turn.onboarding_complete = False
         turn.show_goal_menu = False
 
-    turn.reply = ensure_nonempty_reply(turn.reply, vault_summary=vault_summary)
+    turn.reply = ensure_nonempty_reply(
+        turn.reply, vault_summary=vault_summary, coach_context=ctx
+    )
     return turn
 
 

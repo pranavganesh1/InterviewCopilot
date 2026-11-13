@@ -11,13 +11,21 @@ from app.agents.onboarding import (
     build_onboarding_graph,
     classify_duplicate_answer,
     classify_practise_intent,
+    classify_topic_focus,
     compute_profile_gaps,
+    continue_topic_reply,
     derive_phase,
     ensure_nonempty_reply,
+    extract_pending_topic,
+    infer_question_intent,
     is_ack_only,
+    is_negative_or_skip,
     practise_followup_reply,
     recent_duplicate_prompt,
+    resolve_topic_confirmation,
+    topic_focus_reply,
     vault_is_ready,
+    wants_topic_switch,
 )
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -292,6 +300,7 @@ async def chat(
             if recent_duplicate_prompt(history)
             else None
         )
+        focus_patch: dict = {}
         if dup_decision:
             path = "duplicate_resolve"
             if duplicates:
@@ -309,6 +318,7 @@ async def chat(
                     f"{confirm} {follow}",
                     vault_summary=summary,
                     duplicates_resolved=dup_decision,
+                    coach_context=coach_ctx,
                 ),
                 phase="goals" if vault_is_ready(summary, coach_ctx) else "profile",
                 show_goal_menu=False,
@@ -319,17 +329,154 @@ async def chat(
                 cause=dup_decision,
             )
 
-        # 2) Acknowledgement-only → one concrete next question (no LLM).
+        # 2) Confirm a previously offered topic ("yes" after "Would you like…").
+        elif (confirmed := resolve_topic_confirmation(
+            message, summary, coach_ctx, history
+        )):
+            path = "topic_confirm"
+            title = confirmed["title"]
+            turn = OnboardingTurn(
+                reply=topic_focus_reply(confirmed),
+                phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                show_goal_menu=False,
+            ).model_dump()
+            turn["_focus_topic"] = title
+            turn["_focus_kind"] = confirmed.get("kind") or confirmed.get("category")
+            turn["_focus_locked"] = True
+            focus_patch = {"pending_followup": ""}
+            log.info(
+                "onboarding_chat_stage",
+                stage="topic_confirm",
+                cause="affirmative",
+                topic=title[:80],
+            )
+
+        # 3) Explicit topic selection / switch (any vault category) — no LLM.
+        elif (focused := classify_topic_focus(
+            message, summary, coach_context=coach_ctx
+        )) and (
+            wants_topic_switch(message)
+            or not coach_ctx.get("focus_locked")
+            or (focused.get("title") or "").lower()
+            != (coach_ctx.get("current_topic") or "").lower()
+        ):
+            path = "topic_focus"
+            title = focused["title"]
+            turn = OnboardingTurn(
+                reply=topic_focus_reply(focused),
+                phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                show_goal_menu=False,
+            ).model_dump()
+            turn["_focus_topic"] = title
+            turn["_focus_kind"] = focused.get("kind") or focused.get("category")
+            turn["_focus_locked"] = True
+            focus_patch = {"pending_followup": ""}
+            log.info(
+                "onboarding_chat_stage",
+                stage="topic_focus",
+                cause="deterministic",
+                topic=title[:80],
+                kind=turn.get("_focus_kind"),
+            )
+
+        # 4) Skip / not sure / no experience — release lock or soft-advance; never grill.
+        elif is_negative_or_skip(message):
+            prev = coach_ctx.get("current_topic") or ""
+            intent = (coach_ctx.get("last_question_intent") or "")
+            if coach_ctx.get("focus_locked") and prev:
+                path = "topic_skip"
+                turn = OnboardingTurn(
+                    reply=(
+                        f"No problem — we can leave “{prev}” for now. "
+                        "Which project, skill, or goal should we cover next?"
+                    ),
+                    phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                    show_goal_menu=False,
+                ).model_dump()
+                turn["_focus_topic"] = None
+                turn["_focus_kind"] = None
+                turn["_focus_locked"] = False
+                turn["_clear_focus"] = True
+                focus_patch = {"pending_followup": ""}
+                log.info(
+                    "onboarding_chat_stage",
+                    stage="topic_skip",
+                    cause="skip",
+                    topic=str(prev)[:80],
+                )
+            elif intent == "confirm_topic":
+                path = "topic_decline"
+                turn = OnboardingTurn(
+                    reply=(
+                        "Understood — we can leave that for later. "
+                        "What would you like to cover instead: a project, a skill, "
+                        "or your career goal?"
+                    ),
+                    phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                    show_goal_menu=False,
+                ).model_dump()
+                focus_patch = {"pending_followup": ""}
+                log.info(
+                    "onboarding_chat_stage",
+                    stage="topic_decline",
+                    cause="negative",
+                )
+            else:
+                path = "soft_skip"
+                cont = continue_topic_reply(coach_ctx, summary)
+                if cont and coach_ctx.get("current_topic"):
+                    soft_reply = (
+                        "Understood — we can skip that detail. " + cont
+                    )
+                else:
+                    soft_reply = (
+                        "That's completely fine — we can keep it light. "
+                        "What feels most useful next: a project story, a skill, "
+                        "or a role goal?"
+                    )
+                turn = OnboardingTurn(
+                    reply=soft_reply,
+                    phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                    show_goal_menu=phase == "goals" and not prefs.get("interests"),
+                ).model_dump()
+                log.info(
+                    "onboarding_chat_stage",
+                    stage="soft_skip",
+                    cause="limited_knowledge",
+                )
+
+        # 5) Acknowledgement-only → continue current topic (never random vault[0]
+        #    and never re-ask the same confirmation).
         elif is_ack_only(message):
             path = "ack_followup"
+            reply = (
+                continue_topic_reply(coach_ctx, summary)
+                or ack_followup_question(summary, coach_ctx)
+            )
             turn = OnboardingTurn(
-                reply=ack_followup_question(summary),
+                reply=reply,
                 phase=phase if phase in ("profile", "goals", "ready") else "profile",
                 show_goal_menu=phase == "goals" and not prefs.get("interests"),
             ).model_dump()
-            log.info("onboarding_chat_stage", stage="ack_followup", cause="ack_only")
+            # Affirmative after a topic offer: lock the pending topic if not yet locked.
+            pending = (coach_ctx.get("pending_followup") or "").strip()
+            if (
+                (coach_ctx.get("last_question_intent") or "") == "confirm_topic"
+                and pending
+                and not coach_ctx.get("focus_locked")
+            ):
+                turn["_focus_topic"] = pending
+                turn["_focus_kind"] = "subject"
+                turn["_focus_locked"] = True
+                focus_patch = {"pending_followup": ""}
+            log.info(
+                "onboarding_chat_stage",
+                stage="ack_followup",
+                cause="ack_only",
+                topic=(coach_ctx.get("current_topic") or pending or "")[:80] or None,
+            )
 
-        # 3) Practise / interview intent → no LLM; offer start popup.
+        # 6) Practise / interview intent → no LLM; offer start popup.
         elif (practise := classify_practise_intent(message, summary)):
             path = "practise_intent"
             subject = practise["subject"]
@@ -338,6 +485,9 @@ async def chat(
                 phase=phase if phase in ("profile", "goals", "ready") else "profile",
                 show_goal_menu=False,
             ).model_dump()
+            turn["_focus_topic"] = subject
+            turn["_focus_kind"] = "subject"
+            turn["_focus_locked"] = True
             if not offer_already:
                 offer = {
                     "subject": subject,
@@ -350,7 +500,7 @@ async def chat(
                 cause="deterministic",
             )
 
-        # 4) Normal LLM turn (single structured call).
+        # 7) Normal LLM turn (single structured call).
         else:
             resume_options = build_resume_goal_options(summary)
             graph = build_onboarding_graph(turn_runner=run_onboarding_turn)
@@ -421,6 +571,7 @@ async def chat(
         turn["reply"] = ensure_nonempty_reply(
             turn.get("reply") or "",
             vault_summary=summary,
+            coach_context=coach_ctx,
         )
         await conversation_store.append_message(
             mongo_db, uid, "assistant", turn["reply"]
@@ -443,19 +594,49 @@ async def chat(
         answers = list(coach_ctx.get("answers_received") or [])
         if message.strip():
             answers.append(message.strip()[:180])
-        await conversation_store.merge_coach_context(
-            mongo_db,
-            uid,
-            {
-                "background": bg,
-                "asked_questions": asked[-40:],
-                "confirmed_facts": confirmed[-40:],
-                "answers_received": answers[-40:],
-                "current_topic": turn.get("phase"),
-                "proceed_to_goals": bool(coach_ctx.get("proceed_to_goals"))
-                or turn.get("phase") in ("goals", "ready"),
-            },
-        )
+
+        clear_focus = bool(turn.pop("_clear_focus", False))
+        new_focus = turn.pop("_focus_topic", None)
+        new_kind = turn.pop("_focus_kind", None)
+        locked_flag = turn.pop("_focus_locked", None)
+        if clear_focus:
+            topic_out: str | None = None
+            kind_out: str | None = None
+            locked_out = False
+        elif new_focus:
+            topic_out = str(new_focus).strip()[:120]
+            kind_out = (new_kind or coach_ctx.get("focus_kind") or "subject")
+            locked_out = True if locked_flag is None else bool(locked_flag)
+        elif coach_ctx.get("focus_locked") and coach_ctx.get("current_topic"):
+            # Preserve explicit selection across turns (including LLM path).
+            topic_out = coach_ctx.get("current_topic")
+            kind_out = coach_ctx.get("focus_kind")
+            locked_out = True
+        else:
+            topic_out = coach_ctx.get("current_topic")
+            kind_out = coach_ctx.get("focus_kind")
+            locked_out = bool(coach_ctx.get("focus_locked"))
+
+        reply_text = turn["reply"]
+        intent = infer_question_intent(reply_text)
+        pending = extract_pending_topic(reply_text) if intent == "confirm_topic" else None
+        ctx_update = {
+            "background": bg,
+            "asked_questions": asked[-40:],
+            "confirmed_facts": confirmed[-40:],
+            "answers_received": answers[-40:],
+            "current_topic": topic_out if topic_out is not None else "",
+            "focus_kind": kind_out if kind_out is not None else "",
+            "focus_locked": locked_out,
+            "last_assistant_question": reply_text[:320],
+            "last_question_intent": intent,
+            "pending_followup": pending or focus_patch.get("pending_followup") or "",
+            "proceed_to_goals": bool(coach_ctx.get("proceed_to_goals"))
+            or turn.get("phase") in ("goals", "ready"),
+        }
+        if focus_patch:
+            ctx_update.update(focus_patch)
+        await conversation_store.merge_coach_context(mongo_db, uid, ctx_update)
 
         refreshed = await vault_summary(db, user.id)
         coach_ctx = await conversation_store.get_coach_context(mongo_db, uid)

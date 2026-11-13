@@ -42,8 +42,42 @@ function sessionSummary(row: OpenSession): string {
 }
 
 function friendly(err: unknown): string {
-  if (err instanceof ApiError && err.status === 503) {
-    return "The interview model is busy right now. Wait a moment and try again.";
+  if (err instanceof ApiError) {
+    const cause = (err.causeCode || "").toLowerCase();
+    const wait =
+      typeof err.retryAfterSeconds === "number" && err.retryAfterSeconds > 0
+        ? Math.min(90, Math.ceil(err.retryAfterSeconds))
+        : undefined;
+    if (cause === "rate_limited") {
+      return wait
+        ? `Temporary request limit reached. Retry in about ${wait}s.`
+        : "Temporary request limit reached. Wait a moment and try again.";
+    }
+    if (cause === "overloaded") {
+      return "Temporary service overload. Wait a moment and try again.";
+    }
+    if (cause === "schema_rejected") {
+      return "Interview preparation got an invalid AI response. Keep your settings and try again.";
+    }
+    if (cause === "timeout") {
+      return "Starting the interview took too long. Keep your settings and try again.";
+    }
+    if (cause === "auth_failed") {
+      return "AI provider authentication failed. Check server configuration.";
+    }
+    if (cause === "network") {
+      return "Could not reach the AI provider. Check your connection and retry.";
+    }
+    if (err.status === 503) {
+      if (/rate|quota|busy|overload/i.test(err.message || "")) {
+        return "The interview model is busy right now. Wait a moment and try again.";
+      }
+      return (
+        err.message ||
+        "Could not start the interview. Keep your settings and try again."
+      );
+    }
+    if (err.message) return err.message;
   }
   if (err instanceof Error && err.message) return err.message;
   return "Something went wrong. Please try again.";

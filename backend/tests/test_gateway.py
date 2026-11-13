@@ -10,8 +10,9 @@ from app.gateway.llm import (
     chat_completion,
     classify_http_failure,
     clear_model_cooldowns,
+    gateway_error_detail,
 )
-from app.gateway.structured import gemini_safe_schema
+from app.gateway.structured import gemini_safe_schema, parse_json_content
 
 
 @pytest.fixture(autouse=True)
@@ -208,6 +209,52 @@ async def test_rate_limited_falls_back_then_succeeds():
     assert content == "ok"
     assert seen[0] == "structured-json"
     assert seen[1] == "structured-json-nim"
+
+
+@pytest.mark.asyncio
+async def test_second_rate_limit_stops_before_third_provider():
+    """One customer request must not fan out to every fallback after 429s."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body["model"])
+        return httpx.Response(
+            429,
+            headers={"Retry-After": "15"},
+            json={"error": {"code": "RESOURCE_EXHAUSTED"}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(LLMGatewayError) as ei:
+            await chat_completion(
+                client,
+                model="structured-json",
+                messages=[{"role": "user", "content": "hi"}],
+                max_attempts=1,
+            )
+    assert ei.value.cause == LLMCause.rate_limited
+    assert ei.value.retry_after_seconds == 15.0
+    assert seen == ["structured-json", "structured-json-nim"]
+    assert "structured-json-gemini" not in seen
+
+
+def test_gateway_error_detail_is_customer_safe():
+    detail = gateway_error_detail(
+        LLMGatewayError("x", cause=LLMCause.rate_limited, retry_after_seconds=12)
+    )
+    assert detail["cause"] == "rate_limited"
+    assert detail["retry_after_seconds"] == 12
+    assert "Temporary request limit" in detail["message"]
+    assert "litellm" not in detail["message"].lower()
+    schema = gateway_error_detail(LLMGatewayError("x", cause=LLMCause.schema_rejected))
+    assert schema["cause"] == "schema_rejected"
+    assert "invalid" in schema["message"].lower()
+
+
+def test_parse_json_content_tolerates_fences_and_prose():
+    assert parse_json_content('```json\n{"a": 1}\n```') == {"a": 1}
+    assert parse_json_content('Here you go:\n{"a": 2}\nThanks') == {"a": 2}
 
 
 @pytest.mark.asyncio

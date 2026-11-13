@@ -61,7 +61,7 @@ async def test_guards_skip_llm_for_empty_idk_short(monkeypatch):
 async def test_inconsistent_llm_triggers_repair_then_fallback(monkeypatch):
     calls: list[dict] = []
 
-    async def fake_structured(client, *, system, user_payload, schema, **kwargs):
+    async def fake_structured(client=None, *, system, user_payload, schema, **kwargs):
         assert kwargs.get("temperature") == 0
         calls.append(user_payload)
         # Always return inconsistent: excellent with no strengths.
@@ -91,7 +91,7 @@ async def test_inconsistent_llm_triggers_repair_then_fallback(monkeypatch):
 async def test_consistent_llm_output_passes(monkeypatch):
     calls = 0
 
-    async def fake_structured(client, *, system, user_payload, schema, **kwargs):
+    async def fake_structured(client=None, *, system, user_payload, schema, **kwargs):
         nonlocal calls
         calls += 1
         assert kwargs.get("temperature") == 0
