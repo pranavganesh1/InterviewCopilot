@@ -384,6 +384,18 @@ export default function DashboardPage() {
   const interviewsTaken = dash?.completed_interviews ?? 0;
   const openList = openSessions.data ?? [];
   const inProgressCount = openList.length;
+  const openSessionsErrorMessage =
+    openSessions.error instanceof ApiError
+      ? openSessions.error.message
+      : openSessions.error instanceof Error
+        ? openSessions.error.message
+        : "Could not load open interviews.";
+  const assessmentsErrorMessage =
+    assessments.error instanceof ApiError
+      ? assessments.error.message
+      : assessments.error instanceof Error
+        ? assessments.error.message
+        : "Could not load assessments.";
 
   function closeDeleteDialog() {
     const focus = pendingDelete?.returnFocus;
@@ -651,7 +663,13 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Interviews Taken"
-          value={assessments.isLoading ? "…" : String(interviewsTaken)}
+          value={
+            assessments.isLoading
+              ? "…"
+              : assessments.isError
+                ? "—"
+                : String(interviewsTaken)
+          }
           icon={
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
               <path d="M8 5v14l11-7L8 5Z" />
@@ -663,9 +681,11 @@ export default function DashboardPage() {
           value={
             assessments.isLoading
               ? "…"
-              : avgScore != null
-                ? `${avgScore}%`
-                : "—"
+              : assessments.isError
+                ? "—"
+                : avgScore != null
+                  ? `${avgScore}%`
+                  : "—"
           }
           icon={
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
@@ -676,7 +696,11 @@ export default function DashboardPage() {
         <StatCard
           label="Progress"
           value={
-            assessments.isLoading ? "…" : (progressLabel ?? "—")
+            assessments.isLoading || assessments.isError
+              ? assessments.isLoading
+                ? "…"
+                : "—"
+              : (progressLabel ?? "—")
           }
           icon={
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -906,7 +930,11 @@ export default function DashboardPage() {
                   { label: "Assessments", value: interviewsTaken },
                   {
                     label: "In Progress",
-                    value: openSessions.isLoading ? "…" : inProgressCount,
+                    value: openSessions.isLoading
+                      ? "…"
+                      : openSessions.isError
+                        ? "—"
+                        : inProgressCount,
                   },
                   {
                     label: activeTrackCount === 1 ? "Track" : "Tracks",
@@ -960,8 +988,28 @@ export default function DashboardPage() {
             )}
             {openSessions.isLoading ? (
               <p className="mt-2 text-[11px] text-ink-faint">Loading open interviews…</p>
+            ) : openSessions.isError ? (
+              <div
+                role="alert"
+                data-testid="dashboard-open-sessions-error"
+                className="mt-2 rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-800"
+              >
+                <p className="font-semibold text-red-900">Couldn’t load open interviews</p>
+                <p className="mt-0.5 text-red-800/90">{openSessionsErrorMessage}</p>
+                <button
+                  type="button"
+                  data-testid="dashboard-open-sessions-retry"
+                  onClick={() => void openSessions.refetch()}
+                  className="mt-1.5 inline-flex h-6 items-center rounded-md border border-red-200 bg-white px-2 text-[11px] font-semibold text-red-800 hover:bg-red-100"
+                >
+                  Retry
+                </button>
+              </div>
             ) : openList.length === 0 ? (
-              <p className="mt-2 text-[11px] text-ink-faint">
+              <p
+                className="mt-2 text-[11px] text-ink-faint"
+                data-testid="dashboard-open-sessions-empty"
+              >
                 No unfinished interviews right now.
               </p>
             ) : (
@@ -1053,8 +1101,28 @@ export default function DashboardPage() {
             </div>
             {assessments.isLoading ? (
               <p className="mt-3 text-sm text-ink-faint">Loading…</p>
+            ) : assessments.isError ? (
+              <div
+                role="alert"
+                data-testid="dashboard-assessments-error"
+                className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-3 text-xs text-red-800"
+              >
+                <p className="font-semibold text-red-900">Couldn’t load assessments</p>
+                <p className="mt-1 text-red-800/90">{assessmentsErrorMessage}</p>
+                <button
+                  type="button"
+                  data-testid="dashboard-assessments-retry"
+                  onClick={() => void assessments.refetch()}
+                  className="mt-2 inline-flex min-h-8 items-center rounded-md border border-red-200 bg-white px-2.5 text-xs font-semibold text-red-800 hover:bg-red-100"
+                >
+                  Retry
+                </button>
+              </div>
             ) : recent.length === 0 ? (
-              <p className="mt-3 rounded-md bg-page px-3 py-4 text-center text-xs text-ink-faint">
+              <p
+                className="mt-3 rounded-md bg-page px-3 py-4 text-center text-xs text-ink-faint"
+                data-testid="dashboard-assessments-empty"
+              >
                 No completed assessments yet.
               </p>
             ) : (

@@ -108,7 +108,7 @@ test("Finish Assessment & Exit confirms, completes, and opens report", async ({
   await expect(
     page.getByRole("button", { name: "Finish Assessment & Exit" }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Submit Answer" })).toBeVisible();
+  await expect(page.getByTestId("submit-answer")).toBeVisible();
 
   await page.getByTestId("finish-assessment-exit").click();
   await expect(page.getByTestId("finish-exit-confirm")).toBeVisible();
