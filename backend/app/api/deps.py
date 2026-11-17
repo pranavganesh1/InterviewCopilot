@@ -2,6 +2,7 @@ import uuid
 
 import jwt
 from fastapi import Depends, HTTPException, Request
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -32,3 +33,11 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
 
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+
+async def get_request_mongo(request: Request) -> AsyncIOMotorDatabase:
+    """Reuse the lifespan Mongo DB handle — never open a new Motor client per request."""
+    mongo_db = getattr(request.app.state, "mongo_db", None)
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB unavailable")
+    return mongo_db
