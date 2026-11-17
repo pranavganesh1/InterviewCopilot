@@ -4,8 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_admin
-from app.db.mongo import get_mongo_db
+from app.api.deps import get_request_mongo, require_admin
 from app.db.sqlalchemy import get_db
 from app.models.user import User
 from app.services import admin_service
@@ -17,7 +16,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 async def overview(
     _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
-    mongo: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     return await admin_service.overview(db, mongo)
 
@@ -26,7 +25,7 @@ async def overview(
 async def users(
     _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
-    mongo: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     return await admin_service.users_rollup(db, mongo)
 
@@ -36,7 +35,7 @@ async def user_detail(
     user_id: uuid.UUID,
     _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
-    mongo: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     result = await admin_service.user_detail(db, mongo, user_id)
     if result is None:
