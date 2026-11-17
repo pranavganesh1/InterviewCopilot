@@ -5,7 +5,7 @@ import pytest
 
 from app.core.config import get_settings
 from app.core.security import create_access_token
-from app.db.mongo import get_mongo_client
+from app.db.mongo import get_mongo_db
 from app.db.sqlalchemy import SessionFactory
 from app.main import create_app
 from app.models.user import User
@@ -130,7 +130,7 @@ async def test_goals_endpoint_and_complete(monkeypatch, clean_users_table):
     monkeypatch.setattr(svc, "run_onboarding_turn", fake_turn)
 
     app = create_app()
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     await app.state.mongo_db.onboarding_conversations.delete_many({"user_id": user_id})
 
     transport = httpx.ASGITransport(app=app)

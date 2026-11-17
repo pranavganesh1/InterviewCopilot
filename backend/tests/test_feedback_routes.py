@@ -45,9 +45,9 @@ async def test_report_route(clean_users_table):
 
     user_id, session_id, _ = await _setup_completed_session_with_report()
     app = create_app()
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.get(
@@ -71,9 +71,9 @@ async def test_report_404_when_missing(clean_users_table):
         await session.commit()
 
     app = create_app()
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.get(
@@ -89,9 +89,9 @@ async def test_progression_route(clean_users_table):
 
     user_id, _, track_id = await _setup_completed_session_with_report()
     app = create_app()
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.get(
