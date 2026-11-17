@@ -255,14 +255,17 @@ def _session_options_match(
     use_resume: bool,
     focus_weak: bool,
     persona_id: str | None,
+    include_vault_topics: bool = False,
 ) -> bool:
     if session.mode != mode:
         return False
     if int(getattr(session, "duration_minutes", None) or 60) != int(duration_minutes):
         return False
     opts = probe_service.session_opts_from_plan(getattr(session, "question_plan", None))
+    want_vault = bool(use_resume or include_vault_topics)
+    have_vault = probe_service.personalize_from_vault(opts)
     return (
-        bool(opts.get("use_resume")) == bool(use_resume)
+        have_vault == want_vault
         and bool(opts.get("focus_weak")) == bool(focus_weak)
         and (opts.get("persona_id") or "balanced") == (persona_id or "balanced")
     )
@@ -378,6 +381,7 @@ async def start_session(
     mode: str = "strict",
     duration_minutes: int = 60,
     use_resume: bool = False,
+    include_vault_topics: bool = False,
     focus_weak: bool = False,
     persona_id: str | None = None,
     claim_seeds: list | None = None,
@@ -463,6 +467,7 @@ async def start_session(
                 mode=mode,
                 duration_minutes=duration_minutes,
                 use_resume=use_resume,
+                include_vault_topics=include_vault_topics,
                 focus_weak=focus_weak,
                 persona_id=persona_id,
             )
@@ -527,10 +532,11 @@ async def start_session(
             brief_areas, [row["area"] for row in history if row.get("turn_index") == 1]
         ),
     }
-    # Resume-based sessions: fold real vault topics into the plan so interviews
-    # cover projects/skills/experience from the candidate's background — not a
-    # CS-default topic list.
-    if use_resume:
+    # Vault personalization: fold real vault topics into the plan when the
+    # candidate opts in (use_resume and/or include_vault_topics). Never invent
+    # domains; brief/track topics stay first and the merge is capped.
+    personalize_vault = bool(use_resume or include_vault_topics)
+    if personalize_vault:
         vault_for_plan = probe_service.vault_plan_areas(
             await list_items(db, user.id),
             limit=8,
@@ -582,13 +588,16 @@ async def start_session(
     elif weak_names:
         plan = probe_service.bias_plan_for_weaknesses(plan, weak_names)
     plan = bias_plan_for_persona(plan, persona_id)
-    seeds = claim_seeds if use_resume else None
+    seeds = claim_seeds if personalize_vault else None
+    start_profile = active_profile(brief_content)
     plan = probe_service.attach_session_opts(
         plan,
         use_resume=use_resume,
+        include_vault_topics=personalize_vault,
         focus_weak=focus_weak,
         persona_id=persona_id,
         claim_seeds=seeds,
+        domain_profile=start_profile,
     )
     session = InterviewSession(
         id=session_id,
@@ -657,7 +666,11 @@ async def start_session(
         path=q1_path,
     )
     return {
-        "session": _session_dict(session, practice_label=practice),
+        "session": _session_dict(
+            session,
+            practice_label=practice,
+            domain_profile=start_profile,
+        ),
         "turn": _turn_dict(turn),
     }
 
@@ -966,7 +979,11 @@ async def get_session(db: AsyncSession, user: User, session_id) -> dict | None:
     track_brief = await get_track_with_brief(db, user, session.track_id)
     brief_content = ((track_brief or {}).get("brief") or {}).get("content") or {}
     return {
-        "session": _session_dict(session, practice_label=practice_label_for(brief_content)),
+        "session": _session_dict(
+            session,
+            practice_label=practice_label_for(brief_content),
+            domain_profile=active_profile(brief_content),
+        ),
         "turns": [
             _turn_dict_full(t, reveal=session.mode == "guided" and t.answer is not None)
             for t in turns
@@ -1211,6 +1228,7 @@ async def _decide(
             "allowed_types": profile["allowed_types"],
         }
         payload["allowed_types"] = profile["allowed_types"]
+        # Profile-first: domain profile overrides regex programming_track.
         payload["programming_track"] = profile["uses_code"]
     if turns:
         stored = turns[-1].evaluation_detail
@@ -1230,8 +1248,9 @@ async def _decide(
         )
     vault_items: list[dict] = []
     weak_names: list[str] = []
-    if opts.get("use_resume") or opts.get("focus_weak"):
-        if opts.get("use_resume"):
+    vault_personalize = probe_service.personalize_from_vault(opts)
+    if vault_personalize or opts.get("focus_weak"):
+        if vault_personalize:
             vault_items = probe_service.sanitize_vault_items(await list_items(db, session.user_id))
             if vault_items:
                 payload["vault_prompt_block"] = probe_service.vault_prompt_block(vault_items)
@@ -1253,7 +1272,7 @@ async def _decide(
 
     # Opt-in probes replace a plan slot; they never extend the session or
     # overwrite the evaluator's coverage of the answer just given.
-    if decision.decision != "complete" and (opts.get("use_resume") or opts.get("focus_weak")):
+    if decision.decision != "complete" and (vault_personalize or opts.get("focus_weak")):
         probe = probe_service.pick_probe(
             opts=opts,
             vault_items=vault_items,
@@ -1422,7 +1441,12 @@ async def _dispatch_feedback(session: InterviewSession, nc=None) -> None:
     await publish_feedback_job(session_id, track_id, user_id, nc=nc)
 
 
-def _session_dict(s: InterviewSession, *, practice_label: str = "") -> dict:
+def _session_dict(
+    s: InterviewSession,
+    *,
+    practice_label: str = "",
+    domain_profile: dict | None = None,
+) -> dict:
     opts = probe_service.session_opts_from_plan(getattr(s, "question_plan", None))
     from app.agents.persona import get_persona
 
@@ -1440,6 +1464,21 @@ def _session_dict(s: InterviewSession, *, practice_label: str = "") -> dict:
     }
     if practice_label:
         body["practice_label"] = practice_label
+    profile = opts.get("domain_profile") if isinstance(opts.get("domain_profile"), dict) else None
+    if not profile and isinstance(domain_profile, dict):
+        profile = {
+            "category": domain_profile.get("category"),
+            "uses_code": bool(domain_profile.get("uses_code")),
+            "uses_math": bool(domain_profile.get("uses_math")),
+            "allowed_types": list(domain_profile.get("allowed_types") or [])[:12],
+        }
+    if profile:
+        body["domain_profile"] = {
+            "category": profile.get("category"),
+            "uses_code": bool(profile.get("uses_code")),
+            "uses_math": bool(profile.get("uses_math")),
+            "allowed_types": list(profile.get("allowed_types") or [])[:12],
+        }
     return body
 
 

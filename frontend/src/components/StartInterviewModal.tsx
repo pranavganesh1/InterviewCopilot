@@ -249,6 +249,7 @@ export default function StartInterviewModal({
           mode,
           duration_minutes: startMinutes,
           use_resume: useResume,
+          include_vault_topics: useResume,
           focus_weak: focusWeak,
           persona_id: personaId,
           claim_seeds: useResume ? claimSeeds.slice(0, 24) : [],

@@ -11,7 +11,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.agents.question_quality import active_profile, format_for_slot, is_programming_brief
+from app.agents.question_quality import (
+    active_profile,
+    fallback_profile,
+    format_for_slot,
+)
 from app.core.logging import get_logger
 from app.gateway.structured import structured_completion
 
@@ -331,8 +335,13 @@ def deterministic_question_plan(
             left, right = rng.sample(range(len(topics)), 2)
             topics[left], topics[right] = topics[right], topics[left]
     topics = _steer_topics(topics, _avoid_names(brief))
-    profile = active_profile(brief)
-    programming = is_programming_brief(brief)
+    # Profile-first: sanitized domain_profile drives format mix; regex only via
+    # fallback_profile when the brief has no usable profile.
+    profile = active_profile(brief) or fallback_profile(
+        str(brief.get("subject") or ""),
+        brief,
+    )
+    programming = bool(profile.get("uses_code"))
     topic_seq = _blocked_topic_sequence(topics, n, duration_minutes=mins_i)
     slots: list[dict] = []
     for i, topic in enumerate(topic_seq):
