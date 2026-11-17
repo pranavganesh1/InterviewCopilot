@@ -832,6 +832,55 @@ _ARRAY_CONCEPT_BANK = (
     ),
 )
 
+# Area labels that clearly mean CS Arrays / DSA (anchored at start to avoid
+# false positives like "Antenna arrays").
+_STRONG_ARRAY_DSA_AREA = re.compile(
+    r"^(arrays?|dsa|data\s+structures?|sliding\s+windows?|two\s+pointers?|"
+    r"prefix\s+sums?|dynamic\s+arrays?)\b",
+    re.IGNORECASE,
+)
+# Softer array/DSA topic cues — only combined with a programming payload.
+_ARRAY_TOPIC_CUE = re.compile(
+    r"\b(arrays?|dsa|sliding[- ]windows?|two[- ]pointers?|prefix\s+sums?|"
+    r"dynamic\s+arrays?|subarrays?|kadane)\b",
+    re.IGNORECASE,
+)
+
+# Non-coding stems reused from the generic set (plus close variants) so
+# exhausted non-programming plans never invent DSA or coding prompts.
+_NON_PROGRAMMING_FALLBACK_STEMS = (
+    "Explain the core idea behind {topic} with a concrete example.",
+    "Compare two approaches related to {topic} and when you would choose each.",
+    "Given a realistic problem involving {topic}, outline your step-by-step solution approach.",
+    "What misconceptions are common about {topic}, and how would you correct them?",
+    "Walk through a realistic scenario involving {topic} and how you would reason about it.",
+    "How does {topic} connect to the broader goals of this interview track?",
+)
+
+def _payload_is_programming(payload: dict) -> bool:
+    if payload.get("programming_track") is True:
+        return True
+    profile = payload.get("domain_profile")
+    if isinstance(profile, dict):
+        if profile.get("uses_code") is True:
+            return True
+        if profile.get("category") == "programming":
+            return True
+    return False
+
+
+def _should_use_array_concept_bank(payload: dict, area: str) -> bool:
+    """DSA array bank only for clear Arrays/DSA areas or programming+array topics.
+
+    An empty remaining_areas list must never unlock this bank by itself.
+    """
+    text = (area or "").strip()
+    if not text:
+        return False
+    if _STRONG_ARRAY_DSA_AREA.search(text):
+        return True
+    return _payload_is_programming(payload) and bool(_ARRAY_TOPIC_CUE.search(text))
+
 
 def _fallback_unique_question(
     payload: dict, preferred_area: str | None = None
@@ -843,10 +892,12 @@ def _fallback_unique_question(
     area = (
         (preferred_area or "").strip()
         or (remaining[0] if remaining else "")
+        or str(payload.get("current_area") or "").strip()
         or (covered[-1] if covered else "")
         or "this track"
     )
     n = len(asked) + 1
+    programming = _payload_is_programming(payload)
     candidates: list[str] = []
 
     # M9: unused validated bank questions come FIRST.
@@ -855,9 +906,8 @@ def _fallback_unique_question(
         if q and not any(is_duplicate_question(q, [a]) for a in asked):
             candidates.append(q)
 
-    # Prefer a bank of genuinely different concepts (esp. Arrays tracks).
-    area_l = area.lower()
-    if "array" in area_l or not remaining:
+    # Arrays/DSA concept bank — never keyed off empty remaining_areas alone.
+    if _should_use_array_concept_bank(payload, area):
         start = (n - 1) % len(_ARRAY_CONCEPT_BANK)
         for offset in range(len(_ARRAY_CONCEPT_BANK)):
             _label, question = _ARRAY_CONCEPT_BANK[(start + offset) % len(_ARRAY_CONCEPT_BANK)]
@@ -865,28 +915,46 @@ def _fallback_unique_question(
 
     # Distinct topic label per turn so soft-similarity does not collapse templates.
     topic = f"{area} — interview focus {n}"
-    stem = _FALLBACK_STEMS[(n - 1) % len(_FALLBACK_STEMS)]
+    stems = _FALLBACK_STEMS if programming else _NON_PROGRAMMING_FALLBACK_STEMS
+    stem = stems[(n - 1) % len(stems)]
     candidates.append(stem.format(topic=topic))
     for extra in remaining[:5]:
         candidates.append(
             f"How does {extra} connect to {topic}, and when would you pick one over the other?"
         )
+        if programming:
+            candidates.append(
+                f"Solve a short problem that requires {extra} after you already used {topic}."
+            )
+        else:
+            candidates.append(
+                f"How would you apply {extra} in a concrete situation that also involves {topic}?"
+            )
+    if programming:
         candidates.append(
-            f"Solve a short problem that requires {extra} after you already used {topic}."
+            f"Introduce a new concept under {topic} that was not covered in prior questions, "
+            "and ask for an algorithm or explanation with complexity."
         )
-    candidates.append(
-        f"Introduce a new concept under {topic} that was not covered in prior questions, "
-        "and ask for an algorithm or explanation with complexity."
-    )
+    else:
+        candidates.append(
+            f"Introduce a new aspect of {topic} that was not covered in prior questions, "
+            "and ask for a concrete explanation with an example."
+        )
     for q in candidates:
         if not is_duplicate_question(q, asked):
             return q, area
     # Absolute last resort: keep salting until soft-similarity also clears.
     for salt in range(0, 80):
-        guaranteed = (
-            f"Turn {n} unique-{salt} ({area}): invent a new {area} coding prompt "
-            f"numbered {n}.{salt}, then outline the approach with time and space complexity."
-        )
+        if programming:
+            guaranteed = (
+                f"Turn {n} unique-{salt} ({area}): invent a new {area} coding prompt "
+                f"numbered {n}.{salt}, then outline the approach with time and space complexity."
+            )
+        else:
+            guaranteed = (
+                f"Turn {n} unique-{salt} ({area}): ask a fresh question about {area} "
+                f"numbered {n}.{salt} that was not covered earlier, with a concrete example."
+            )
         if not is_duplicate_question(guaranteed, asked):
             return guaranteed, area
     return None

@@ -6,11 +6,28 @@ from pydantic import ValidationError
 from app.agents.interviewer import (
     AnswerEvaluation,
     TurnDecision,
+    _fallback_unique_question,
+    _should_use_array_concept_bank,
     apply_local_policy,
     decision_violation,
     evaluate_answer,
+    force_unique_decision,
     run_interviewer_turn,
     system_prompt_for_mode,
+)
+
+# Wording that belongs to _ARRAY_CONCEPT_BANK (DSA leak detector for Fix 1).
+_DSA_LEAK_MARKERS = (
+    "random access",
+    "dynamic array",
+    "two-pointer",
+    "sliding-window",
+    "prefix sums",
+    "kadane",
+    "dutch national flag",
+    "row-major order",
+    "subarray with sum",
+    "maximum subarray",
 )
 
 
@@ -241,3 +258,126 @@ async def test_empty_answer_skips_evaluator(monkeypatch):
     assert isinstance(decision, TurnDecision)
     assert decision.evaluation.coverage == "none"
     assert decision.next_question == "Explain hashmaps."
+
+
+def _assert_no_dsa_leak(question: str) -> None:
+    lowered = question.lower()
+    for marker in _DSA_LEAK_MARKERS:
+        assert marker not in lowered, (marker, question)
+
+
+@pytest.mark.parametrize(
+    ("subject", "profile"),
+    [
+        (
+            "Cell Biology",
+            {
+                "category": "science",
+                "uses_code": False,
+                "uses_math": False,
+                "risk_level": "standard",
+                "style_hint": "Ask one verifiable biology fact.",
+                "allowed_types": ["conceptual", "mcq"],
+            },
+        ),
+        (
+            "Corporate Finance",
+            {
+                "category": "other",
+                "uses_code": False,
+                "uses_math": True,
+                "risk_level": "standard",
+                "style_hint": "Ask one concrete finance question.",
+                "allowed_types": ["conceptual", "mcq", "numeric"],
+            },
+        ),
+        (
+            "Classical Mechanics",
+            {
+                "category": "science",
+                "uses_code": False,
+                "uses_math": True,
+                "risk_level": "standard",
+                "style_hint": "Ask one physics reasoning question.",
+                "allowed_types": ["conceptual", "mcq", "numeric"],
+            },
+        ),
+    ],
+)
+def test_empty_remaining_non_programming_skips_array_concept_bank(subject, profile):
+    """Fix 1: empty remaining_areas must not unlock DSA/Array fallbacks."""
+    payload = {
+        "programming_track": False,
+        "domain_profile": profile,
+        "asked_questions": [f"What is one foundational idea in {subject}?"],
+        "remaining_areas": [],
+        "covered_areas": [subject],
+        "current_area": subject,
+        "questions_remaining": 8,
+    }
+    assert _should_use_array_concept_bank(payload, subject) is False
+    question, area = _fallback_unique_question(payload)
+    assert area == subject
+    _assert_no_dsa_leak(question)
+    assert subject.lower() in question.lower() or "interview focus" in question.lower()
+
+    decision = force_unique_decision(
+        TurnDecision.model_validate(
+            {
+                "evaluation": {"coverage": "partial", "strengths": [], "gaps": []},
+                "decision": "next_area",
+                "next_question": "Please restate the same idea about arrays in memory.",
+                "question_area": subject,
+            }
+        ),
+        payload,
+    )
+    assert decision.decision != "complete"
+    _assert_no_dsa_leak(decision.next_question)
+
+
+def test_programming_arrays_topic_keeps_array_concept_bank():
+    payload = {
+        "programming_track": True,
+        "domain_profile": {
+            "category": "programming",
+            "uses_code": True,
+            "uses_math": True,
+            "risk_level": "standard",
+            "style_hint": "Ask about behavior or trade-offs.",
+            "allowed_types": ["conceptual", "mcq", "coding"],
+        },
+        "asked_questions": [
+            "Can you explain what an array is and how elements are stored?"
+        ],
+        "remaining_areas": [],
+        "covered_areas": ["Arrays"],
+        "current_area": "Arrays",
+        "questions_remaining": 10,
+    }
+    assert _should_use_array_concept_bank(payload, "Arrays") is True
+    question, area = _fallback_unique_question(payload)
+    assert area == "Arrays"
+    assert any(marker in question.lower() for marker in _DSA_LEAK_MARKERS)
+
+
+def test_antenna_arrays_without_programming_skips_dsa_bank():
+    """Substring 'array' alone must not open the DSA bank on engineering tracks."""
+    payload = {
+        "programming_track": False,
+        "domain_profile": {
+            "category": "engineering",
+            "uses_code": False,
+            "uses_math": True,
+            "risk_level": "standard",
+            "style_hint": "Ask one antenna fact.",
+            "allowed_types": ["conceptual", "mcq", "numeric"],
+        },
+        "asked_questions": ["What is a half-wave dipole?"],
+        "remaining_areas": [],
+        "covered_areas": ["Antenna arrays"],
+        "questions_remaining": 5,
+    }
+    assert _should_use_array_concept_bank(payload, "Antenna arrays") is False
+    question, _area = _fallback_unique_question(payload)
+    _assert_no_dsa_leak(question)
