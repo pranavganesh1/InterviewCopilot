@@ -212,7 +212,7 @@ test("Finish and get feedback confirms, completes once, and opens the report", a
     page.getByText("Your answered questions will be scored. Unanswered ones will not count against you."),
   ).toBeVisible();
   expect(finishes).toBe(0);
-  await page.getByRole("button", { name: "Finish and get feedback" }).click();
+  await page.getByRole("button", { name: "Confirm finish and get feedback" }).click();
   await expect(page).toHaveURL(/\/tracks\/t1\/report\/s1/);
   expect(finishes).toBe(1);
 });
@@ -235,12 +235,63 @@ test("a failed finish stays in the modal and can be retried", async ({ page }) =
   await openInterview(page);
   await page.getByRole("link", { name: "Tracks", exact: true }).click();
   await page.getByRole("button", { name: "Finish and get feedback" }).click();
-  await page.getByRole("button", { name: "Finish and get feedback" }).click();
+  await page.getByRole("button", { name: "Confirm finish and get feedback" }).click();
   await expect(page.getByText("Scoring is unavailable.")).toBeVisible();
   await expect(page).toHaveURL(/\/interview\/s1/);
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page).toHaveURL(/\/tracks\/t1\/report\/s1/);
   expect(finishes).toBe(2);
+});
+
+test("discard confirms, aborts once, and leaves without a report", async ({ page }) => {
+  let aborts = 0;
+  await page.route("**/api/v1/sessions/s1/abort", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    aborts += 1;
+    await route.fulfill({
+      json: {
+        session: { id: "s1", track_id: "t1", mode: "strict", status: "aborted", max_turns: 15 },
+      },
+    });
+  });
+  await openInterview(page);
+  await page.getByRole("button", { name: "Leave session" }).click();
+  await page.getByTestId("discard-without-scoring").click();
+  await expect(page.getByTestId("discard-confirm-copy")).toBeVisible();
+  expect(aborts).toBe(0);
+  await page.getByRole("button", { name: "Confirm discard without scoring" }).click();
+  await expect(page).toHaveURL(/\/tracks\/t1$/);
+  expect(aborts).toBe(1);
+});
+
+test("a failed discard stays in the interview and can be retried", async ({ page }) => {
+  let aborts = 0;
+  await page.route("**/api/v1/sessions/s1/abort", async (route) => {
+    aborts += 1;
+    if (aborts === 1) {
+      await route.fulfill({
+        status: 500,
+        json: { detail: "Could not abort session." },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        session: { id: "s1", track_id: "t1", mode: "strict", status: "aborted", max_turns: 15 },
+      },
+    });
+  });
+  await openInterview(page);
+  await page.getByRole("link", { name: "Tracks", exact: true }).click();
+  await page.getByTestId("discard-without-scoring").click();
+  await page.getByRole("button", { name: "Confirm discard without scoring" }).click();
+  await expect(page.getByText("Could not abort session.")).toBeVisible();
+  await expect(page).toHaveURL(/\/interview\/s1/);
+  expect(aborts).toBe(1);
+  await page.getByRole("button", { name: "Try again" }).click();
+  // Tracks nav intent resolves to dashboard `/` after a successful abort.
+  await expect(page).toHaveURL(/\/$/);
+  expect(aborts).toBe(2);
 });
 
 test("beforeunload is registered only while a draft exists", async ({ page }) => {

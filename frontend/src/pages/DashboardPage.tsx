@@ -182,6 +182,15 @@ export default function DashboardPage() {
     },
   });
 
+  const refreshReview = useMutation({
+    mutationFn: () =>
+      api<ProfileReview>("/onboarding/review/refresh", { method: "POST" }),
+    onSuccess: (data) => {
+      qc.setQueryData(["profile-review"], data);
+      void refresh();
+    },
+  });
+
   function handleNextAction(action: NextAction) {
     const kind = action.kind || "recommend_track";
     if (kind === "resume_session" && action.track_id && action.session_id) {
@@ -427,7 +436,30 @@ export default function DashboardPage() {
   }
 
   const review = profileReview.data ?? user?.profile_review;
-  const reviewBusy = saveReview.isPending || startRecommended.isPending;
+  const reviewBusy =
+    saveReview.isPending || startRecommended.isPending || refreshReview.isPending;
+  const refreshReviewError = (() => {
+    if (!refreshReview.isError) return null;
+    if (refreshReview.error instanceof ApiError) {
+      if (refreshReview.error.status === 429) {
+        return (
+          refreshReview.error.message ||
+          "Please wait a moment before refreshing again."
+        );
+      }
+      if (refreshReview.error.status === 503) {
+        return (
+          refreshReview.error.message ||
+          "The model is busy right now — retry in a minute."
+        );
+      }
+      return refreshReview.error.message;
+    }
+    if (refreshReview.error instanceof Error) {
+      return refreshReview.error.message;
+    }
+    return "Could not refresh your preparation plan.";
+  })();
 
   return (
     <div className="space-y-6">
@@ -436,6 +468,12 @@ export default function DashboardPage() {
           review={review}
           userName={user.name}
           pending={reviewBusy}
+          refreshPending={refreshReview.isPending}
+          refreshError={refreshReviewError}
+          onRefresh={() => {
+            if (refreshReview.isPending) return;
+            refreshReview.mutate();
+          }}
           onSaveSummary={(summary) => saveReview.mutate({ summary })}
           onSetItemStatus={(itemId, status) =>
             saveReview.mutate({

@@ -156,7 +156,7 @@ export default function InterviewPage() {
 
   useEffect(() => {
     finishRef.current = finishEarly.mutateAsync;
-    if (!guardActive) {
+    if (!guardActive || !sessionId) {
       setLeaveGuard(null);
       return;
     }
@@ -165,8 +165,19 @@ export default function InterviewPage() {
       dirty: answer.trim().length > 0 || codeDirty,
       timed: (session.data?.session.duration_minutes ?? 0) > 0,
       finish: () => finishRef.current().then(() => undefined),
+      // Navigation is handled by LeaveGuardProvider after a successful abort.
+      abort: async () => {
+        await api(`/sessions/${sessionId}/abort`, { method: "POST" });
+      },
     });
-  }, [guardActive, answer, codeDirty, session.data?.session.duration_minutes, finishEarly.mutateAsync]);
+  }, [
+    guardActive,
+    answer,
+    codeDirty,
+    session.data?.session.duration_minutes,
+    finishEarly.mutateAsync,
+    sessionId,
+  ]);
 
   useEffect(() => () => setLeaveGuard(null), []);
 
