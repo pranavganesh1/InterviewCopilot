@@ -1,6 +1,18 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type VaultItem } from "../lib/api";
+import { ApiError, api, type VaultItem } from "../lib/api";
+
+/** Categories accepted by POST /vault/items (backend ITEM_CATEGORIES_SET). */
+const MANUAL_CATEGORIES = [
+  "skill",
+  "project",
+  "education",
+  "internship",
+  "achievement",
+  "other",
+] as const;
+
+type ManualCategory = (typeof MANUAL_CATEGORIES)[number];
 
 const PROJECT_DETAIL_KEYS = [
   "purpose",
@@ -151,6 +163,9 @@ export function VaultSidebar({
   const [tab, setTab] = useState<ProfileTab>("resume");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [addCategory, setAddCategory] = useState<ManualCategory>("skill");
+  const [addTitle, setAddTitle] = useState("");
 
   const remove = useMutation({
     mutationFn: (id: string) =>
@@ -177,6 +192,29 @@ export function VaultSidebar({
     },
   });
 
+  const create = useMutation({
+    mutationFn: (payload: { category: ManualCategory; title: string }) =>
+      api<{ id: string; category: string; title: string }>("/vault/items", {
+        method: "POST",
+        body: JSON.stringify({
+          category: payload.category,
+          title: payload.title,
+          details: {},
+        }),
+      }),
+    onSuccess: (created) => {
+      setAddTitle("");
+      setAdding(false);
+      const cat = (created.category || "").toLowerCase();
+      if (cat === "skill") setTab("skills");
+      else if (cat === "project") setTab("projects");
+      else if (cat === "education") setTab("education");
+      else if (cat === "internship" || cat === "experience") setTab("experience");
+      else if (cat === "achievement") setTab("achievements");
+      invalidateVaultQueries(qc);
+    },
+  });
+
   const skills = items.filter((i) => i.category === "skill");
   const projects = items.filter((i) => i.category === "project");
   const education = items.filter((i) => i.category === "education");
@@ -186,7 +224,15 @@ export function VaultSidebar({
   const achievements = items.filter(
     (i) => (i.category || "").toLowerCase() === "achievement",
   );
-  const busy = remove.isPending || save.isPending;
+  const busy = remove.isPending || save.isPending || create.isPending;
+  const createError =
+    create.error instanceof ApiError
+      ? create.error.message
+      : create.error instanceof Error
+        ? create.error.message
+        : create.isError
+          ? "Could not add this vault item."
+          : null;
 
   const tabs: { id: ProfileTab; label: string; count: number }[] = [
     { id: "skills", label: "Skills", count: skills.length },
@@ -259,6 +305,99 @@ export function VaultSidebar({
       {finishError && (
         <p className="px-4 pt-2 text-center text-xs text-red-600">{finishError}</p>
       )}
+
+      <div className="shrink-0 border-b border-line/70 px-4 py-2">
+        {!adding ? (
+          <button
+            type="button"
+            data-testid="vault-add-open"
+            disabled={busy || loading}
+            onClick={() => {
+              setAdding(true);
+              create.reset();
+            }}
+            className="text-xs font-semibold text-accent-strong hover:underline disabled:opacity-40"
+          >
+            + Add item manually
+          </button>
+        ) : (
+          <form
+            data-testid="vault-add-form"
+            className="space-y-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const title = addTitle.trim();
+              if (!title || create.isPending) return;
+              create.mutate({ category: addCategory, title });
+            }}
+          >
+            <div className="flex flex-wrap gap-2">
+              <label className="sr-only" htmlFor="vault-add-category">
+                Category
+              </label>
+              <select
+                id="vault-add-category"
+                data-testid="vault-add-category"
+                value={addCategory}
+                disabled={create.isPending}
+                onChange={(e) =>
+                  setAddCategory(e.target.value as ManualCategory)
+                }
+                className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+              >
+                {MANUAL_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <input
+                data-testid="vault-add-title"
+                value={addTitle}
+                onChange={(e) => setAddTitle(e.target.value)}
+                maxLength={255}
+                required
+                disabled={create.isPending}
+                placeholder="Title"
+                aria-label="Item title"
+                className="min-w-0 flex-1 rounded-lg border border-line px-2 py-1.5 text-xs outline-none focus:border-accent"
+              />
+            </div>
+            {createError && (
+              <p
+                role="alert"
+                data-testid="vault-add-error"
+                className="text-xs text-red-700"
+              >
+                {createError}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                data-testid="vault-add-submit"
+                disabled={create.isPending || !addTitle.trim()}
+                className="rounded-lg bg-accent px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-40"
+              >
+                {create.isPending ? "Adding…" : "Add"}
+              </button>
+              <button
+                type="button"
+                data-testid="vault-add-cancel"
+                disabled={create.isPending}
+                onClick={() => {
+                  setAdding(false);
+                  setAddTitle("");
+                  create.reset();
+                }}
+                className="rounded-lg px-2.5 py-1 text-[11px] text-ink-soft"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
 
       <div
         role="tablist"

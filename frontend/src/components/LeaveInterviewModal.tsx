@@ -2,12 +2,14 @@ import { useEffect, useRef } from "react";
 
 type Props = {
   timed: boolean;
-  confirming: boolean;
+  confirmingFinish: boolean;
+  confirmingDiscard: boolean;
   busy: boolean;
   error: string | null;
   onStay: () => void;
   onLeave: () => void;
   onFinish: () => void;
+  onDiscard: () => void;
   onRetry: () => void;
 };
 
@@ -21,12 +23,14 @@ function focusable(root: HTMLElement) {
 
 export default function LeaveInterviewModal({
   timed,
-  confirming,
+  confirmingFinish,
+  confirmingDiscard,
   busy,
   error,
   onStay,
   onLeave,
   onFinish,
+  onDiscard,
   onRetry,
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -65,6 +69,8 @@ export default function LeaveInterviewModal({
     return () => document.removeEventListener("keydown", onKey, true);
   }, [busy]);
 
+  const confirming = confirmingFinish || confirmingDiscard;
+
   return (
     <div
       data-testid="leave-backdrop"
@@ -80,7 +86,9 @@ export default function LeaveInterviewModal({
         aria-modal="true"
         aria-labelledby="leave-interview-title"
         aria-describedby={
-          confirming ? "leave-interview-desc leave-interview-confirm" : "leave-interview-desc"
+          confirming
+            ? "leave-interview-desc leave-interview-confirm"
+            : "leave-interview-desc"
         }
         data-testid="leave-interview-modal"
         className="start-modal-panel max-h-[92dvh] w-full max-w-[480px] overflow-x-hidden overflow-y-auto rounded-t-2xl bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-xl sm:rounded-lg"
@@ -100,9 +108,19 @@ export default function LeaveInterviewModal({
           <p>Your submitted answers are saved. Anything you have typed but not submitted on this question will be lost.</p>
           {timed && <p>The timer keeps running while you are away.</p>}
         </div>
-        {confirming && (
+        {confirmingFinish && (
           <p id="leave-interview-confirm" className="mt-3 text-sm text-ink-soft">
             Your answered questions will be scored. Unanswered ones will not count against you.
+          </p>
+        )}
+        {confirmingDiscard && (
+          <p
+            id="leave-interview-confirm"
+            className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+            data-testid="discard-confirm-copy"
+          >
+            Discard exits without scoring and does not generate a feedback report. The
+            session is closed (not deleted). This cannot be undone from the resume list.
           </p>
         )}
         {error && (
@@ -142,7 +160,16 @@ export default function LeaveInterviewModal({
             disabled={busy}
             className="w-full py-2 text-sm font-semibold text-accent-strong underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
           >
-            Finish and get feedback
+            {confirmingFinish ? "Confirm finish and get feedback" : "Finish and get feedback"}
+          </button>
+          <button
+            type="button"
+            data-testid="discard-without-scoring"
+            onClick={onDiscard}
+            disabled={busy}
+            className="w-full py-2 text-sm font-semibold text-red-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
+          >
+            {confirmingDiscard ? "Confirm discard without scoring" : "Discard without scoring"}
           </button>
         </div>
       </div>

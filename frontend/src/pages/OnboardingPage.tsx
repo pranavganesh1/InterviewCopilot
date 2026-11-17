@@ -607,6 +607,16 @@ export default function OnboardingPage() {
     ? RESUME_HINTS[uploadError.code]
     : undefined;
 
+  const confirmGoals = useMutation({
+    mutationFn: () =>
+      api<OnboardingState>("/onboarding/goals/confirm", { method: "POST" }),
+    onSuccess: (data) => {
+      setFailedMessage(null);
+      qc.setQueryData(["onboarding-state"], data);
+      void qc.invalidateQueries({ queryKey: ["onboarding-state"] });
+    },
+  });
+
   const finish = useMutation({
     mutationFn: () =>
       api<OnboardingState & { offer_start_interview?: StartInterviewOffer | null }>(
@@ -1499,11 +1509,21 @@ export default function OnboardingPage() {
                         !prefs?.interests?.length
                       }
                       goalsReady={goalsReady}
-                      pending={goalsBusy}
+                      pending={goalsBusy || confirmGoals.isPending || finish.isPending}
+                      confirmPending={confirmGoals.isPending}
+                      confirmError={
+                        confirmGoals.error instanceof Error
+                          ? confirmGoals.error.message
+                          : null
+                      }
                       onSaveInterests={(interests) =>
                         saveGoals.mutate({ interests })
                       }
                       onSaveDetails={(patch) => saveGoals.mutate(patch)}
+                      onConfirmGoals={() => {
+                        if (confirmGoals.isPending) return;
+                        confirmGoals.mutate();
+                      }}
                       onConfirmAndStart={() => finish.mutate()}
                     />
                   </div>

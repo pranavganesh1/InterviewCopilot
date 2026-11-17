@@ -30,6 +30,9 @@ type Props = {
   review: ProfileReview | null | undefined;
   userName?: string | null;
   pending?: boolean;
+  refreshPending?: boolean;
+  refreshError?: string | null;
+  onRefresh?: () => void;
   onSaveSummary: (summary: string) => void;
   onSetItemStatus: (
     itemId: string,
@@ -44,6 +47,9 @@ export default function PreparationReviewPanel({
   review,
   userName,
   pending,
+  refreshPending,
+  refreshError,
+  onRefresh,
   onSaveSummary,
   onSetItemStatus,
   onNextAction,
@@ -70,15 +76,37 @@ export default function PreparationReviewPanel({
   return (
     <section className="space-y-4" data-testid="preparation-review">
       <div className="rounded-xl border border-accent/25 bg-gradient-to-br from-accent-soft/70 via-white to-white p-5 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-wide text-accent">
-          Welcome back{userName ? `, ${userName.split(" ")[0]}` : ""}
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-accent">
+            Welcome back{userName ? `, ${userName.split(" ")[0]}` : ""}
+          </p>
+          {onRefresh && (
+            <button
+              type="button"
+              data-testid="preparation-review-refresh"
+              disabled={pending || refreshPending}
+              onClick={onRefresh}
+              className="rounded-md border border-accent/30 bg-white px-3 py-1.5 text-xs font-semibold text-accent-strong hover:bg-accent-soft disabled:opacity-50"
+            >
+              {refreshPending ? "Refreshing…" : "Refresh plan"}
+            </button>
+          )}
+        </div>
         <h2 className="mt-1 text-lg font-semibold text-stone-900">
           Your personalized preparation plan
         </h2>
         <p className="mt-1 text-sm text-stone-600">
           Based on your vault and goals — not guessed proficiency scores.
         </p>
+        {refreshError && (
+          <p
+            role="alert"
+            data-testid="preparation-review-refresh-error"
+            className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
+          >
+            {refreshError}
+          </p>
+        )}
         {totalItems > 0 && (
           <p className="mt-2 text-xs text-stone-500" data-testid="profile-completeness">
             Profile signals: {confirmedCount} confirmed

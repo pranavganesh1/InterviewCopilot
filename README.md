@@ -54,6 +54,8 @@ Open http://localhost:5173 → sign in with Google → onboard → create a trac
 2. `curl -s -X POST http://localhost:8000/api/v1/dev/llm-check -H "Content-Type: application/json" -d '{"prompt":"Say hi in 5 words"}'`
    → returns the model's reply; the call is logged in Mongo `llm_call_logs`.
 
+**Ops note — `POST /api/v1/dev/llm-check`:** Local development smoke test only (`APP_ENV=local`; 404 otherwise). Intended for operators verifying the LLM gateway after compose/key changes. Do **not** expose a product UI control for this endpoint; keep it curl/ops-only.
+
 ### Onboarding & vault (M3)
 
 With the API running and signed in via the browser flow above (you have an `ic_access` cookie):

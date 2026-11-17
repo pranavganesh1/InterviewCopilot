@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import { useNavigate } from "react-router-dom";
 import LeaveInterviewModal from "./LeaveInterviewModal";
 import {
+  abortLeaveGuard,
   bindLeaveOpener,
   finishLeaveGuard,
   getLeaveGuard,
@@ -13,16 +14,20 @@ export default function LeaveGuardProvider({ children }: { children: ReactNode }
   const guard = useSyncExternalStore(subscribeLeaveGuard, getLeaveGuard, getLeaveGuard);
   const navigate = useNavigate();
   const [pending, setPending] = useState<LeaveIntent | null>(null);
-  const [confirming, setConfirming] = useState(false);
+  const [confirmingFinish, setConfirmingFinish] = useState(false);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryKind, setRetryKind] = useState<"finish" | "discard" | null>(null);
   const bypass = useRef(false);
   const here = useRef(window.location.href);
 
   useEffect(() => {
     bindLeaveOpener((intent) => {
-      setConfirming(false);
+      setConfirmingFinish(false);
+      setConfirmingDiscard(false);
       setError(null);
+      setRetryKind(null);
       setPending(intent);
     });
     return () => bindLeaveOpener(null);
@@ -44,8 +49,10 @@ export default function LeaveGuardProvider({ children }: { children: ReactNode }
         "",
         here.current,
       );
-      setConfirming(false);
+      setConfirmingFinish(false);
+      setConfirmingDiscard(false);
       setError(null);
+      setRetryKind(null);
       setPending({ kind: "history", focus: null });
     };
 
@@ -67,8 +74,10 @@ export default function LeaveGuardProvider({ children }: { children: ReactNode }
     if (busy) return;
     const focus = pending?.focus ?? null;
     setPending(null);
-    setConfirming(false);
+    setConfirmingFinish(false);
+    setConfirmingDiscard(false);
     setError(null);
+    setRetryKind(null);
     if (focus?.isConnected) focus.focus();
   }
 
@@ -76,7 +85,9 @@ export default function LeaveGuardProvider({ children }: { children: ReactNode }
     if (!pending || busy) return;
     const intent = pending;
     setPending(null);
-    setConfirming(false);
+    setConfirmingFinish(false);
+    setConfirmingDiscard(false);
+    setRetryKind(null);
     if (intent.kind === "history") {
       bypass.current = true;
       window.history.go(-2);
@@ -94,10 +105,12 @@ export default function LeaveGuardProvider({ children }: { children: ReactNode }
     if (busy) return;
     setBusy(true);
     setError(null);
+    setRetryKind("finish");
     try {
       await finishLeaveGuard();
       setPending(null);
-      setConfirming(false);
+      setConfirmingFinish(false);
+      setConfirmingDiscard(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not finish the interview.");
     } finally {
@@ -105,13 +118,59 @@ export default function LeaveGuardProvider({ children }: { children: ReactNode }
     }
   }
 
+  async function runDiscard() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setRetryKind("discard");
+    try {
+      await abortLeaveGuard();
+      const intent = pending;
+      setPending(null);
+      setConfirmingFinish(false);
+      setConfirmingDiscard(false);
+      setRetryKind(null);
+      if (!intent) return;
+      if (intent.kind === "history") {
+        bypass.current = true;
+        window.history.go(-2);
+        return;
+      }
+      if (intent.kind === "href") {
+        const replace = Boolean(window.history.state?.leaveGuard);
+        navigate(intent.href, { replace });
+        return;
+      }
+      void intent.run();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not discard the interview. It was not aborted.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function askFinish() {
     if (busy) return;
-    if (!confirming) {
-      setConfirming(true);
+    setConfirmingDiscard(false);
+    if (!confirmingFinish) {
+      setConfirmingFinish(true);
       return;
     }
     void runFinish();
+  }
+
+  function askDiscard() {
+    if (busy) return;
+    setConfirmingFinish(false);
+    if (!confirmingDiscard) {
+      setConfirmingDiscard(true);
+      return;
+    }
+    void runDiscard();
   }
 
   return (
@@ -120,13 +179,18 @@ export default function LeaveGuardProvider({ children }: { children: ReactNode }
       {pending && (
         <LeaveInterviewModal
           timed={guard.timed}
-          confirming={confirming}
+          confirmingFinish={confirmingFinish}
+          confirmingDiscard={confirmingDiscard}
           busy={busy}
           error={error}
           onStay={stay}
           onLeave={proceed}
           onFinish={askFinish}
-          onRetry={() => void runFinish()}
+          onDiscard={askDiscard}
+          onRetry={() => {
+            if (retryKind === "discard") void runDiscard();
+            else void runFinish();
+          }}
         />
       )}
     </>

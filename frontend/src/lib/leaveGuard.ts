@@ -13,6 +13,7 @@ const IDLE: LeaveGuard = { active: false, dirty: false, timed: false };
 
 let snapshot: LeaveGuard = IDLE;
 let finishImpl: () => Promise<void> = async () => {};
+let abortImpl: () => Promise<void> = async () => {};
 const listeners = new Set<() => void>();
 let opener: ((intent: LeaveIntent) => void) | null = null;
 
@@ -30,9 +31,15 @@ export function subscribeLeaveGuard(listener: () => void) {
 }
 
 export function setLeaveGuard(
-  next: (LeaveGuard & { finish: () => Promise<void> }) | null,
+  next:
+    | (LeaveGuard & {
+        finish: () => Promise<void>;
+        abort?: () => Promise<void>;
+      })
+    | null,
 ) {
   finishImpl = next?.finish ?? (async () => {});
+  abortImpl = next?.abort ?? (async () => {});
   const upcoming: LeaveGuard = next
     ? { active: next.active, dirty: next.dirty, timed: next.timed }
     : IDLE;
@@ -49,6 +56,10 @@ export function setLeaveGuard(
 
 export function finishLeaveGuard() {
   return finishImpl();
+}
+
+export function abortLeaveGuard() {
+  return abortImpl();
 }
 
 export function bindLeaveOpener(open: ((intent: LeaveIntent) => void) | null) {

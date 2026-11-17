@@ -235,7 +235,12 @@ export default function StartInterviewModal({
     mutationFn: async () => {
       if (!track || startMinutes == null) throw new Error("Choose a duration first.");
       if (unfinished) {
-        await api(`/sessions/${unfinished.id}/complete`, { method: "POST" });
+        // Empty sessions must not be "completed" (no scoring / report) — abort instead.
+        if ((unfinished.answered_count ?? 0) === 0) {
+          await api(`/sessions/${unfinished.id}/abort`, { method: "POST" });
+        } else {
+          await api(`/sessions/${unfinished.id}/complete`, { method: "POST" });
+        }
       }
       storePersonaId(personaId);
       return api<{ session: { id: string } }>(`/tracks/${track.id}/sessions`, {
