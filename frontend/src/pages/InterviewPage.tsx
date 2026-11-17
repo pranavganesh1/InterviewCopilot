@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import CodingWorkspace from "../components/CodingWorkspace";
 import EvaluationFeedback from "../components/EvaluationFeedback";
 import {
+  ApiError,
   api,
   type AssistanceResult,
   type SessionInfo,
@@ -272,6 +273,46 @@ export default function InterviewPage() {
     return (
       <div className="grid flex-1 place-items-center px-4 text-sm text-stone-500">
         Loading session…
+      </div>
+    );
+  }
+
+  if (session.isError) {
+    const message =
+      session.error instanceof ApiError
+        ? session.error.message
+        : session.error instanceof Error
+          ? session.error.message
+          : "Could not load this interview session.";
+    return (
+      <div
+        className="mx-auto flex min-h-0 w-full max-w-lg flex-1 flex-col items-stretch justify-center gap-4 px-4 py-8"
+        data-testid="interview-session-error"
+      >
+        <div
+          role="alert"
+          className="rounded-lg border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-800"
+        >
+          <p className="font-semibold text-red-900">Couldn’t load this interview</p>
+          <p className="mt-1 text-red-800/90">{message}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            data-testid="interview-session-retry"
+            onClick={() => void session.refetch()}
+            className="inline-flex min-h-11 items-center justify-center rounded-md bg-accent px-4 text-sm font-semibold text-white hover:bg-accent-strong"
+          >
+            Retry
+          </button>
+          <Link
+            to={trackId ? `/tracks/${trackId}` : "/"}
+            data-testid="interview-session-back"
+            className="text-sm font-medium text-accent hover:underline"
+          >
+            ← Back to track
+          </Link>
+        </div>
       </div>
     );
   }
