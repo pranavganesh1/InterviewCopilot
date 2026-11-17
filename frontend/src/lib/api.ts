@@ -466,6 +466,12 @@ export interface SessionInfo {
   practice_label?: string;
   persona_id?: string;
   persona_name?: string;
+  domain_profile?: {
+    category?: string | null;
+    uses_code?: boolean;
+    uses_math?: boolean;
+    allowed_types?: string[];
+  } | null;
 }
 
 export interface TurnEvaluation {

@@ -724,15 +724,25 @@ def _prefer_unused_bank(decision: TurnDecision, payload: dict) -> TurnDecision:
         steered = [entry for entry in unused if (entry.get("area") or "") not in set(avoid)]
         if steered:
             unused = steered
-    planned = _planned_topic(payload).lower()
-    if planned:
-        on_topic = [
+    planned = _planned_topic(payload)
+    if planned.strip():
+        from app.agents.session_pool import areas_soft_match
+
+        exact = [
             entry
             for entry in unused
-            if (entry.get("area") or "").strip().lower() == planned
+            if (entry.get("area") or "").strip().lower() == planned.strip().lower()
         ]
-        if on_topic:
-            unused = on_topic
+        if exact:
+            unused = exact
+        else:
+            soft = [
+                entry
+                for entry in unused
+                if areas_soft_match(planned, entry.get("area"))
+            ]
+            if soft:
+                unused = soft
     if not unused:
         return decision
     current = (decision.next_question or "").strip()
@@ -857,16 +867,84 @@ _NON_PROGRAMMING_FALLBACK_STEMS = (
     "How does {topic} connect to the broader goals of this interview track?",
 )
 
+# Category-keyed stems (profile-first). Templates only — never a fixed bank of
+# candidate-facing questions that would be repeatedly served.
+_FALLBACK_STEMS_BY_CATEGORY: dict[str, tuple[str, ...]] = {
+    "programming": _FALLBACK_STEMS,
+    "engineering": (
+        "Explain the governing principle behind {topic} with a concrete engineering example.",
+        "Walk through how you would analyze a failure mode related to {topic}.",
+        "Compare two design choices involving {topic} and when you would pick each.",
+        "What constraints matter most when applying {topic} in a real system?",
+        "Given a realistic engineering scenario involving {topic}, outline your approach.",
+        "How does {topic} connect to safety, reliability, or performance in this domain?",
+    ),
+    "science": (
+        "Explain the physical or scientific significance of {topic} with a concrete example.",
+        "What evidence or reasoning supports the core idea behind {topic}?",
+        "Compare two models or explanations related to {topic} and when each applies.",
+        "Walk through a realistic lab or observational scenario involving {topic}.",
+        "What misconceptions are common about {topic}, and how would you correct them?",
+        "How does {topic} connect to broader principles in this scientific field?",
+    ),
+    "medical": (
+        "Explain the physiological or clinical significance of {topic} at a conceptual level.",
+        "Compare two mechanisms related to {topic} and when each is relevant.",
+        "Walk through a realistic case vignette involving {topic} (exam-practice only).",
+        "What misconceptions are common about {topic}, and how would you correct them?",
+        "How does {topic} connect to assessment or differential reasoning in this field?",
+        "Given a realistic problem involving {topic}, outline your step-by-step reasoning.",
+    ),
+    "business": (
+        "Explain how you would interpret {topic} in a realistic business setting.",
+        "Compare two approaches related to {topic} and when you would choose each.",
+        "Walk through a concrete case involving {topic} and your decision criteria.",
+        "What mistakes are common when applying {topic}, and how do you avoid them?",
+        "How does {topic} connect to cash flow, strategy, or stakeholder outcomes?",
+        "Given a realistic problem involving {topic}, outline your step-by-step approach.",
+    ),
+    "humanities": (
+        "Explain the core idea behind {topic} with a concrete historical or textual example.",
+        "Compare two interpretations related to {topic} and when each is persuasive.",
+        "What evidence would you use to evaluate a claim about {topic}?",
+        "Walk through a realistic analytical scenario involving {topic}.",
+        "What misconceptions are common about {topic}, and how would you correct them?",
+        "How does {topic} connect to broader themes in this field?",
+    ),
+    "creative": (
+        "Explain your process for approaching {topic} with a concrete example.",
+        "Compare two creative choices related to {topic} and when you would pick each.",
+        "Walk through a realistic brief involving {topic} and how you would deliver it.",
+        "What trade-offs matter most when working with {topic}?",
+        "How does {topic} connect to audience, craft, or collaboration goals?",
+        "Given a realistic problem involving {topic}, outline your step-by-step approach.",
+    ),
+    "other": _NON_PROGRAMMING_FALLBACK_STEMS,
+}
+
 def _payload_is_programming(payload: dict) -> bool:
-    if payload.get("programming_track") is True:
-        return True
     profile = payload.get("domain_profile")
     if isinstance(profile, dict):
+        # Profile-first: explicit uses_code / category beats legacy regex flags.
+        if profile.get("uses_code") is False and profile.get("category") != "programming":
+            return False
         if profile.get("uses_code") is True:
             return True
         if profile.get("category") == "programming":
             return True
+    if payload.get("programming_track") is True:
+        return True
     return False
+
+
+def _fallback_stems_for_payload(payload: dict) -> tuple[str, ...]:
+    if _payload_is_programming(payload):
+        return _FALLBACK_STEMS
+    profile = payload.get("domain_profile")
+    category = ""
+    if isinstance(profile, dict):
+        category = str(profile.get("category") or "").strip().lower()
+    return _FALLBACK_STEMS_BY_CATEGORY.get(category, _NON_PROGRAMMING_FALLBACK_STEMS)
 
 
 def _should_use_array_concept_bank(payload: dict, area: str) -> bool:
@@ -915,7 +993,7 @@ def _fallback_unique_question(
 
     # Distinct topic label per turn so soft-similarity does not collapse templates.
     topic = f"{area} — interview focus {n}"
-    stems = _FALLBACK_STEMS if programming else _NON_PROGRAMMING_FALLBACK_STEMS
+    stems = _fallback_stems_for_payload(payload)
     stem = stems[(n - 1) % len(stems)]
     candidates.append(stem.format(topic=topic))
     for extra in remaining[:5]:

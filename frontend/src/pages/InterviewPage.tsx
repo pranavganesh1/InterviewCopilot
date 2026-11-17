@@ -215,7 +215,9 @@ export default function InterviewPage() {
     !openQuestion;
   const canSubmitAnswer = awaitingAnswer || needsSubmitRetry;
   const openAssistanceLevel = focusTurn?.assistance_level ?? 0;
-  const focusKind = focusTurn ? resolveKind(focusTurn) : "text";
+  const focusKind = focusTurn
+    ? resolveKind(focusTurn, session.data?.session.domain_profile)
+    : "text";
   const assistMaxLevel =
     reportedMaxLevel ?? (focusKind === "coding" ? 5 : 3);
   const canAssist =

@@ -90,18 +90,31 @@ def session_opts_from_plan(plan: list | None) -> dict:
         opts = plan[0].get("_session_opts")
         if isinstance(opts, dict):
             seeds = opts.get("claim_seeds")
+            profile = opts.get("domain_profile")
             return {
                 "use_resume": bool(opts.get("use_resume")),
+                "include_vault_topics": bool(
+                    opts.get("include_vault_topics") or opts.get("use_resume")
+                ),
                 "focus_weak": bool(opts.get("focus_weak")),
                 "persona_id": str(opts.get("persona_id") or "balanced"),
                 "claim_seeds": seeds if isinstance(seeds, list) else [],
+                "domain_profile": profile if isinstance(profile, dict) else None,
             }
     return {
         "use_resume": False,
+        "include_vault_topics": False,
         "focus_weak": False,
         "persona_id": "balanced",
         "claim_seeds": [],
+        "domain_profile": None,
     }
+
+
+def personalize_from_vault(opts: dict | None) -> bool:
+    """True when the session opted into vault/resume personalization."""
+    opts = opts or {}
+    return bool(opts.get("use_resume") or opts.get("include_vault_topics"))
 
 
 def attach_session_opts(
@@ -111,6 +124,8 @@ def attach_session_opts(
     focus_weak: bool,
     persona_id: str = "balanced",
     claim_seeds: list[dict] | None = None,
+    include_vault_topics: bool = False,
+    domain_profile: dict | None = None,
 ) -> list[dict]:
     if not plan:
         return plan
@@ -130,11 +145,21 @@ def attach_session_opts(
                 "title": str(raw.get("title") or "")[:80],
             }
         )
+    compact_profile = None
+    if isinstance(domain_profile, dict) and domain_profile:
+        compact_profile = {
+            "category": domain_profile.get("category"),
+            "uses_code": bool(domain_profile.get("uses_code")),
+            "uses_math": bool(domain_profile.get("uses_math")),
+            "allowed_types": list(domain_profile.get("allowed_types") or [])[:12],
+        }
     first["_session_opts"] = {
         "use_resume": use_resume,
+        "include_vault_topics": bool(include_vault_topics or use_resume),
         "focus_weak": focus_weak,
         "persona_id": persona_id or "balanced",
         "claim_seeds": seeds,
+        "domain_profile": compact_profile,
     }
     return [first, *plan[1:]]
 
@@ -494,7 +519,8 @@ def pick_probe(
     ):
         return None
 
-    if not opts.get("use_resume") and not opts.get("focus_weak"):
+    vault_on = personalize_from_vault(opts)
+    if not vault_on and not opts.get("focus_weak"):
         return None
 
     asked = _asked_texts(turns, prior_questions)
@@ -520,7 +546,7 @@ def pick_probe(
     if (
         opts.get("focus_weak")
         and weak_concepts
-        and (questions_asked % 3 == 0 or not opts.get("use_resume"))
+        and (questions_asked % 3 == 0 or not vault_on)
     ):
         probe = craft_weakness_retest(
             weak_concepts=weak_concepts, asked=asked, mode=mode, seed=seed
@@ -528,7 +554,7 @@ def pick_probe(
         if probe:
             return probe
 
-    if opts.get("use_resume") and (vault_items or opts.get("claim_seeds")):
+    if vault_on and (vault_items or opts.get("claim_seeds")):
         probe = craft_resume_probe(
             items=vault_items,
             area=current_area or "Project experience",
