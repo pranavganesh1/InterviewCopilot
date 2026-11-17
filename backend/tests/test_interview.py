@@ -162,7 +162,7 @@ async def test_interviewer_draws_from_question_bank(monkeypatch, clean_users_tab
     import httpx
 
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
     captured = {}
 
@@ -230,7 +230,7 @@ async def test_interviewer_draws_from_question_bank(monkeypatch, clean_users_tab
     token = create_access_token(str(user.id))
 
     app = create_app()
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.post(f"/api/v1/tracks/{track.id}/sessions", cookies={"ic_access": token})

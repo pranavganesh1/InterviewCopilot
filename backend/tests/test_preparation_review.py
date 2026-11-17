@@ -274,7 +274,7 @@ def test_next_action_and_roadmap_have_no_fake_scores():
 @pytest.mark.asyncio
 async def test_complete_generates_persisted_review(monkeypatch, clean_users_table):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
     from app.services import conversation_store
 
     email = f"rev-{uuid.uuid4()}@example.com"
@@ -296,7 +296,7 @@ async def test_complete_generates_persisted_review(monkeypatch, clean_users_tabl
         token = create_access_token(str(user.id))
         user_id = str(user.id)
 
-    mongo = get_mongo_client()[get_settings().mongo_db]
+    mongo = get_mongo_db()
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
     await conversation_store.set_preparation_preferences(
         mongo,

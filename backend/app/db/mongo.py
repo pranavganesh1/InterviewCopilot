@@ -1,6 +1,22 @@
+import os
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.core.config import get_settings
+
+# Application database name — never use this from pytest.
+APP_MONGO_DB = "interviewcopilot"
+TEST_MONGO_DB = "interviewcopilot_test"
+
+
+def assert_mongo_db_safe_for_tests(name: str) -> str:
+    """Block the shared application Mongo DB name while pytest is running."""
+    if os.environ.get("PYTEST_CURRENT_TEST") and name == APP_MONGO_DB:
+        raise RuntimeError(
+            f"Refusing Mongo DB {name!r} during pytest; "
+            f"use dedicated test database {TEST_MONGO_DB!r}."
+        )
+    return name
 
 
 def get_mongo_client() -> AsyncIOMotorClient:
@@ -17,5 +33,9 @@ def get_mongo_client() -> AsyncIOMotorClient:
 
 
 def get_mongo_db() -> AsyncIOMotorDatabase:
-    """Open a fresh client+DB (tests / tooling only — not for FastAPI Depends)."""
-    return get_mongo_client()[get_settings().mongo_db]
+    """Open a fresh client+DB (tests / tooling only — not for FastAPI Depends).
+
+    Under pytest, refuses the application database name ``interviewcopilot``.
+    """
+    name = assert_mongo_db_safe_for_tests(get_settings().mongo_db)
+    return get_mongo_client()[name]
