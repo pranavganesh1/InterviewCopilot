@@ -111,6 +111,7 @@ function ClaimRow({ claim }: { claim: ReadinessClaim }) {
 
 export default function ReadinessPage() {
   const [practiceOpen, setPracticeOpen] = useState(false);
+  const [defenseOpen, setDefenseOpen] = useState(false);
   const [expandedEdit, setExpandedEdit] = useState<string | null>(null);
 
   const readiness = useMutation({
@@ -246,6 +247,20 @@ export default function ReadinessPage() {
             >
               Practice these claims
             </button>
+            <button
+              type="button"
+              data-testid="defend-projects-cta"
+              disabled={
+                !practiceTrack ||
+                !(data.items ?? []).some(
+                  (item) => (item.category || "").toLowerCase() === "project",
+                )
+              }
+              onClick={() => setDefenseOpen(true)}
+              className="rounded-md border border-line bg-surface px-3 py-2 text-sm font-semibold text-ink hover:bg-page disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              Defend my projects
+            </button>
             <Link
               to="/onboarding"
               className="rounded-md border border-line bg-surface px-3 py-2 text-sm font-semibold text-ink hover:bg-page"
@@ -310,6 +325,13 @@ export default function ReadinessPage() {
         track={practiceOpen ? practiceTrack : null}
         onClose={() => setPracticeOpen(false)}
         initialUseResume
+        claimSeeds={data?.claim_seeds ?? []}
+      />
+      <StartInterviewModal
+        track={defenseOpen ? practiceTrack : null}
+        onClose={() => setDefenseOpen(false)}
+        initialUseResume
+        initialDefenseMode
         claimSeeds={data?.claim_seeds ?? []}
       />
     </div>

@@ -1273,6 +1273,10 @@ async def run_interviewer_turn(
     is_code = bool(text_answer and _looks_like_code_answer(payload, text_answer))
     if is_code:
         system = f"{system}\n{CODING_STATIC_REVIEW_RULES}"
+    # Project defense: append rules from payload (built in probe.defense_system_rules).
+    defense_extra = (payload.get("defense_instruction") or "").strip()
+    if payload.get("defense_mode") and defense_extra:
+        system = f"{system}\n{defense_extra}"
 
     def _apply_eval_guards(d: TurnDecision) -> TurnDecision:
         if not text_answer:

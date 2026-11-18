@@ -131,12 +131,14 @@ export default function StartInterviewModal({
   onClose,
   initialFocusWeak = false,
   initialUseResume = false,
+  initialDefenseMode = false,
   claimSeeds = [],
 }: {
   track: StartTrack | null;
   onClose: () => void;
   initialFocusWeak?: boolean;
   initialUseResume?: boolean;
+  initialDefenseMode?: boolean;
   claimSeeds?: { vault_item_id?: string; claim: string; excerpt?: string; title?: string }[];
 }) {
   const navigate = useNavigate();
@@ -150,6 +152,7 @@ export default function StartInterviewModal({
   const [custom, setCustom] = useState("");
   const [useCustom, setUseCustom] = useState(false);
   const [useResume, setUseResume] = useState(false);
+  const [defenseMode, setDefenseMode] = useState(initialDefenseMode);
   const [focusWeak, setFocusWeak] = useState(initialFocusWeak);
   const [personaId, setPersonaId] = useState<PersonaId>(() => readStoredPersonaId());
   const [error, setError] = useState<string | null>(null);
@@ -195,14 +198,31 @@ export default function StartInterviewModal({
   const vaultReady = (vault.data ?? []).some((item) =>
     ["project", "skill", "internship"].includes((item.category || "").toLowerCase()),
   );
+  const projectReady = (vault.data ?? []).some(
+    (item) => (item.category || "").toLowerCase() === "project",
+  );
   const weakReady = Boolean(weaknesses.data?.has_data && (weaknesses.data.weak?.length ?? 0) > 0);
 
   useEffect(() => {
     if (!track) return;
     if (vault.isSuccess) {
-      setUseResume(initialUseResume || vaultReady || claimSeeds.length > 0);
+      setUseResume(
+        initialUseResume ||
+          initialDefenseMode ||
+          vaultReady ||
+          claimSeeds.length > 0,
+      );
+      if (initialDefenseMode && projectReady) setDefenseMode(true);
     }
-  }, [track, vault.isSuccess, vaultReady, initialUseResume, claimSeeds.length]);
+  }, [
+    track,
+    vault.isSuccess,
+    vaultReady,
+    projectReady,
+    initialUseResume,
+    initialDefenseMode,
+    claimSeeds.length,
+  ]);
 
   useEffect(() => {
     if (initialFocusWeak && weakReady) setFocusWeak(true);
@@ -213,11 +233,19 @@ export default function StartInterviewModal({
   }, [initialUseResume, claimSeeds.length]);
 
   useEffect(() => {
+    if (initialDefenseMode && projectReady) {
+      setDefenseMode(true);
+      setUseResume(true);
+    }
+  }, [initialDefenseMode, projectReady]);
+
+  useEffect(() => {
     setOlderOpen(false);
     setFinishId(null);
     startLock.current = false;
     setStarting(false);
-  }, [track?.id]);
+    setDefenseMode(initialDefenseMode);
+  }, [track?.id, initialDefenseMode]);
 
   const phase: Phase =
     choice && track && choice.trackId === track.id
@@ -243,16 +271,18 @@ export default function StartInterviewModal({
         }
       }
       storePersonaId(personaId);
+      const defend = Boolean(defenseMode && projectReady);
       return api<{ session: { id: string } }>(`/tracks/${track.id}/sessions`, {
         method: "POST",
         body: JSON.stringify({
           mode,
           duration_minutes: startMinutes,
-          use_resume: useResume,
-          include_vault_topics: useResume,
+          use_resume: useResume || defend,
+          include_vault_topics: useResume || defend,
           focus_weak: focusWeak,
+          defense_mode: defend,
           persona_id: personaId,
-          claim_seeds: useResume ? claimSeeds.slice(0, 24) : [],
+          claim_seeds: useResume || defend ? claimSeeds.slice(0, 24) : [],
         }),
       });
     },
@@ -771,7 +801,10 @@ export default function StartInterviewModal({
                   className="mt-0.5"
                   checked={useResume}
                   disabled={!vaultReady || requestBusy}
-                  onChange={(e) => setUseResume(e.target.checked)}
+                  onChange={(e) => {
+                    setUseResume(e.target.checked);
+                    if (!e.target.checked) setDefenseMode(false);
+                  }}
                 />
                 <span>
                   <span className="font-semibold">Use my resume and projects</span>
@@ -779,6 +812,27 @@ export default function StartInterviewModal({
                     {vaultReady
                       ? "Ask Socratic questions about your vault projects and skills."
                       : "Add a project or skill in onboarding to enable this."}
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2.5 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  data-testid="defend-projects"
+                  checked={defenseMode}
+                  disabled={!projectReady || requestBusy}
+                  onChange={(e) => {
+                    setDefenseMode(e.target.checked);
+                    if (e.target.checked) setUseResume(true);
+                  }}
+                />
+                <span>
+                  <span className="font-semibold">Defend my projects</span>
+                  <span className="mt-0.5 block text-xs text-ink-soft">
+                    {projectReady
+                      ? "Architecture, trade-offs, ownership, and results from your Profile Vault projects."
+                      : "Add a project in Profile Vault to enable project defense."}
                   </span>
                 </span>
               </label>

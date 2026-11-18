@@ -120,6 +120,7 @@ export default function DashboardPage() {
   const [menuTrackId, setMenuTrackId] = useState<string | null>(null);
   const [startTrack, setStartTrack] = useState<Track | null>(null);
   const [startFocusWeak, setStartFocusWeak] = useState(false);
+  const [startDefenseMode, setStartDefenseMode] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [leavingId, setLeavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ id: string; subject: string } | null>(null);
@@ -1024,6 +1025,7 @@ export default function DashboardPage() {
                     onClick={() => {
                       const track = (tracks.data ?? []).find((t) => t.id === focusTrackId);
                       if (!track) return;
+                      setStartDefenseMode(false);
                       setStartFocusWeak(true);
                       setStartTrack(track);
                     }}
@@ -1033,6 +1035,22 @@ export default function DashboardPage() {
                   </button>
                 )}
               </div>
+            )}
+            {focusTrackId && (
+              <button
+                type="button"
+                data-testid="defend-projects-cta"
+                onClick={() => {
+                  const track = (tracks.data ?? []).find((t) => t.id === focusTrackId);
+                  if (!track) return;
+                  setStartFocusWeak(false);
+                  setStartDefenseMode(true);
+                  setStartTrack(track);
+                }}
+                className="mt-2 w-full rounded-md border border-line bg-white px-2 py-1.5 text-[11px] font-medium text-ink hover:bg-page"
+              >
+                Defend my projects
+              </button>
             )}
             {finishError && (
               <p
@@ -1215,9 +1233,11 @@ export default function DashboardPage() {
       <StartInterviewModal
         track={startTrack ? { id: startTrack.id, subject: startTrack.subject } : null}
         initialFocusWeak={startFocusWeak}
+        initialDefenseMode={startDefenseMode}
         onClose={() => {
           setStartTrack(null);
           setStartFocusWeak(false);
+          setStartDefenseMode(false);
         }}
       />
       {pendingDelete && (

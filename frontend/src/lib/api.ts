@@ -301,6 +301,13 @@ export interface ReportDiagnostics {
     study_topics: string[];
     practice_themes: string[];
   }[];
+  project_defense?: {
+    projects_assessed?: string[];
+    demonstrated?: string[];
+    knowledge_gaps?: string[];
+    ownership_unclear?: string[];
+    has_data?: boolean;
+  };
 }
 
 export interface PreparationPreferences {

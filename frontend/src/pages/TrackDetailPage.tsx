@@ -20,6 +20,7 @@ export default function TrackDetailPage() {
   const { trackId } = useParams();
   const [startOpen, setStartOpen] = useState(false);
   const [practiceFocusWeak, setPracticeFocusWeak] = useState(false);
+  const [practiceDefense, setPracticeDefense] = useState(false);
 
   const data = useQuery({
     queryKey: ["track", trackId],
@@ -113,6 +114,7 @@ export default function TrackDetailPage() {
               type="button"
               data-testid="practice-weak-areas"
               onClick={() => {
+                setPracticeDefense(false);
                 setPracticeFocusWeak(true);
                 setStartOpen(true);
               }}
@@ -248,20 +250,41 @@ export default function TrackDetailPage() {
         <p className="text-sm text-stone-400">No Interview Brief yet.</p>
       )}
 
-      <button
-        type="button"
-        onClick={() => setStartOpen(true)}
-        disabled={!brief}
-        className="w-full rounded-lg bg-accent py-3 font-medium text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
-      >
-        Start interview
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setPracticeDefense(false);
+            setPracticeFocusWeak(false);
+            setStartOpen(true);
+          }}
+          disabled={!brief}
+          className="w-full rounded-lg bg-accent py-3 font-medium text-white hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
+        >
+          Start interview
+        </button>
+        <button
+          type="button"
+          data-testid="defend-projects-cta"
+          onClick={() => {
+            setPracticeFocusWeak(false);
+            setPracticeDefense(true);
+            setStartOpen(true);
+          }}
+          disabled={!brief}
+          className="w-full rounded-lg border border-line bg-white py-3 font-medium text-ink hover:bg-page focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
+        >
+          Defend my projects
+        </button>
+      </div>
       <StartInterviewModal
         track={startOpen ? { id: track.id, subject: track.subject } : null}
         initialFocusWeak={practiceFocusWeak}
+        initialDefenseMode={practiceDefense}
         onClose={() => {
           setStartOpen(false);
           setPracticeFocusWeak(false);
+          setPracticeDefense(false);
         }}
       />
     </div>

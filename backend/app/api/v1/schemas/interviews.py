@@ -61,6 +61,8 @@ class SessionOut(BaseModel):
     practice_label: str | None = None
     persona_id: str | None = None
     persona_name: str | None = None
+    defense_mode: bool | None = None
+    use_resume: bool | None = None
 
 
 class SessionWithTurn(BaseModel):
