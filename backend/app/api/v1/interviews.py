@@ -32,6 +32,7 @@ class CreateSession(BaseModel):
     use_resume: bool = False
     include_vault_topics: bool = False
     focus_weak: bool = False
+    defense_mode: bool = False
     persona_id: str = "balanced"
     claim_seeds: list[dict] = Field(default_factory=list, max_length=24)
 
@@ -99,6 +100,7 @@ async def start_session(
             use_resume=bool(body.use_resume) if body else False,
             include_vault_topics=bool(body.include_vault_topics) if body else False,
             focus_weak=bool(body.focus_weak) if body else False,
+            defense_mode=bool(body.defense_mode) if body else False,
             persona_id=(body.persona_id if body else "balanced"),
             claim_seeds=(body.claim_seeds if body else None),
             mongo_db=getattr(request.app.state, "mongo_db", None),

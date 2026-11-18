@@ -295,17 +295,19 @@ def _session_options_match(
     focus_weak: bool,
     persona_id: str | None,
     include_vault_topics: bool = False,
+    defense_mode: bool = False,
 ) -> bool:
     if session.mode != mode:
         return False
     if int(getattr(session, "duration_minutes", None) or 60) != int(duration_minutes):
         return False
     opts = probe_service.session_opts_from_plan(getattr(session, "question_plan", None))
-    want_vault = bool(use_resume or include_vault_topics)
+    want_vault = bool(use_resume or include_vault_topics or defense_mode)
     have_vault = probe_service.personalize_from_vault(opts)
     return (
         have_vault == want_vault
         and bool(opts.get("focus_weak")) == bool(focus_weak)
+        and bool(opts.get("defense_mode")) == bool(defense_mode)
         and (opts.get("persona_id") or "balanced") == (persona_id or "balanced")
     )
 
@@ -422,6 +424,7 @@ async def start_session(
     use_resume: bool = False,
     include_vault_topics: bool = False,
     focus_weak: bool = False,
+    defense_mode: bool = False,
     persona_id: str | None = None,
     claim_seeds: list | None = None,
     mongo_db: object = None,
@@ -508,6 +511,7 @@ async def start_session(
                 use_resume=use_resume,
                 include_vault_topics=include_vault_topics,
                 focus_weak=focus_weak,
+                defense_mode=defense_mode,
                 persona_id=persona_id,
             )
         ]
@@ -572,28 +576,55 @@ async def start_session(
         ),
     }
     # Vault personalization: fold real vault topics into the plan when the
-    # candidate opts in (use_resume and/or include_vault_topics). Never invent
-    # domains; brief/track topics stay first and the merge is capped.
-    personalize_vault = bool(use_resume or include_vault_topics)
+    # candidate opts in (use_resume / include_vault_topics / defense_mode).
+    # Never invent domains. Defense mode prepends project titles.
+    defense_mode = bool(defense_mode)
+    if defense_mode:
+        use_resume = True
+        include_vault_topics = True
+    personalize_vault = bool(use_resume or include_vault_topics or defense_mode)
+    project_titles: list[str] = []
     if personalize_vault:
-        vault_for_plan = probe_service.vault_plan_areas(
-            await list_items(db, user.id),
-            limit=8,
-        )
-        if vault_for_plan:
-            existing = [
-                qa
-                for qa in (plan_brief.get("question_areas") or [])
-                if isinstance(qa, dict) and qa.get("topic")
+        vault_items_raw = await list_items(db, user.id)
+        if defense_mode:
+            vault_for_plan = probe_service.vault_plan_areas(
+                vault_items_raw,
+                limit=8,
+                categories=("project",),
+            )
+            project_titles = [
+                str(a.get("topic") or "").strip()
+                for a in vault_for_plan
+                if a.get("topic")
             ]
-            seen = {(qa.get("topic") or "").strip().lower() for qa in existing}
-            merged = list(existing)
-            for area in vault_for_plan:
-                key = (area.get("topic") or "").strip().lower()
-                if key and key not in seen:
-                    seen.add(key)
-                    merged.append(area)
-            plan_brief["question_areas"] = merged[:12]
+            # No projects → keep normal interview (do not invent projects).
+            if vault_for_plan:
+                existing = [
+                    qa
+                    for qa in (plan_brief.get("question_areas") or [])
+                    if isinstance(qa, dict) and qa.get("topic")
+                ]
+                plan_brief["question_areas"] = probe_service.merge_defense_question_areas(
+                    existing, vault_for_plan, cap=12, track_keep=4
+                )
+            else:
+                defense_mode = False
+        else:
+            vault_for_plan = probe_service.vault_plan_areas(vault_items_raw, limit=8)
+            if vault_for_plan:
+                existing = [
+                    qa
+                    for qa in (plan_brief.get("question_areas") or [])
+                    if isinstance(qa, dict) and qa.get("topic")
+                ]
+                seen = {(qa.get("topic") or "").strip().lower() for qa in existing}
+                merged = list(existing)
+                for area in vault_for_plan:
+                    key = (area.get("topic") or "").strip().lower()
+                    if key and key not in seen:
+                        seen.add(key)
+                        merged.append(area)
+                plan_brief["question_areas"] = merged[:12]
     t_plan = time.monotonic()
     # Deterministic plan only at start — avoids a full LLM plan call before Q1.
     plan = await question_plan.build_question_plan(
@@ -626,14 +657,17 @@ async def start_session(
                 plan[i] = slot
     elif weak_names:
         plan = probe_service.bias_plan_for_weaknesses(plan, weak_names)
+    if defense_mode and project_titles:
+        plan = probe_service.bias_plan_for_defense(plan, project_titles)
     plan = bias_plan_for_persona(plan, persona_id)
-    seeds = claim_seeds if personalize_vault else None
+    seeds = claim_seeds if (personalize_vault or defense_mode) else None
     start_profile = active_profile(brief_content)
     plan = probe_service.attach_session_opts(
         plan,
-        use_resume=use_resume,
-        include_vault_topics=personalize_vault,
+        use_resume=use_resume or defense_mode,
+        include_vault_topics=personalize_vault or defense_mode,
         focus_weak=focus_weak,
+        defense_mode=defense_mode,
         persona_id=persona_id,
         claim_seeds=seeds,
         domain_profile=start_profile,
@@ -833,6 +867,9 @@ async def submit_answer(
     ).get("knowledge_state")
     if knowledge:
         detail["knowledge_state"] = knowledge
+    opts_now = probe_service.session_opts_from_plan(getattr(session, "question_plan", None))
+    if opts_now.get("defense_mode"):
+        detail["project_defense"] = probe_service.project_defense_findings(answered_snapshot)
     last_turn.evaluation_detail = detail
     last_turn.interviewer_notes = decision.notes_for_report
 
@@ -1328,9 +1365,21 @@ async def _decide(
     vault_items: list[dict] = []
     weak_names: list[str] = []
     vault_personalize = probe_service.personalize_from_vault(opts)
+    defense_on = bool(opts.get("defense_mode"))
+    if defense_on:
+        payload["defense_mode"] = True
+        payload["defense_instruction"] = probe_service.defense_system_rules()
     if vault_personalize or opts.get("focus_weak"):
         if vault_personalize:
-            vault_items = probe_service.sanitize_vault_items(await list_items(db, session.user_id))
+            raw_items = await list_items(db, session.user_id)
+            if defense_on:
+                vault_items = probe_service.sanitize_vault_items(
+                    raw_items, categories=("project",)
+                )
+                if not vault_items:
+                    vault_items = probe_service.sanitize_vault_items(raw_items)
+            else:
+                vault_items = probe_service.sanitize_vault_items(raw_items)
             if vault_items:
                 payload["vault_prompt_block"] = probe_service.vault_prompt_block(vault_items)
         answered_turns, session_ids = await _track_answered_turns(
@@ -1540,6 +1589,8 @@ def _session_dict(
         "created_at": _as_utc(s.created_at).isoformat() if s.created_at else None,
         "persona_id": persona.id,
         "persona_name": persona.name,
+        "defense_mode": bool(opts.get("defense_mode")),
+        "use_resume": bool(opts.get("use_resume") or opts.get("include_vault_topics")),
     }
     if practice_label:
         body["practice_label"] = practice_label
