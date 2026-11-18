@@ -485,7 +485,13 @@ def _progression_target(payload: dict, current: str) -> str | None:
 
 
 def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
-    """Deterministic mode/policy fixes that do not require another LLM call."""
+    """Deterministic mode/policy fixes that do not require another LLM call.
+
+    Adaptive Knowledge actions (mapped onto existing decisions):
+    A ADVANCE / E CHANGE TOPIC → next_area (often via _force_topic)
+    B TARGETED FOLLOW-UP → follow_up (at most once per area for none/partial)
+    C LOWER / D INCREASE difficulty → plan nudge in interview_service + next_area
+    """
     turns_in_area = int(payload.get("turns_in_current_area") or 0)
     remaining = list(payload.get("remaining_areas") or [])
     remaining_slots = payload.get("questions_remaining")
@@ -494,20 +500,45 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
     planned = _planned_topic(payload)
     budget = _topic_budget(payload)
     coverage = _evaluation_coverage(decision)
+    covered = payload.get("covered_so_far") or {}
+    knowledge = covered.get("knowledge_state") if isinstance(covered, dict) else {}
+    recent = list((knowledge or {}).get("recent_coverage") or [])
+    strong_streak = len(recent) >= 2 and all(c in ("good", "excellent") for c in recent[-2:])
 
     if remaining_slots is not None and int(remaining_slots) <= 0:
         return decision.model_copy(update={"decision": "complete", "next_question": ""})
 
+    # B: First weak answer → allow one focused follow-up (do not burn the plan).
+    if (
+        decision.decision == "next_area"
+        and coverage in ("none", "partial")
+        and turns_in_area <= 1
+        and payload.get("last_answer")
+    ):
+        decision = decision.model_copy(
+            update={
+                "decision": "follow_up",
+                "question_area": current or decision.question_area or "General",
+            }
+        )
+
     # Sufficient answers must advance — soft follow-ups must not burn the plan.
     if decision.decision == "follow_up" and coverage in ("good", "excellent"):
         target = _progression_target(payload, current) or planned or current
+        if strong_streak and remaining:
+            # D: strong streak → prefer next remaining (higher difficulty nudged on plan).
+            target = remaining[0] or target
         if target:
             decision = _force_topic(decision, target)
         else:
             decision = decision.model_copy(update={"decision": "next_area"})
 
+    # Cap follow-ups: never more than one soft probe before advancing.
     if decision.decision == "follow_up" and turns_in_area >= 2:
         target = _progression_target(payload, current)
+        if coverage in ("none", "partial") and remaining:
+            # C / E: after a weak follow-up, change topic toward a gap or next area.
+            target = remaining[0] or target
         if target:
             decision = _force_topic(decision, target)
         else:

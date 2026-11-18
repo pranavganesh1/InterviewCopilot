@@ -169,7 +169,11 @@ def build_covered_so_far(
     plan: list | None,
     questions_asked: int,
 ) -> dict:
-    """Compact session memory for the interviewer (no new tables)."""
+    """Compact session memory for the interviewer (no new tables).
+
+    Includes an adaptive knowledge snapshot derived only from persisted turn
+    evaluations — never invents abilities or resume gaps.
+    """
     covered_objectives: list[str] = []
     seen: set[str] = set()
     if isinstance(plan, list):
@@ -198,21 +202,56 @@ def build_covered_so_far(
             }
 
     weak_areas: list[dict] = []
+    strengths: list[str] = []
+    recent_coverage: list[str] = []
     for t in turns:
         cov = (getattr(t, "evaluation_coverage", None) or "").lower()
-        if cov in ("none", "partial") and getattr(t, "answer", None):
+        if not getattr(t, "answer", None):
+            continue
+        if cov:
+            recent_coverage.append(cov)
+        area = (getattr(t, "question_area", None) or "").strip()
+        if cov in ("none", "partial"):
             weak_areas.append(
                 {
-                    "area": t.question_area,
+                    "area": area,
                     "coverage": cov,
                     "question": (t.question or "")[:160],
+                    "gaps": list(getattr(t, "evaluation_gaps", None) or [])[:4],
                 }
             )
+        elif cov in ("good", "excellent") and area:
+            strengths.append(area)
+
+    # Dedupe strengths while preserving order.
+    seen_strength: set[str] = set()
+    strength_areas: list[str] = []
+    for area in strengths:
+        key = area.lower()
+        if key in seen_strength:
+            continue
+        seen_strength.add(key)
+        strength_areas.append(area)
+
+    knowledge_state = {
+        "demonstrated_strengths": strength_areas[:8],
+        "knowledge_gaps": [
+            {
+                "area": row.get("area") or "",
+                "coverage": row.get("coverage") or "",
+                "gaps": row.get("gaps") or [],
+            }
+            for row in weak_areas[:8]
+        ],
+        "recent_coverage": recent_coverage[-6:],
+        "questions_assessed": len(recent_coverage),
+    }
 
     return {
         "covered_objectives": covered_objectives,
         "next_planned_objective": next_planned,
         "weak_areas": weak_areas[:8],
+        "knowledge_state": knowledge_state,
     }
 
 
@@ -766,6 +805,7 @@ async def submit_answer(
         "space_complexity": decision.evaluation.space_complexity,
         "rubric_version": getattr(decision, "rubric_version", None) or "v1",
         "evaluator_checks": list(getattr(decision, "evaluator_checks", None) or []),
+        "adaptive_action": decision.decision,
     }
     # Coding answers are reviewed statically — never executed in this product yet.
     prior = last_turn.evaluation_detail if isinstance(last_turn.evaluation_detail, dict) else {}
@@ -776,8 +816,36 @@ async def submit_answer(
     used_model = getattr(decision, "model", None) or llm_model_used.get()
     if used_model:
         detail["model"] = used_model
+    # Snapshot knowledge state from answered turns including this evaluation.
+    answered_snapshot = list(await _turns(db, session.id))
+    for t in answered_snapshot:
+        if t.id == last_turn.id:
+            t.evaluation_coverage = last_turn.evaluation_coverage
+            t.evaluation_gaps = last_turn.evaluation_gaps
+            t.evaluation_strengths = last_turn.evaluation_strengths
+            break
+    knowledge = build_covered_so_far(
+        answered_snapshot,
+        plan=getattr(session, "question_plan", None)
+        if isinstance(getattr(session, "question_plan", None), list)
+        else None,
+        questions_asked=len([t for t in answered_snapshot if t.answer]),
+    ).get("knowledge_state")
+    if knowledge:
+        detail["knowledge_state"] = knowledge
     last_turn.evaluation_detail = detail
     last_turn.interviewer_notes = decision.notes_for_report
+
+    # Adaptive difficulty nudge on the next plan slot from demonstrated coverage.
+    raw_plan = getattr(session, "question_plan", None)
+    if isinstance(raw_plan, list) and weakness_service.apply_plan_difficulty_nudge(
+        raw_plan,
+        questions_asked=len([t for t in answered_snapshot if t.answer]),
+        coverage=decision.evaluation.coverage,
+    ):
+        session.question_plan = raw_plan
+        flag_modified(session, "question_plan")
+
     await db.commit()
 
     turns_so_far = await _count_turns(db, session.id)
@@ -1101,6 +1169,16 @@ async def _decide(
     covered_keys = {a.lower() for a in covered_areas if a}
     remaining_areas = [t for t in subject_pool if t.lower() not in covered_keys]
     covered_so_far = build_covered_so_far(turns, plan=plan, questions_asked=questions_asked)
+    # Adaptive Knowledge: reorder remaining subjects toward session gaps first.
+    session_weak = [
+        str(row.get("area") or "")
+        for row in (covered_so_far.get("weak_areas") or [])
+        if isinstance(row, dict) and row.get("area")
+    ]
+    remaining_areas = weakness_service.prioritize_remaining_areas(
+        remaining_areas,
+        session_weak_areas=session_weak,
+    )
 
     duration = int(getattr(session, "duration_minutes", None) or 60)
     # Tests may pass a lightweight namespace without created_at / duration.
@@ -1206,13 +1284,14 @@ async def _decide(
         ],
         "covered_so_far": covered_so_far,
         "memory_instruction": (
-            "Use covered_so_far: avoid repeating covered_objectives; prefer "
-            "next_planned_objective when present; stay on the planned subject for "
+            "Use covered_so_far and knowledge_state: avoid repeating covered_objectives; "
+            "prefer next_planned_objective when present; stay on the planned subject for "
             "about topic_budget questions, then advance to the next planned subject "
             "automatically — do not wait for the candidate to ask for the next topic. "
-            "follow_up only for none/partial coverage; never burn the plan on soft "
-            "same-concept follow-ups. You may revisit ONE weak_areas entry with a "
-            "DIFFERENT question (never a rephrase of asked_questions)."
+            "follow_up only once for none/partial coverage; never burn the plan on soft "
+            "same-concept follow-ups. Prefer remaining_areas order (weak gaps first). "
+            "You may revisit ONE weak_areas entry with a DIFFERENT question "
+            "(never a rephrase of asked_questions). Do not invent resume gaps."
         ),
         "diversity_instruction": diversity,
         "programming_track": is_programming_brief(brief_content),
