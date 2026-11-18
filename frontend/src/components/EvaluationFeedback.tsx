@@ -65,7 +65,7 @@ export default function EvaluationFeedback({
       {evaluation.gaps.length > 0 && (
         <div className="mt-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-            To improve
+            Why this score · gaps
           </p>
           <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-stone-800">
             {evaluation.gaps.map((g) => (

@@ -119,6 +119,7 @@ export default function DashboardPage() {
   const [showDeleted, setShowDeleted] = useState(false);
   const [menuTrackId, setMenuTrackId] = useState<string | null>(null);
   const [startTrack, setStartTrack] = useState<Track | null>(null);
+  const [startFocusWeak, setStartFocusWeak] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [leavingId, setLeavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ id: string; subject: string } | null>(null);
@@ -1000,21 +1001,38 @@ export default function DashboardPage() {
               </div>
             </div>
             {(weaknesses.data?.top_weak?.length ?? 0) > 0 && (
-              <ul className="mt-2 space-y-0.5 border-t border-line/70 pt-2">
-                {weaknesses.data!.top_weak.slice(0, 3).map((row) => (
-                  <li
-                    key={row.concept}
-                    className="flex min-w-0 items-center justify-between gap-2 text-[10px] text-ink-soft"
+              <div className="mt-2 space-y-2 border-t border-line/70 pt-2">
+                <ul className="space-y-0.5">
+                  {weaknesses.data!.top_weak.slice(0, 3).map((row) => (
+                    <li
+                      key={row.concept}
+                      className="flex min-w-0 items-center justify-between gap-2 text-[10px] text-ink-soft"
+                    >
+                      <span className="truncate" title={row.concept}>
+                        {row.concept}
+                      </span>
+                      <span className="shrink-0 font-medium uppercase tracking-wide text-ink-faint">
+                        {row.status}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {focusTrackId && (
+                  <button
+                    type="button"
+                    data-testid="practice-weak-areas"
+                    onClick={() => {
+                      const track = (tracks.data ?? []).find((t) => t.id === focusTrackId);
+                      if (!track) return;
+                      setStartFocusWeak(true);
+                      setStartTrack(track);
+                    }}
+                    className="w-full rounded-md border border-line bg-white px-2 py-1.5 text-[11px] font-medium text-ink hover:bg-page"
                   >
-                    <span className="truncate" title={row.concept}>
-                      {row.concept}
-                    </span>
-                    <span className="shrink-0 font-medium uppercase tracking-wide text-ink-faint">
-                      {row.status}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+                    Practice weak areas
+                  </button>
+                )}
+              </div>
             )}
             {finishError && (
               <p
@@ -1196,7 +1214,11 @@ export default function DashboardPage() {
       </div>
       <StartInterviewModal
         track={startTrack ? { id: startTrack.id, subject: startTrack.subject } : null}
-        onClose={() => setStartTrack(null)}
+        initialFocusWeak={startFocusWeak}
+        onClose={() => {
+          setStartTrack(null);
+          setStartFocusWeak(false);
+        }}
       />
       {pendingDelete && (
         <DeleteTrackDialog

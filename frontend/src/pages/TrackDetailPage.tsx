@@ -19,6 +19,7 @@ const IMPORTANCE_STYLE: Record<string, string> = {
 export default function TrackDetailPage() {
   const { trackId } = useParams();
   const [startOpen, setStartOpen] = useState(false);
+  const [practiceFocusWeak, setPracticeFocusWeak] = useState(false);
 
   const data = useQuery({
     queryKey: ["track", trackId],
@@ -92,21 +93,34 @@ export default function TrackDetailPage() {
             Complete interviews with answered questions to see weak areas.
           </p>
         ) : (
-          <ul className="mt-3 space-y-2">
-            {weaknesses.data.top_weak.map((row) => (
-              <li
-                key={row.concept}
-                className="flex min-w-0 items-center justify-between gap-2 text-sm"
-              >
-                <span className="truncate font-medium text-ink" title={row.concept}>
-                  {row.concept}
-                </span>
-                <span className="shrink-0 rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-semibold uppercase text-violet-700">
-                  {row.status}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="mt-3 space-y-2">
+              {weaknesses.data.top_weak.map((row) => (
+                <li
+                  key={row.concept}
+                  className="flex min-w-0 items-center justify-between gap-2 text-sm"
+                >
+                  <span className="truncate font-medium text-ink" title={row.concept}>
+                    {row.concept}
+                  </span>
+                  <span className="shrink-0 rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-semibold uppercase text-violet-700">
+                    {row.status}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              data-testid="practice-weak-areas"
+              onClick={() => {
+                setPracticeFocusWeak(true);
+                setStartOpen(true);
+              }}
+              className="mt-3 rounded-lg border border-line bg-page px-3 py-2 text-sm font-medium text-ink hover:bg-white"
+            >
+              Practice weak areas
+            </button>
+          </>
         )}
       </section>
 
@@ -244,7 +258,11 @@ export default function TrackDetailPage() {
       </button>
       <StartInterviewModal
         track={startOpen ? { id: track.id, subject: track.subject } : null}
-        onClose={() => setStartOpen(false)}
+        initialFocusWeak={practiceFocusWeak}
+        onClose={() => {
+          setStartOpen(false);
+          setPracticeFocusWeak(false);
+        }}
       />
     </div>
   );

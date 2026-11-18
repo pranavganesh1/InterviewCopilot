@@ -66,11 +66,14 @@ def test_covered_so_far_with_plan_and_null_plan():
     assert "collision resolution" in mem["covered_objectives"]
     assert mem["next_planned_objective"]["topic"] == "Graphs"
     assert len(mem["weak_areas"]) == 2
+    assert mem["knowledge_state"]["questions_assessed"] == 2
+    assert mem["knowledge_state"]["recent_coverage"] == ["partial", "none"]
 
     null_mem = build_covered_so_far(turns, plan=None, questions_asked=2)
     assert null_mem["next_planned_objective"] is None
     assert "Hashmaps" in null_mem["covered_objectives"]
     assert "Trees" in null_mem["covered_objectives"]
+    assert "knowledge_state" in null_mem
 
 
 def test_weak_area_revisit_must_not_reuse_question():
