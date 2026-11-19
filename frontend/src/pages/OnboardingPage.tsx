@@ -7,6 +7,7 @@ import {
   type ChatResult,
   type OnboardingState,
   type PreparationPreferences,
+  type ResumeSyncResult,
   type StartInterviewOffer,
   type Track,
 } from "../lib/api";
@@ -14,6 +15,8 @@ import { useAuth } from "../context/AuthContext";
 import ConversationStarters from "../components/ConversationStarters";
 import EmojiPicker from "../components/EmojiPicker";
 import GoalDiscovery from "../components/GoalDiscovery";
+import ConversationHistory from "../components/ConversationHistory";
+import ResumeVaultManager, { syncSummary } from "../components/ResumeVaultManager";
 import StartInterviewModal from "../components/StartInterviewModal";
 import { VaultSidebar } from "../components/VaultSidebar";
 
@@ -567,19 +570,38 @@ export default function OnboardingPage() {
     mutationFn: (file: File) => {
       const form = new FormData();
       form.append("file", file);
-      return api<{
-        items_created: { title: string }[];
-        items_skipped?: number;
-        welcome_seeded?: boolean;
-      }>("/vault/resume", { method: "POST", body: form });
+      return api<ResumeSyncResult>("/vault/resume", { method: "POST", body: form });
     },
     onSuccess: (data) => {
       setShowStartersOverride(true);
-      qc.invalidateQueries({ queryKey: ["onboarding-state"] });
-      const n = data.items_created?.length ?? 0;
+      setFailedMessage(null);
+      setPendingUser(null);
+      setEmptyFallback(null);
+      setErrorBanner(null);
+      // Fresh conversation after successful sync — drop local optimistic state.
+      setHistoryAnchor(null);
+      stickToBottomRef.current = true;
+      void qc
+        .fetchQuery({
+          queryKey: ["onboarding-state"],
+          queryFn: () => api<OnboardingState>("/onboarding/state"),
+        })
+        .then((stateData) => {
+          qc.setQueryData(["onboarding-state"], stateData);
+          // Treat the new welcome as the start of this thread (animate in).
+          setHistoryAnchor(0);
+        });
+      qc.invalidateQueries({ queryKey: ["vault-duplicates"] });
+      qc.invalidateQueries({ queryKey: ["vault-resume-reset-preview"] });
+      const n = data.counts?.created ?? data.items_created?.length ?? 0;
       pushToast(
         "success",
-        n ? `Resume uploaded · ${n} item${n === 1 ? "" : "s"}` : "Resume uploaded",
+        data.conversation_started
+          ? "Resume uploaded · new conversation started"
+          : n
+            ? `Resume synced · ${n} new item${n === 1 ? "" : "s"}`
+            : "Resume synced · no new items",
+        syncSummary(data),
       );
     },
     onError: (err) => {
@@ -761,6 +783,17 @@ export default function OnboardingPage() {
     if (historyAnchor !== null || state.isLoading || !state.data) return;
     setHistoryAnchor(state.data.messages?.length ?? 0);
   }, [historyAnchor, state.isLoading, state.data]);
+
+  // Switching conversations must reload the correct message list without mixing threads.
+  const activeConversationId = state.data?.conversation_id ?? null;
+  useEffect(() => {
+    if (!activeConversationId) return;
+    setHistoryAnchor(null);
+    setPendingUser(null);
+    setFailedMessage(null);
+    setEmptyFallback(null);
+    stickToBottomRef.current = true;
+  }, [activeConversationId]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -1133,11 +1166,7 @@ export default function OnboardingPage() {
       )}
       {upload.data && (
         <p className="text-[11px] text-emerald-700" data-testid="resume-upload-success">
-          {upload.data.items_created.length === 0
-            ? "No new vault items — those titles were already saved."
-            : `Added ${upload.data.items_created.length} vault item${
-                upload.data.items_created.length === 1 ? "" : "s"
-              } from your resume.`}
+          {syncSummary(upload.data)}
           {upload.data.welcome_seeded
             ? " Your coach started the conversation."
             : ""}
@@ -1177,9 +1206,12 @@ export default function OnboardingPage() {
     <div className="space-y-3">
       <p className="text-xs text-ink-soft">
         {hasResumeSignal
-          ? "Replace or refresh your resume anytime with Upload Resume above."
+          ? "Your Profile Vault is the source of truth. Re-uploads sync incrementally — they do not rebuild your profile from scratch."
           : "Use Upload Resume above to add a PDF — Chanakya builds your profile from it."}
       </p>
+      <ResumeVaultManager
+        onRequestUpload={() => resumeInputRef.current?.click()}
+      />
       <Link
         to="/readiness"
         className="block rounded-2xl border border-accent/30 bg-gradient-to-br from-accent-soft to-surface p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-card"
@@ -1309,36 +1341,45 @@ export default function OnboardingPage() {
               </div>
               <div className="min-w-0">
                 <h2 className="truncate text-sm font-semibold text-ink">Chanakya</h2>
-                <p className="truncate text-xs text-ink-soft">Interview Coach</p>
+                <p className="truncate text-xs text-ink-soft">
+                  {state.data?.conversation_title || "Interview Coach"}
+                </p>
               </div>
             </div>
-            <span
-              data-testid="onboarding-status-chip"
-              title={
-                finished && state.data?.onboarding_completed_at
-                  ? `Completed ${new Date(state.data.onboarding_completed_at).toLocaleString()}`
-                  : undefined
-              }
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ${
-                finished
-                  ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
-                  : "bg-accent-soft text-accent-strong ring-accent/20"
-              }`}
-            >
-              {finished ? (
-                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
-                  <path
-                    d="M3.5 8.2 6.8 11.3 12.5 4.8"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              ) : null}
-              {finished ? "Onboarding complete" : "In progress"}
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <ConversationHistory
+                conversations={state.data?.conversations}
+                activeId={state.data?.conversation_id}
+                disabled={busy || upload.isPending}
+              />
+              <span
+                data-testid="onboarding-status-chip"
+                title={
+                  finished && state.data?.onboarding_completed_at
+                    ? `Completed ${new Date(state.data.onboarding_completed_at).toLocaleString()}`
+                    : undefined
+                }
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ${
+                  finished
+                    ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
+                    : "bg-accent-soft text-accent-strong ring-accent/20"
+                }`}
+              >
+                {finished ? (
+                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
+                    <path
+                      d="M3.5 8.2 6.8 11.3 12.5 4.8"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : null}
+                {finished ? "Onboarding complete" : "In progress"}
+              </span>
+            </div>
           </div>
 
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">

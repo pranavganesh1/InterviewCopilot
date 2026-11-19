@@ -6,7 +6,10 @@ import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ValidationError
 
+from app.core.logging import get_logger
 from app.gateway.llm import LLMCause, LLMGatewayError, chat_completion, get_http_client
+
+log = get_logger(__name__)
 
 _FENCE_RE = re.compile(
     r"^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$", re.IGNORECASE
@@ -146,6 +149,16 @@ async def structured_completion(
             return schema.model_validate(data)
         except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
             last_error = exc
+            err_detail = str(exc).replace("\n", " ")[:240]
+            log.warning(
+                "structured_parse_or_validate_failed",
+                model=model,
+                schema=schema.__name__,
+                attempt=attempt + 1,
+                error_class=type(exc).__name__,
+                error=err_detail,
+                request_id=request_id,
+            )
             if attempt >= repairs - 1:
                 break
             # Keep repair prompts short — do not re-send huge invalid blobs.
@@ -155,13 +168,26 @@ async def structured_completion(
                 {
                     "role": "user",
                     "content": (
-                        f"Your previous output was invalid ({type(exc).__name__}). "
+                        f"Your previous output was invalid ({type(exc).__name__}): "
+                        f"{err_detail}. "
                         "Respond with ONLY corrected JSON matching the required schema. "
-                        "No markdown fences."
+                        "No markdown fences. Use only allowed enum values; "
+                        "details must be an object of string values."
                     ),
                 }
             )
     err_name = type(last_error).__name__ if last_error else "unknown"
+    err_detail = (
+        str(last_error).replace("\n", " ")[:240] if last_error is not None else ""
+    )
+    log.warning(
+        "structured_output_exhausted",
+        model=model,
+        schema=schema.__name__,
+        error_class=err_name,
+        error=err_detail,
+        request_id=request_id,
+    )
     raise LLMGatewayError(
         f"structured output invalid after repair retry: {err_name}",
         cause=LLMCause.schema_rejected,

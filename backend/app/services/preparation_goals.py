@@ -366,6 +366,25 @@ _FIELD_HINTS: list[tuple[str, tuple[str, ...]]] = [
             "b.e",
         ),
     ),
+    (
+        "hr_people",
+        ("human resources", " hr ", "recruitment", "talent acquisition", "people ops"),
+    ),
+    (
+        "marketing_sales",
+        ("marketing", "sales", "brand", "digital marketing", "seo", "crm"),
+    ),
+    (
+        "logistics",
+        (
+            "logistics",
+            "supply chain",
+            "procurement",
+            "inventory",
+            "warehouse",
+            "operations management",
+        ),
+    ),
 ]
 
 _FIELD_PREP: dict[str, list[str]] = {
@@ -415,6 +434,24 @@ _FIELD_PREP: dict[str, list[str]] = {
         "Core engineering concepts",
         "Project deep dive",
         "Aptitude & reasoning",
+        "HR & behavioral",
+    ],
+    "hr_people": [
+        "HR scenarios",
+        "Recruitment & employee relations",
+        "Communication interviews",
+        "HR & behavioral",
+    ],
+    "marketing_sales": [
+        "Marketing case questions",
+        "Sales scenarios",
+        "Communication interviews",
+        "HR & behavioral",
+    ],
+    "logistics": [
+        "Supply chain concepts",
+        "Procurement & inventory",
+        "Operations scenarios",
         "HR & behavioral",
     ],
     "general": [
@@ -468,6 +505,24 @@ _FIELD_ROLES: dict[str, list[str]] = {
         "Operations Engineer",
         "Software Engineer Intern",
     ],
+    "hr_people": [
+        "HR Executive",
+        "Talent Acquisition Associate",
+        "People Operations Associate",
+        "I'm still exploring",
+    ],
+    "marketing_sales": [
+        "Marketing Associate",
+        "Sales Executive",
+        "Business Development Associate",
+        "I'm still exploring",
+    ],
+    "logistics": [
+        "Supply Chain Analyst",
+        "Procurement Associate",
+        "Operations Associate",
+        "I'm still exploring",
+    ],
     "general": [
         "Graduate Trainee",
         "Operations Associate",
@@ -502,7 +557,7 @@ def infer_candidate_background(summary: list[dict]) -> dict:
             field_family = family
             break
 
-    # B.Tech + programming skills → treat as CS even when degree text is generic.
+    # Soft CS upgrade: education/IT signal OR multiple CS skill hits — never a lone "Python".
     cs_skill_signals = (
         "python",
         "java",
@@ -517,9 +572,21 @@ def infer_candidate_background(summary: list[dict]) -> dict:
         "pytorch",
         "tensorflow",
     )
-    if field_family in ("engineering", "general") and any(
-        k in blob for k in cs_skill_signals
-    ):
+    edu_blob = " ".join(education).lower()
+    cs_edu = any(
+        k in edu_blob
+        for k in (
+            "computer",
+            "software",
+            "information technology",
+            "cse",
+            "mca",
+            "data science",
+            "artificial intelligence",
+        )
+    )
+    cs_hits = sum(1 for k in cs_skill_signals if k in blob)
+    if field_family in ("engineering", "general") and (cs_edu or cs_hits >= 2):
         field_family = "computer_science"
 
     if internships and not projects and not skills:
@@ -666,31 +733,13 @@ def build_resume_goal_options(vault_summary: list[dict]) -> dict:
 
 
 def goals_intro_message(vault_summary: list[dict] | None = None) -> str:
-    """Warm goal-discovery opener — 1–2 resume hooks, one question."""
-    summary = vault_summary or []
-    skills = skill_titles(summary)
-    projects = project_titles(summary)
-
-    if projects and skills:
-        return (
-            f"Your “{projects[0]}” project caught my eye — and {skills[0]} shows up a lot "
-            f"in your profile. 🚀 Let's personalize your prep.\n\n"
-            f"{GOALS_INTRO_MARKER} first?"
-        )
-    if projects:
-        return (
-            f"Your “{projects[0]}” project looks like a great interview story. 🚀 "
-            f"Let's personalize your prep.\n\n{GOALS_INTRO_MARKER} first?"
-        )
-    if skills:
-        preview = " and ".join(skills[:2])
-        return (
-            f"Nice — I see {preview} in your profile. "
-            f"Let's personalize your prep.\n\n{GOALS_INTRO_MARKER} first?"
-        )
+    """Natural goal-discovery opener — never auto-selects a project or skill."""
+    _ = vault_summary  # inventory stays in UI options; keep chat copy light
     return (
-        "Your profile looks solid! Let's personalize your interview prep.\n\n"
-        f"{GOALS_INTRO_MARKER} first?"
+        "Great — thanks for confirming.\n\n"
+        "What kind of role are you aiming for right now? "
+        f"{GOALS_INTRO_MARKER} first — technical interviews, a project deep dive, "
+        "skill practice, placements, or HR and behavioral?"
     )
 
 
@@ -730,19 +779,18 @@ def goals_followup_reply(
         return "Which technical area should we sharpen first?"
     if "skill" in p["interests"] and not p.get("focus_skills"):
         if skills:
-            preview = " and ".join(skills[:2])
             return (
-                f"Awesome! 🧠 I noticed {preview} in your resume. "
-                "Which one would you like to practice first?"
+                "Which skill would you like to practise first? "
+                "Pick one from the list, or type a name."
             )
-        return "Which skill would you like to practice first?"
+        return "Which skill would you like to practise first?"
     if "project" in p["interests"] and not p.get("focus_projects"):
         if projects:
             return (
-                f"Your “{projects[0]}” project caught my attention! 🚀 "
-                "Want to prep that one, or another project from your resume?"
+                "Which project or experience did you work on and want to discuss "
+                "in interviews? Pick one from the list, or type the name."
             )
-        return "Which project should we deep-dive for interviews?"
+        return "Which experience would you like to deep-dive for interviews?"
     if (
         "project" in p["interests"]
         and p.get("focus_projects")

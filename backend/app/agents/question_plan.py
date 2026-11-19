@@ -210,15 +210,32 @@ def _steer_topics(topics: list[str], avoid: set[str]) -> list[str]:
     return fresh + [topic for topic in topics if topic.lower() in avoid]
 
 
+# Configurable default depth per subject (~3). Duration/plan length may use 2–4.
+DEFAULT_QUESTIONS_PER_TOPIC = 3
+
+
 def _questions_per_topic(
     n: int, n_topics: int, *, duration_minutes: int | None = None
 ) -> int:
-    """Consecutive questions per subject; shorter sessions use smaller blocks."""
+    """Consecutive questions per subject; shorter sessions use smaller blocks.
+
+    Prefer about DEFAULT_QUESTIONS_PER_TOPIC when the duration and total plan
+    length support it. Follow-ups are not counted as planned topic slots.
+    """
     if n_topics <= 0:
         return max(2, n)
     mins = int(duration_minutes) if duration_minutes is not None else 60
     lo, hi = (2, 3) if mins <= 30 else (2, 4)
-    return max(lo, min(hi, (n + n_topics - 1) // n_topics))
+    computed = max(lo, min(hi, (n + n_topics - 1) // n_topics))
+    # When the plan is long enough for ~3 per topic, prefer that default.
+    if (
+        mins >= 40
+        and n >= n_topics * DEFAULT_QUESTIONS_PER_TOPIC
+        and computed < DEFAULT_QUESTIONS_PER_TOPIC
+        and DEFAULT_QUESTIONS_PER_TOPIC <= hi
+    ):
+        return DEFAULT_QUESTIONS_PER_TOPIC
+    return computed
 
 
 def _blocked_topic_sequence(

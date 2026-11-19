@@ -71,9 +71,10 @@ def test_topic_replies_sound_human_not_mechanical():
     )
     assert cont
     assert "Python" in cont
-    assert "Music Database Management" in cont
+    assert "let's dig into" not in cont.lower()
     assert "clearer picture" not in cont.lower()
     assert not cont.lower().startswith("nice")
+    assert not cont.lower().startswith("staying with")
 
 
 def test_continue_topic_avoids_repeating_last_probe():

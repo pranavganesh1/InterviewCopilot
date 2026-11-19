@@ -1,7 +1,9 @@
 """Post-onboarding profile review, validation statuses, and preparation roadmap.
 
-Built only from persisted vault items, preparation preferences, and optional
-interview history. Never invents proficiency scores or unverified facts.
+Built from persisted vault items, preparation preferences, and optional
+interview history. When a Candidate Intelligence Snapshot is supplied, the
+review uses it as the shared evidence context (claims vs demonstrated vs
+not-assessed) without inventing proficiency scores or unverified facts.
 """
 
 from __future__ import annotations
@@ -20,6 +22,175 @@ from app.services.preparation_goals import (
 from app.services.vault_service import find_near_duplicates, missing_project_details
 
 STATUSES = ("confirmed", "needs_clarification", "not_assessed")
+
+
+def assessed_concepts_from_snapshot(snapshot: dict | None) -> set[str]:
+    """Concepts that have interview-turn evidence (any coverage) — not vault claims."""
+    if not isinstance(snapshot, dict):
+        return set()
+    names: set[str] = set()
+    knowledge = snapshot.get("knowledge_evidence") or {}
+    for track in knowledge.get("by_track") or []:
+        if not isinstance(track, dict):
+            continue
+        for row in track.get("concepts") or []:
+            if isinstance(row, dict) and row.get("concept"):
+                names.add(str(row["concept"]).lower())
+        for bucket in (
+            "demonstrated_strengths",
+            "demonstrated_weaknesses",
+            "developing",
+        ):
+            for row in track.get(bucket) or []:
+                if isinstance(row, dict) and row.get("concept"):
+                    names.add(str(row["concept"]).lower())
+    return {n for n in names if n}
+
+
+def improvement_topics_from_snapshot(snapshot: dict | None) -> list[str]:
+    """Ordered improvement topics from demonstrated weaknesses + feedback digests.
+
+    Prefer track-scoped weaknesses first; then feedback improvement_areas.
+    Dedupes by case-insensitive name. Never invents topics.
+    """
+    if not isinstance(snapshot, dict):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: str | None) -> None:
+        label = " ".join(str(raw or "").split()).strip()
+        if not label:
+            return
+        key = label.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(label[:120])
+
+    knowledge = snapshot.get("knowledge_evidence") or {}
+    for track in knowledge.get("by_track") or []:
+        if not isinstance(track, dict):
+            continue
+        for row in track.get("demonstrated_weaknesses") or []:
+            if not isinstance(row, dict):
+                continue
+            _add(row.get("concept"))
+            if len(out) >= 5:
+                return out
+
+    for rep in (snapshot.get("feedback_history") or {}).get("reports") or []:
+        if not isinstance(rep, dict):
+            continue
+        for area in rep.get("improvement_areas") or []:
+            _add(str(area))
+            if len(out) >= 5:
+                return out
+        for comp in rep.get("competency_assessments") or []:
+            if not isinstance(comp, dict):
+                continue
+            level = str(comp.get("level") or "").lower()
+            if level in ("weak", "developing"):
+                _add(comp.get("competency_name"))
+            if len(out) >= 5:
+                return out
+    return out
+
+
+def intelligence_digest_from_snapshot(snapshot: dict | None) -> dict | None:
+    """Compact, optional review field — safe for clients that ignore unknown keys."""
+    if not isinstance(snapshot, dict):
+        return None
+    knowledge = snapshot.get("knowledge_evidence") or {}
+    claims = knowledge.get("candidate_claims") or {}
+    demo = knowledge.get("interview_demonstrated") or {}
+    not_assessed = knowledge.get("not_assessed") or {}
+    goals = (snapshot.get("profile") or {}).get("career_goals") or {}
+    projects = []
+    for proj in snapshot.get("projects") or []:
+        if not isinstance(proj, dict) or not proj.get("name"):
+            continue
+        projects.append(
+            {
+                "name": proj.get("name"),
+                "technologies": proj.get("technologies"),
+                "contribution": proj.get("contribution"),
+                "needs_clarification": list(proj.get("needs_clarification") or [])[:6],
+                "evidence_kind": "claim",
+                "discussion_ready": not bool(proj.get("needs_clarification")),
+            }
+        )
+        if len(projects) >= 8:
+            break
+
+    def _concept_names(rows: list | None, *, limit: int = 8) -> list[str]:
+        out: list[str] = []
+        for row in rows or []:
+            if isinstance(row, dict) and row.get("concept"):
+                out.append(str(row["concept"])[:80])
+            elif isinstance(row, str) and row.strip():
+                out.append(row.strip()[:80])
+            if len(out) >= limit:
+                break
+        return out
+
+    track_scopes = []
+    for track in knowledge.get("by_track") or []:
+        if not isinstance(track, dict) or not track.get("track_id"):
+            continue
+        track_scopes.append(
+            {
+                "track_id": track.get("track_id"),
+                "track_subject": track.get("track_subject"),
+                "has_data": bool(track.get("has_data")),
+                "demonstrated_strengths": _concept_names(
+                    track.get("demonstrated_strengths"), limit=4
+                ),
+                "demonstrated_weaknesses": _concept_names(
+                    track.get("demonstrated_weaknesses"), limit=4
+                ),
+                "not_assessed": list(track.get("not_assessed") or [])[:6],
+            }
+        )
+        if len(track_scopes) >= 8:
+            break
+
+    return {
+        "source": "candidate_intelligence_snapshot",
+        "snapshot_version": snapshot.get("snapshot_version"),
+        "composed_at": snapshot.get("composed_at"),
+        "career_goals": {
+            "target_role": goals.get("target_role"),
+            "interests": list(goals.get("interests") or []),
+            "technical_areas": list(goals.get("technical_areas") or [])[:8],
+            "focus_projects": list(goals.get("focus_projects") or [])[:6],
+            "evidence_kind": "preference",
+        },
+        "demonstrated_strengths": _concept_names(demo.get("strengths")),
+        "areas_requiring_improvement": _concept_names(demo.get("weaknesses")),
+        "developing": _concept_names(demo.get("developing")),
+        "unverified_claims": [
+            str(s.get("title") or "")[:80]
+            for s in (claims.get("skills") or [])
+            if isinstance(s, dict) and s.get("title")
+        ][:12],
+        "claimed_skills_without_interview": list(
+            not_assessed.get("claimed_skills_without_interview") or []
+        )[:12],
+        "not_assessed_from_briefs": list(
+            not_assessed.get("from_briefs_cross_track") or []
+        )[:12],
+        "projects": projects,
+        "by_track": track_scopes,
+        "policy": {
+            "claims_are_not_proof": True,
+            "unknown_is_not_weak": True,
+            "note": (
+                "Unverified claims and not-assessed topics are not weaknesses. "
+                "Improvement areas come only from interview evidence or feedback."
+            ),
+        },
+    }
 
 
 def vault_fingerprint(items: list) -> str:
@@ -206,12 +377,21 @@ def build_roadmap(
     *,
     assessed_subjects: set[str] | None = None,
     improvement_topics: list[str] | None = None,
+    candidate_intelligence: dict | None = None,
 ) -> list[dict]:
     """Ordered preparation steps from actual goals, profile, and prior interview gaps."""
     p = normalize_preferences(prefs)
     assessed = {s.lower() for s in (assessed_subjects or set()) if s}
     skills = [i.title for i in items if (i.category or "").lower() == "skill"]
     projects = [i.title for i in items if (i.category or "").lower() == "project"]
+    # Prefer vault project names from the shared snapshot when present (claims only).
+    snap_projects = []
+    if isinstance(candidate_intelligence, dict):
+        for proj in candidate_intelligence.get("projects") or []:
+            if isinstance(proj, dict) and proj.get("name"):
+                snap_projects.append(str(proj["name"]))
+    if snap_projects:
+        projects = list(dict.fromkeys([*snap_projects, *projects]))
     steps: list[dict] = []
 
     def add(
@@ -223,24 +403,26 @@ def build_roadmap(
         practise: str,
         track_type: str,
         subject: str,
+        evidence_basis: dict | None = None,
     ) -> None:
         key = subject.lower()
         if any(s["subject"].lower() == key for s in steps):
             return
-        steps.append(
-            {
-                "id": step_id,
-                "title": title,
-                "why": why,
-                "topics": topics,
-                "practise": practise,
-                "track_type": track_type,
-                "subject": subject,
-                "action_label": f"Start {subject}",
-            }
-        )
+        row = {
+            "id": step_id,
+            "title": title,
+            "why": why,
+            "topics": topics,
+            "practise": practise,
+            "track_type": track_type,
+            "subject": subject,
+            "action_label": f"Start {subject}",
+        }
+        if evidence_basis:
+            row["evidence_basis"] = evidence_basis
+        steps.append(row)
 
-    # Prior interview improvement areas (persisted reports only — never invented scores).
+    # Prior interview improvement areas (snapshot and/or reports — never invented).
     for topic in (improvement_topics or [])[:3]:
         label = str(topic).strip()
         if not label:
@@ -248,11 +430,21 @@ def build_roadmap(
         add(
             step_id=f"improve-{label.lower().replace(' ', '-')[:40]}",
             title=f"Revisit: {label}",
-            why="Flagged as an improvement area in a completed interview report.",
+            why=(
+                "Flagged from interview-demonstrated weakness or a completed "
+                "feedback report — not from an unverified resume claim."
+            ),
             topics=[label],
             practise=f"Targeted practice on {label} based on your prior feedback.",
             track_type="topic",
             subject=label,
+            evidence_basis={
+                "kind": "interview_or_feedback",
+                "topic": label,
+                "source": "candidate_intelligence"
+                if candidate_intelligence
+                else "feedback_reports",
+            },
         )
 
     focus_skills = p.get("focus_skills") or []
@@ -298,16 +490,43 @@ def build_roadmap(
 
     focus_projects = p.get("focus_projects") or []
     if "project" in p["interests"]:
-        targets = focus_projects or projects[:2]
+        # Only candidate-selected projects — never invent a focus from vault order.
+        targets = list(focus_projects)
+        # Attach clarification needs from snapshot project claims when available.
+        clarify_by_name = {
+            str(proj.get("name") or "").lower(): list(proj.get("needs_clarification") or [])
+            for proj in (
+                (candidate_intelligence or {}).get("projects") or []
+                if isinstance(candidate_intelligence, dict)
+                else []
+            )
+            if isinstance(proj, dict) and proj.get("name")
+        }
         for proj in targets[:2]:
+            missing = clarify_by_name.get(str(proj).lower()) or []
+            why = (
+                "Project-based interviews help you explain architecture and your contribution."
+            )
+            topics = [proj, "architecture", "trade-offs", "personal contribution"]
+            if missing:
+                why = (
+                    f"Vault details for {proj} still need clarification "
+                    f"({', '.join(missing[:3])}) before a deep technical defense."
+                )
+                topics = [proj, *missing[:3]]
             add(
                 step_id=f"project-{proj.lower().replace(' ', '-')[:40]}",
                 title=f"{proj} deep dive",
-                why="Project-based interviews help you explain architecture and your contribution.",
-                topics=[proj, "architecture", "trade-offs", "personal contribution"],
+                why=why,
+                topics=topics,
                 practise=f"Walk through {proj} as you would in a technical screen.",
                 track_type="topic",
                 subject=f"{proj} deep dive",
+                evidence_basis={
+                    "kind": "vault_project_claim",
+                    "project": proj,
+                    "needs_clarification": missing[:6],
+                },
             )
 
     if "placement" in p["interests"]:
@@ -584,13 +803,25 @@ def build_review(
     existing_tracks: list[dict] | None = None,
     open_sessions: list[dict] | None = None,
     improvement_topics: list[str] | None = None,
+    candidate_intelligence: dict | None = None,
     force_summary: bool = False,
 ) -> dict:
-    """Compose a full review document. Preserves user summary edits and status overrides."""
+    """Compose a full review document. Preserves user summary edits and status overrides.
+
+    When ``candidate_intelligence`` is provided, assessed concepts and improvement
+    topics are enriched from the shared snapshot (interview evidence only). An
+    optional ``intelligence`` digest is attached for evidence-aware consumers;
+    existing fields remain backward-compatible.
+    """
     previous = previous or {}
     prefs_n = normalize_preferences(prefs)
     fp = vault_fingerprint(items)
+    snap = candidate_intelligence if isinstance(candidate_intelligence, dict) else None
     assessed = {s.lower() for s in (assessed_subjects or set()) if s}
+    assessed |= assessed_concepts_from_snapshot(snap)
+    snap_improvements = improvement_topics_from_snapshot(snap)
+    # Prefer snapshot-derived topics when present; fall back to caller list.
+    improvements = snap_improvements or list(improvement_topics or [])
     tracks = list(existing_tracks or [])
     if not tracks and existing_track_subjects:
         tracks = [{"subject": s} for s in existing_track_subjects if s]
@@ -647,7 +878,8 @@ def build_review(
         prefs_n,
         items,
         assessed_subjects=assessed,
-        improvement_topics=improvement_topics,
+        improvement_topics=improvements,
+        candidate_intelligence=snap,
     )
     # Keep prior roadmap if a rebuild somehow produced nothing.
     if not roadmap and (previous.get("roadmap") or []):
@@ -663,7 +895,7 @@ def build_review(
         needs_clarification=needs_clarification,
         roadmap=roadmap,
         existing_tracks=tracks,
-        improvement_topics=improvement_topics,
+        improvement_topics=improvements,
     )
 
     review = {
@@ -682,6 +914,8 @@ def build_review(
         ],
         "vault_fingerprint": fp,
         "generated_at": datetime.now(UTC).isoformat(),
+        # Optional evidence digest — ignored by older clients.
+        "intelligence": intelligence_digest_from_snapshot(snap),
     }
     return _preserve_if_incomplete(previous, review)
 
@@ -743,4 +977,5 @@ def empty_review() -> dict[str, Any]:
         "goal_labels": [],
         "vault_fingerprint": "",
         "generated_at": None,
+        "intelligence": None,
     }

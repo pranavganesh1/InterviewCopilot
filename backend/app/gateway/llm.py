@@ -16,9 +16,10 @@ log = get_logger(__name__)
 
 # Mirrors infra/litellm/config.yaml so a failed primary is visible to tests
 # and the model that actually answered can be stored on the evaluation.
+# NVIDIA NIM aliases are intentionally omitted — no key / not in use.
 MODEL_FALLBACKS: dict[str, list[str]] = {
-    "interview-chat": ["interview-chat-nim", "interview-chat-gemini"],
-    "structured-json": ["structured-json-nim", "structured-json-gemini"],
+    "interview-chat": ["interview-chat-gemini"],
+    "structured-json": ["structured-json-gemini"],
 }
 
 # Set on each successful chat_completion. Interview turns copy this onto
@@ -31,6 +32,8 @@ _COOLDOWN_S = 20.0
 _COOLDOWN_MAX_S = 45.0
 _SERVER_ERROR_COOLDOWN_S = 12.0
 _model_cooldown_until: dict[str, float] = {}
+# Why a deployment is cooling — used so we do not bypass Gemini overload cooldowns.
+_model_cooldown_cause: dict[str, str] = {}
 
 # Cap concurrent outbound LLM calls in this process (multi-customer safety).
 _LLM_CONCURRENCY = 8
@@ -160,10 +163,22 @@ def _cooldown_active(model: str) -> bool:
     return time.monotonic() < until
 
 
-def _set_cooldown(model: str, seconds: float | None = None) -> None:
+def _cooldown_remaining(model: str) -> float:
+    until = _model_cooldown_until.get(model, 0.0)
+    return max(0.0, until - time.monotonic())
+
+
+def _set_cooldown(
+    model: str,
+    seconds: float | None = None,
+    *,
+    cause: str | None = None,
+) -> None:
     secs = _COOLDOWN_S if seconds is None else float(seconds)
     secs = max(4.0, min(secs, _COOLDOWN_MAX_S))
     _model_cooldown_until[model] = time.monotonic() + secs
+    if cause:
+        _model_cooldown_cause[model] = cause
 
 
 def _cooldown_for_error(exc: LLMGatewayError) -> float | None:
@@ -183,6 +198,7 @@ def _cooldown_for_error(exc: LLMGatewayError) -> float | None:
 def clear_model_cooldowns() -> None:
     """Test helper — wipe deployment cooldowns."""
     _model_cooldown_until.clear()
+    _model_cooldown_cause.clear()
 
 
 def _provider_code_from_body(body: object) -> str | None:
@@ -190,9 +206,13 @@ def _provider_code_from_body(body: object) -> str | None:
         return None
     err = body.get("error")
     if isinstance(err, dict):
-        for key in ("code", "type", "status", "message"):
+        # Prefer semantic code/type/message over numeric HTTP status strings
+        # like "500" so AuthenticationError text can classify as auth_failed.
+        for key in ("code", "type", "message", "status"):
             val = err.get(key)
             if isinstance(val, str) and val.strip():
+                if key == "status" and val.strip().isdigit():
+                    continue
                 return val.strip()[:120]
         return None
     if isinstance(err, str) and err.strip():
@@ -220,10 +240,24 @@ def classify_http_failure(
         return LLMCause.model_not_found
     if status_code in (401, 403) or "invalid_api_key" in text or "auth" in text:
         return LLMCause.auth_failed
+    # Groq often returns 400 json_validate_failed when response_format JSON
+    # cannot be satisfied — treat as schema rejection so structured_completion
+    # can retry once without response_format instead of burning NIM/Gemini.
     if (
         status_code == 400
-        and any(k in text for k in ("schema", "additionalproperties", "$ref", "json_schema"))
-    ) or "schema" in code.lower():
+        and any(
+            k in text
+            for k in (
+                "schema",
+                "additionalproperties",
+                "$ref",
+                "json_schema",
+                "json_validate",
+                "failed_generation",
+                "validate json",
+            )
+        )
+    ) or "schema" in code.lower() or "json_validate" in code.lower():
         return LLMCause.schema_rejected
     if isinstance(exc, (httpx.TimeoutException, TimeoutError)) or "timeout" in text:
         return LLMCause.timeout
@@ -275,6 +309,7 @@ async def chat_completion(
 
     causes_seen: list[str] = []
     models_tried: list[str] = []
+    models_skipped_cooldown: list[str] = []
     saw_rate_limit = False
     async with _llm_sem:
         for idx, candidate in enumerate(chain):
@@ -282,24 +317,34 @@ async def chat_completion(
             if remaining < 2.0:
                 break
             if _cooldown_active(candidate):
-                # If every remaining candidate is cooling down, try this one anyway —
-                # otherwise the UI only sees instant failures for the cooldown window.
-                rest_cooling = all(_cooldown_active(m) for m in chain[idx:])
-                if not rest_cooling:
-                    log.info(
-                        "llm_model_cooldown_skip",
-                        model=candidate,
-                        cause=LLMCause.rate_limited.value,
-                    )
-                    continue
-                log.info("llm_model_cooldown_bypass", model=candidate)
+                # Never bypass overload/rate-limit cooldowns — that re-hammered
+                # Gemini with HTTP 503 and amplified provider load.
+                cool_cause = _model_cooldown_cause.get(
+                    candidate, LLMCause.overloaded.value
+                )
+                models_skipped_cooldown.append(candidate)
+                log.info(
+                    "llm_model_cooldown_skip",
+                    model=candidate,
+                    cause=cool_cause,
+                    remaining_seconds=round(_cooldown_remaining(candidate), 1),
+                )
+                continue
             # Reserve time for later fallbacks so a slow primary cannot burn the budget.
             fallbacks_left = len(chain) - idx - 1
-            reserve = 4.0 * fallbacks_left
-            usable = max(3.0, remaining - reserve)
-            # Fail the primary faster so a single fallback still gets a real attempt.
-            cap = 9.0 if idx == 0 and fallbacks_left else 10.0
-            candidate_timeout = min(usable, cap)
+            if timeout_s is None:
+                # Default interview-turn budget: fail the primary quickly so one
+                # fallback still gets a real attempt inside ~28s.
+                reserve = 4.0 * fallbacks_left
+                usable = max(3.0, remaining - reserve)
+                cap = 9.0 if idx == 0 and fallbacks_left else 10.0
+                candidate_timeout = min(usable, cap)
+            else:
+                # Explicit budgets (resume / feedback / track authoring) need the
+                # primary to finish — the 9s cap was aborting Groq mid-generation
+                # and then burning dead NIM + overloaded Gemini.
+                reserve = min(15.0, 7.0 * fallbacks_left) if fallbacks_left else 0.0
+                candidate_timeout = max(5.0, remaining - reserve)
             models_tried.append(candidate)
             try:
                 content = await _chat_once(
@@ -320,7 +365,7 @@ async def chat_completion(
                 causes_seen.append(exc.cause.value)
                 cool = _cooldown_for_error(exc)
                 if cool is not None:
-                    _set_cooldown(candidate, cool)
+                    _set_cooldown(candidate, cool, cause=exc.cause.value)
                 log.warning(
                     "llm_model_failed",
                     model=candidate,
@@ -333,6 +378,10 @@ async def chat_completion(
                     elapsed_ms=int((time.monotonic() - chain_started) * 1000),
                     error=str(exc)[:200],
                 )
+                # structured_completion retries once without response_format.
+                # Do not burn Gemini on a primary json_validate / schema miss.
+                if exc.cause == LLMCause.schema_rejected:
+                    raise
                 # After the first rate-limit, allow at most one more provider —
                 # do not fan out to every fallback in the same customer request.
                 if exc.cause == LLMCause.rate_limited:
@@ -345,6 +394,8 @@ async def chat_completion(
                     and exc.status_code >= 500
                 ):
                     break
+                # Primary timed out / failed: skip a Gemini already in overload cooldown
+                # (handled by the cooldown check at the top of the next iteration).
                 # Auth / not-found / other: try next without burning extra sleeps.
                 continue
             llm_model_used.set(candidate)
@@ -356,6 +407,30 @@ async def chat_completion(
                 elapsed_ms=int((time.monotonic() - chain_started) * 1000),
             )
             return content
+
+    if not models_tried and models_skipped_cooldown:
+        wait = max((_cooldown_remaining(m) for m in chain), default=_COOLDOWN_S)
+        wait = min(max(wait, 8.0), _COOLDOWN_MAX_S)
+        skipped_causes = [
+            _model_cooldown_cause.get(m, LLMCause.overloaded.value)
+            for m in models_skipped_cooldown
+        ]
+        if LLMCause.rate_limited.value in skipped_causes:
+            preferred = LLMCause.rate_limited
+        else:
+            preferred = LLMCause.overloaded
+        log.warning(
+            "llm_chain_cooling",
+            models_skipped=models_skipped_cooldown,
+            final_cause=preferred.value,
+            retry_after_seconds=wait,
+        )
+        raise LLMGatewayError(
+            "LLM providers temporarily cooling down",
+            cause=preferred,
+            retry_after_seconds=wait,
+        )
+
     err = last_error or LLMGatewayError(
         "LLM gateway call failed", cause=LLMCause.unknown
     )
@@ -557,7 +632,17 @@ async def _chat_once(
     log.info("llm_call_timing", model=model, latency_ms=latency_ms)
 
     try:
-        content = data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
+        content = message.get("content") if isinstance(message, dict) else None
+        # gpt-oss / reasoning models may put the answer in `reasoning` with empty content.
+        if not (isinstance(content, str) and content.strip()) and isinstance(message, dict):
+            for key in ("reasoning", "reasoning_content"):
+                alt = message.get(key)
+                if isinstance(alt, str) and alt.strip():
+                    content = alt
+                    break
+        if not isinstance(content, str):
+            raise KeyError("content")
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMGatewayError(
             f"malformed completion: {model}",

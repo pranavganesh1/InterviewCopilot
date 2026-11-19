@@ -270,6 +270,9 @@ def prioritize_remaining_areas(
     return preferred + rest
 
 
+_DIFFICULTY_ORDER = ("foundational", "intermediate", "advanced")
+
+
 def difficulty_nudge_for_coverage(coverage: str | None) -> str | None:
     """Map last-answer coverage to a next-slot difficulty hint."""
     cov = (coverage or "").strip().lower()
@@ -284,6 +287,28 @@ def difficulty_nudge_for_coverage(coverage: str | None) -> str | None:
     return None
 
 
+def gradual_difficulty(current: str | None, target: str | None) -> str | None:
+    """Move at most one difficulty step toward target (no large jumps)."""
+    if not target:
+        return None
+    want = target.strip().lower()
+    if want not in _DIFFICULTY_ORDER:
+        return want
+    cur = (current or "").strip().lower()
+    if cur not in _DIFFICULTY_ORDER:
+        # Unknown current: land on intermediate as a safe midpoint toward extremes.
+        if want == "intermediate":
+            return "intermediate"
+        return "intermediate"
+    ci = _DIFFICULTY_ORDER.index(cur)
+    ti = _DIFFICULTY_ORDER.index(want)
+    if ti == ci:
+        return None
+    if ti > ci:
+        return _DIFFICULTY_ORDER[ci + 1]
+    return _DIFFICULTY_ORDER[ci - 1]
+
+
 def apply_plan_difficulty_nudge(
     plan: list | None,
     *,
@@ -292,7 +317,8 @@ def apply_plan_difficulty_nudge(
 ) -> bool:
     """Rewrite the next planned slot difficulty from demonstrated coverage.
 
-    Returns True when a slot was mutated. Never invents topics or extends the plan.
+    Changes are gradual (one step). Returns True when a slot was mutated.
+    Never invents topics or extends the plan.
     """
     if not isinstance(plan, list):
         return False
@@ -307,9 +333,10 @@ def apply_plan_difficulty_nudge(
     if not isinstance(slot, dict):
         return False
     current = (slot.get("difficulty") or "").strip().lower()
-    if current == nudge:
+    applied = gradual_difficulty(current, nudge)
+    if not applied or current == applied:
         return False
     slot = dict(slot)
-    slot["difficulty"] = nudge
+    slot["difficulty"] = applied
     plan[idx] = slot
     return True

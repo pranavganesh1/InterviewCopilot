@@ -4,10 +4,12 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ApiError,
   api,
+  type CareerIntelligence,
   type ReadinessClaim,
   type ReadinessResult,
   type Track,
 } from "../lib/api";
+import CareerIntelligencePanel from "../components/CareerIntelligencePanel";
 import StartInterviewModal from "../components/StartInterviewModal";
 
 const STATUS_LABEL: Record<ReadinessClaim["status"], string> = {
@@ -127,6 +129,12 @@ export default function ReadinessPage() {
     queryFn: () => api<Track[]>("/tracks"),
   });
 
+  const career = useQuery({
+    queryKey: ["career-intelligence"],
+    queryFn: () => api<CareerIntelligence>("/me/career-intelligence"),
+    retry: false,
+  });
+
   useEffect(() => {
     readiness.mutate(false);
     // Intentionally once on mount.
@@ -141,6 +149,14 @@ export default function ReadinessPage() {
   }, [tracks.data]);
 
   const summary = data?.summary ?? { clear: 0, add_detail: 0, be_ready: 0 };
+  const careerError =
+    career.error instanceof ApiError
+      ? career.error.message
+      : career.error instanceof Error
+        ? career.error.message
+        : career.isError
+          ? "Could not load career readiness."
+          : null;
 
   return (
     <div className="space-y-5" data-testid="readiness-page">
@@ -149,9 +165,9 @@ export default function ReadinessPage() {
           <p className="text-xs font-medium uppercase tracking-wide text-accent">
             Preparation
           </p>
-          <h1 className="text-xl font-semibold tracking-tight">Resume readiness</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Career readiness</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-            See which resume claims interviewers often ask about — and how to explain them clearly.
+            Interview evidence, resume claims to prepare, and a prioritized practice roadmap.
           </p>
         </div>
         <button
@@ -162,6 +178,28 @@ export default function ReadinessPage() {
         >
           Refresh
         </button>
+      </div>
+
+      <CareerIntelligencePanel
+        data={career.data}
+        loading={career.isLoading}
+        error={careerError}
+        onRetry={() => void career.refetch()}
+        onPracticeWeak={() => {
+          setDefenseOpen(false);
+          setPracticeOpen(true);
+        }}
+        onDefendProjects={() => {
+          setPracticeOpen(false);
+          setDefenseOpen(true);
+        }}
+      />
+
+      <div className="pt-1">
+        <h2 className="text-base font-semibold text-ink">Resume claim readiness</h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          Which resume claims interviewers often ask about — and how to explain them clearly.
+        </p>
       </div>
 
       <p

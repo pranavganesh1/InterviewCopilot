@@ -28,6 +28,12 @@ brief for a preparation track.
 Rules:
 - Ground everything in the objective (topic, role, or company+JD) and the candidate's
   actual vault. For company_jd tracks, derive requirements ONLY from the supplied JD text.
+- If candidate_intelligence is present, use it for goals, selected projects, previously
+  demonstrated strengths/weaknesses, and covered concepts. Treat vault/skills as claims,
+  not proven ability. Do NOT invent project details. Do NOT pick an arbitrary vault project
+  as the primary project — only use projects listed under selected_projects (if any).
+  Prefer assessing not_assessed / demonstrated_weaknesses over rehashing demonstrated_strengths,
+  unless a deeper follow-up is clearly justified.
 - competencies: what the interview should genuinely assess, with importance.
 - question_areas: 8-12 areas to draw questions from; guidance states what a good answer
   covers. Include areas probing the candidate's own claimed projects (candidate_angle_notes).
@@ -118,6 +124,8 @@ class TrackCreatorState(TypedDict, total=False):
     vault_summary: list[dict]
     brief: dict
     bank: list
+    meta: dict
+    candidate_intelligence: dict
 
 
 BANK_SYSTEM_PROMPT = (
@@ -186,12 +194,18 @@ class BankJudgeVerdict(BaseModel):
 
 
 async def run_track_creator_turn(
-    *, objective: dict, vault_summary: list[dict], meta: dict | None = None
+    *,
+    objective: dict,
+    vault_summary: list[dict],
+    meta: dict | None = None,
+    candidate_intelligence: dict | None = None,
 ) -> InterviewBriefContent:
     safe_objective = dict(objective)
     if safe_objective.get("subject"):
         safe_objective["subject"] = delimited_subject(str(safe_objective["subject"]))
-    payload = {"candidate_vault": vault_summary, "track_objective": safe_objective}
+    payload: dict = {"candidate_vault": vault_summary, "track_objective": safe_objective}
+    if isinstance(candidate_intelligence, dict) and candidate_intelligence:
+        payload["candidate_intelligence"] = candidate_intelligence
     content = await structured_completion(
         system=SYSTEM_PROMPT,
         user_payload=payload,
@@ -423,11 +437,19 @@ def build_track_creator_graph(
     verify_runner=run_bank_verify_turn,
 ):
     async def author(state: TrackCreatorState) -> dict:
-        content = await turn_runner(
-            objective=state["objective"],
-            vault_summary=state.get("vault_summary", []),
-            meta=state.get("meta") or None,
-        )
+        kwargs = {
+            "objective": state["objective"],
+            "vault_summary": state.get("vault_summary", []),
+            "meta": state.get("meta") or None,
+        }
+        # Backward-compatible with older turn_runner signatures in tests.
+        intel = state.get("candidate_intelligence")
+        try:
+            content = await turn_runner(
+                **kwargs, candidate_intelligence=intel
+            )
+        except TypeError:
+            content = await turn_runner(**kwargs)
         return {"brief": content.model_dump()}
 
     async def build_bank(state: TrackCreatorState) -> dict:
