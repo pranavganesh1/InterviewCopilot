@@ -167,6 +167,8 @@ def session_opts_from_plan(plan: list | None) -> dict:
         if isinstance(opts, dict):
             seeds = opts.get("claim_seeds")
             profile = opts.get("domain_profile")
+            ctx = opts.get("candidate_context")
+            selected = opts.get("selected_projects")
             return {
                 "use_resume": bool(opts.get("use_resume")),
                 "include_vault_topics": bool(
@@ -177,6 +179,12 @@ def session_opts_from_plan(plan: list | None) -> dict:
                 "persona_id": str(opts.get("persona_id") or "balanced"),
                 "claim_seeds": seeds if isinstance(seeds, list) else [],
                 "domain_profile": profile if isinstance(profile, dict) else None,
+                "candidate_context": ctx if isinstance(ctx, dict) else None,
+                "selected_projects": (
+                    [str(t) for t in selected if t][:6]
+                    if isinstance(selected, list)
+                    else []
+                ),
             }
     return {
         "use_resume": False,
@@ -186,6 +194,8 @@ def session_opts_from_plan(plan: list | None) -> dict:
         "persona_id": "balanced",
         "claim_seeds": [],
         "domain_profile": None,
+        "candidate_context": None,
+        "selected_projects": [],
     }
 
 
@@ -207,6 +217,8 @@ def attach_session_opts(
     include_vault_topics: bool = False,
     defense_mode: bool = False,
     domain_profile: dict | None = None,
+    candidate_context: dict | None = None,
+    selected_projects: list[str] | None = None,
 ) -> list[dict]:
     if not plan:
         return plan
@@ -235,6 +247,34 @@ def attach_session_opts(
             "allowed_types": list(domain_profile.get("allowed_types") or [])[:12],
         }
     defense = bool(defense_mode)
+    selected = [
+        str(t).strip()[:120]
+        for t in (selected_projects or [])
+        if str(t or "").strip()
+    ][:6]
+    # Persist a trimmed prep context for later turns (no full snapshot).
+    compact_ctx = None
+    if isinstance(candidate_context, dict) and candidate_context:
+        compact_ctx = {
+            "source": candidate_context.get("source"),
+            "track_id": candidate_context.get("track_id"),
+            "track_subject": candidate_context.get("track_subject"),
+            "evidence_scope": candidate_context.get("evidence_scope"),
+            "selected_projects": list(
+                candidate_context.get("selected_projects") or selected
+            )[:6],
+            "demonstrated_strengths": list(
+                candidate_context.get("demonstrated_strengths") or []
+            )[:8],
+            "demonstrated_weaknesses": list(
+                candidate_context.get("demonstrated_weaknesses") or []
+            )[:8],
+            "covered_concepts": list(candidate_context.get("covered_concepts") or [])[:12],
+            "not_assessed": list(candidate_context.get("not_assessed") or [])[:8],
+            "career_goals": candidate_context.get("career_goals"),
+            "project_selection_note": candidate_context.get("project_selection_note"),
+            "policy": candidate_context.get("policy"),
+        }
     first["_session_opts"] = {
         "use_resume": bool(use_resume or defense),
         "include_vault_topics": bool(include_vault_topics or use_resume or defense),
@@ -243,6 +283,8 @@ def attach_session_opts(
         "persona_id": persona_id or "balanced",
         "claim_seeds": seeds,
         "domain_profile": compact_profile,
+        "selected_projects": selected,
+        "candidate_context": compact_ctx,
     }
     return [first, *plan[1:]]
 

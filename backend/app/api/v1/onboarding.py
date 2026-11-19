@@ -72,13 +72,19 @@ def _vault_status(items) -> tuple[bool, list[str]]:
 async def _state_payload(mongo_db, db: AsyncSession, user: User) -> dict:
     await onboarding_service.ensure_review_opener(db, mongo_db, user)
     await onboarding_service.ensure_goals_intro(db, mongo_db, user)
-    messages = await conversation_store.get_messages(mongo_db, str(user.id), limit=100)
+    uid = str(user.id)
+    messages = await conversation_store.get_messages(mongo_db, uid, limit=100)
     items = await list_items(db, user.id)
     vault_ready, missing = _vault_status(items)
     finished = user.onboarding_completed_at is not None
     extras = await onboarding_service.state_extras(db, mongo_db, user)
+    convo_meta = await conversation_store.get_active_conversation_meta(mongo_db, uid)
+    conversations = await conversation_store.list_conversation_summaries(mongo_db, uid)
     return {
         "messages": messages,
+        "conversation_id": convo_meta.get("conversation_id"),
+        "conversation_title": convo_meta.get("title"),
+        "conversations": conversations,
         "vault_items": [
             {
                 "id": str(i.id),
@@ -198,6 +204,125 @@ async def state(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    return await _state_payload(request.app.state.mongo_db, db, user)
+
+
+@router.get("/conversations")
+async def list_conversations(
+    request: Request,
+    user: User = Depends(get_current_user),
+):
+    """List active + archived onboarding conversations for the authenticated user."""
+    rows = await conversation_store.list_conversation_summaries(
+        request.app.state.mongo_db, str(user.id)
+    )
+    return {"conversations": rows, "count": len(rows)}
+
+
+@router.post("/conversations")
+async def create_conversation(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a New Chat — archives the current thread without deleting it."""
+    from app.services.vault_service import build_verify_first_welcome
+
+    started = await conversation_store.start_new_conversation(
+        request.app.state.mongo_db,
+        str(user.id),
+        title="New chat",
+        reason="new_chat",
+        welcome=build_verify_first_welcome(mode="new_chat"),
+        reset_coach=True,
+        coach_patch={"proceed_to_goals": False, "profile_verified": False},
+    )
+    payload = await _state_payload(request.app.state.mongo_db, db, user)
+    return {**payload, "conversation_started": started}
+
+
+class ActivateConversationRequest(BaseModel):
+    conversation_id: str = Field(min_length=8, max_length=80)
+
+
+@router.post("/conversations/activate")
+async def activate_conversation(
+    body: ActivateConversationRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch the active onboarding conversation (owner-only)."""
+    result = await conversation_store.activate_conversation(
+        request.app.state.mongo_db, str(user.id), body.conversation_id
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found for this account.",
+        )
+    payload = await _state_payload(request.app.state.mongo_db, db, user)
+    return {**payload, "conversation_switched": result}
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete one onboarding conversation owned by this candidate.
+
+    Removes embedded messages for that thread only. Does not touch Profile Vault,
+    resumes, interviews, feedback, or other conversations.
+    """
+    cid = (conversation_id or "").strip()
+    if len(cid) < 8 or len(cid) > 80:
+        raise HTTPException(status_code=404, detail="Conversation not found for this account.")
+    result = await conversation_store.delete_conversation(
+        request.app.state.mongo_db, str(user.id), cid
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found for this account.",
+        )
+    payload = await _state_payload(request.app.state.mongo_db, db, user)
+    return {
+        **payload,
+        "conversation_deleted": result,
+        "status": "deleted",
+    }
+
+
+class ProfileConfirmRequest(BaseModel):
+    confirmed: bool = True
+
+
+@router.post("/profile/confirm")
+async def confirm_profile(
+    body: ProfileConfirmRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Candidate confirms vault/resume extraction before personalization (additive)."""
+    uid = str(user.id)
+    if body.confirmed:
+        await conversation_store.merge_coach_context(
+            request.app.state.mongo_db,
+            uid,
+            {"profile_verified": True, "proceed_to_goals": True},
+        )
+    else:
+        await conversation_store.merge_coach_context(
+            request.app.state.mongo_db,
+            uid,
+            {"profile_verified": False, "proceed_to_goals": False},
+        )
+    # Goals intro may seed only after verification.
+    await onboarding_service.ensure_goals_intro(db, request.app.state.mongo_db, user)
     return await _state_payload(request.app.state.mongo_db, db, user)
 
 

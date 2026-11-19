@@ -98,11 +98,13 @@ def test_profile_review_message_lists_sections():
     ]
     msg = build_profile_review_message(items)
     assert RESUME_WELCOME_MARKER in msg
-    assert "QCGNN" in msg
-    # Warm coach tone: highlight a couple of items, not a full resume dump.
+    # Verify-first: do not auto-claim a specific project.
+    assert "QCGNN" not in msg or "similar" in msg.lower()
+    assert "caught my eye" not in msg.lower()
+    assert "make sure everything looks right" in msg
+    assert "Profile Vault" not in msg
     assert "and 11 more" not in msg
     assert "I found your experience in" not in msg
-    assert "goals" in msg.lower() or "work on" in msg.lower()
     assert message_looks_like_resume_welcome(msg)
     assert not message_looks_like_resume_welcome("Just a normal coach reply")
 
@@ -194,8 +196,14 @@ async def test_state_prefills_review_when_vault_exists(clean_users_table):
         body = resp.json()
         assert body["vault_items"][0]["details"]
         assert any(m["role"] == "assistant" for m in body["messages"])
-        assert "QCGNN" in body["messages"][0]["content"]
+        welcome = body["messages"][0]["content"]
+        assert "caught my eye" not in welcome.lower()
+        assert "QCGNN" not in welcome or "similar" in welcome.lower()
+        assert "make sure everything looks right" in welcome
+        assert "Profile Vault" not in welcome
+        assert "Sync result" not in welcome
         assert body["has_resume_welcome"] is True
+        assert body.get("profile_verified") is False
         assert body["show_starters"] is True
         assert any(s["id"] == "ai_interview" for s in body["conversation_starters"])
         # Welcome must not mark onboarding finished.
@@ -207,7 +215,11 @@ async def test_state_prefills_review_when_vault_exists(clean_users_table):
         welcomes = [
             m
             for m in again.json()["messages"]
-            if m["role"] == "assistant" and "I've reviewed your resume" in m["content"]
+            if m["role"] == "assistant"
+            and (
+                "I've gone through your resume" in m["content"]
+                or "make sure everything looks right" in m["content"]
+            )
         ]
         assert len(welcomes) == 1
 
@@ -251,14 +263,30 @@ async def test_seed_resume_welcome_is_idempotent(clean_users_table):
     mongo = get_mongo_db()
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
 
-    first = await onboarding_service.seed_resume_welcome(mongo, user_id, vault_items)
-    second = await onboarding_service.seed_resume_welcome(mongo, user_id, vault_items)
-    assert first is True
-    assert second is False
+    first = await onboarding_service.seed_resume_welcome(
+        mongo,
+        user_id,
+        vault_items,
+        sync_result={
+            "counts": {
+                "created": 2,
+                "skipped": 0,
+                "enrichment_candidates": 0,
+                "uncertain_matches": 0,
+                "failed": 0,
+            }
+        },
+    )
+    second = await onboarding_service.seed_resume_welcome(
+        mongo, user_id, vault_items, sync_result={"counts": {"created": 2}}
+    )
+    assert first.get("seeded") is True
+    assert second.get("seeded") is False
     messages = await conversation_store.get_messages(mongo, user_id, limit=40)
-    assert sum(1 for m in messages if "I've reviewed your resume" in m["content"]) == 1
-    assert "Portfolio" in messages[0]["content"]
-    # Warm welcome highlights a project — not a full skill dump.
+    assert len(messages) == 1
+    assert "I've gone through your resume" in messages[0]["content"]
+    assert "make sure everything looks right" in messages[0]["content"]
+    assert "Sync result" not in messages[0]["content"]
     assert "I found your experience in" not in messages[0]["content"]
 
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
@@ -409,12 +437,11 @@ async def test_chat_upserts_instead_of_duplicating(monkeypatch, clean_users_tabl
     await app.state.mongo_db.onboarding_conversations.delete_many({"user_id": str(user_id)})
 
 def test_ensure_nonempty_and_ack_helpers():
-    assert ensure_nonempty_reply("") 
-    assert "What" in ensure_nonempty_reply("", vault_summary=[
-        {"category": "project", "title": "DBMS", "details": {}}
-    ]) or "How" in ensure_nonempty_reply("", vault_summary=[
-        {"category": "project", "title": "DBMS", "details": {}}
-    ])
+    assert ensure_nonempty_reply("")
+    empty_fallback = ensure_nonempty_reply(
+        "", vault_summary=[{"category": "project", "title": "DBMS", "details": {}}]
+    )
+    assert any(w in empty_fallback for w in ("What", "How", "Which"))
     assert classify_duplicate_answer("give both") == "keep_both"
     assert classify_duplicate_answer("keep both") == "keep_both"
     assert classify_duplicate_answer("same") == "merge"

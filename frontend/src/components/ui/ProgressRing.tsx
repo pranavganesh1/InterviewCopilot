@@ -3,12 +3,12 @@ export default function ProgressRing({
   size = "md",
 }: {
   value: number | null;
-  size?: "xs" | "sm" | "md";
+  size?: "xs" | "sm" | "md" | "lg";
 }) {
   const pct = value == null ? 0 : Math.max(0, Math.min(100, value));
-  const dim = size === "xs" ? 44 : size === "sm" ? 56 : 80;
-  const r = size === "xs" ? 17 : size === "sm" ? 22 : 34;
-  const stroke = size === "xs" ? 4.5 : size === "sm" ? 6 : 8;
+  const dim = size === "xs" ? 44 : size === "sm" ? 56 : size === "lg" ? 112 : 80;
+  const r = size === "xs" ? 17 : size === "sm" ? 22 : size === "lg" ? 46 : 34;
+  const stroke = size === "xs" ? 4.5 : size === "sm" ? 6 : size === "lg" ? 10 : 8;
   const c = 2 * Math.PI * r;
   const offset = c - (pct / 100) * c;
   const half = dim / 2;
@@ -46,7 +46,13 @@ export default function ProgressRing({
       </svg>
       <span
         className={`absolute inset-0 grid place-items-center font-semibold tabular-nums text-ink ${
-          size === "xs" ? "text-[10px]" : size === "sm" ? "text-xs" : "text-sm"
+          size === "xs"
+            ? "text-[10px]"
+            : size === "sm"
+              ? "text-xs"
+              : size === "lg"
+                ? "text-xl"
+                : "text-sm"
         }`}
       >
         {value != null ? `${value}%` : "—"}

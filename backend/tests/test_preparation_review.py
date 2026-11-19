@@ -9,12 +9,16 @@ from app.db.sqlalchemy import SessionFactory
 from app.main import create_app
 from app.models.user import User
 from app.models.vault import VaultItem
+from app.services.candidate_intelligence import compose_candidate_intelligence
 from app.services.preparation_review import (
     annotate_roadmap_completion,
+    assessed_concepts_from_snapshot,
     build_profile_summary,
     build_review,
     build_roadmap,
     classify_item,
+    improvement_topics_from_snapshot,
+    intelligence_digest_from_snapshot,
     merge_review_patch,
     resolve_next_action,
     _preserve_if_incomplete,
@@ -269,6 +273,212 @@ def test_next_action_and_roadmap_have_no_fake_scores():
     assert all("score" not in s for s in review["item_statuses"])
     assert all("score" not in step for step in review["roadmap"])
     assert "score" not in (review["next_action"] or {})
+    # Without a snapshot, intelligence digest stays empty (backward compatible).
+    assert review.get("intelligence") is None
+
+
+def _snapshot_with_evidence():
+    return compose_candidate_intelligence(
+        user_profile={"skills": ["Go"], "education": "B.Tech"},
+        vault_items=[
+            {
+                "id": "sk1",
+                "category": "skill",
+                "title": "Python",
+                "details": {},
+                "source": "resume",
+                "missing_details": [],
+            },
+            {
+                "id": "sk2",
+                "category": "skill",
+                "title": "Redis",
+                "details": {},
+                "source": "resume",
+                "missing_details": [],
+            },
+            {
+                "id": "p1",
+                "category": "project",
+                "title": "Campus Cart",
+                "details": {"purpose": "Marketplace", "technologies": "FastAPI"},
+                "source": "resume",
+                "missing_details": ["architecture", "contribution", "outcome", "features"],
+            },
+        ],
+        preferences={
+            "interests": ["technical", "project", "skill"],
+            "target_role": "Backend Developer",
+            "focus_skills": ["Python"],
+            "focus_projects": ["Campus Cart"],
+            "confirmed": True,
+        },
+        profile_review=None,
+        coach_context=None,
+        tracks=[
+            {
+                "track_id": "t1",
+                "subject": "Backend",
+                "archived": False,
+                "planned_topics": ["Python", "Redis", "Caching"],
+            }
+        ],
+        turn_rows=[
+            {
+                "session_id": "s1",
+                "track_id": "t1",
+                "turn_index": 1,
+                "question_area": "Python",
+                "answer": "list comprehensions",
+                "evaluation_coverage": "excellent",
+                "evaluation_gaps": [],
+                "evaluation_detail": {},
+                "created_at": "2026-01-01T00:00:00+00:00",
+            },
+            {
+                "session_id": "s1",
+                "track_id": "t1",
+                "turn_index": 2,
+                "question_area": "Python",
+                "answer": "generators",
+                "evaluation_coverage": "good",
+                "evaluation_gaps": [],
+                "evaluation_detail": {},
+                "created_at": "2026-01-01T00:01:00+00:00",
+            },
+            {
+                "session_id": "s1",
+                "track_id": "t1",
+                "turn_index": 3,
+                "question_area": "SQL joins",
+                "answer": "unsure",
+                "evaluation_coverage": "none",
+                "evaluation_gaps": ["outer joins"],
+                "evaluation_detail": {},
+                "created_at": "2026-01-01T00:02:00+00:00",
+            },
+        ],
+        report_rows=[
+            {
+                "session_id": "s1",
+                "track_id": "t1",
+                "track_subject": "Backend",
+                "track_archived": False,
+                "created_at": "2026-01-02T00:00:00+00:00",
+                "content": {
+                    "summary_overview": "Mixed Python/SQL",
+                    "strengths": ["Python fluency"],
+                    "improvement_areas": ["SQL joins"],
+                    "recommendations": ["Practise joins aloud"],
+                    "competency_assessments": [],
+                    "unassessed_topics": ["Caching"],
+                },
+            }
+        ],
+    )
+
+
+def test_review_consumes_shared_snapshot_for_evidence():
+    snap = _snapshot_with_evidence()
+    items = [
+        _item(category="skill", title="Python"),
+        _item(category="skill", title="Redis"),
+        _item(
+            category="project",
+            title="Campus Cart",
+            details={"purpose": "Marketplace", "technologies": "FastAPI"},
+        ),
+        _item(category="education", title="B.Tech"),
+    ]
+    review = build_review(
+        items,
+        {
+            "interests": ["technical", "project", "skill"],
+            "target_role": "Backend Developer",
+            "focus_skills": ["Python"],
+            "focus_projects": ["Campus Cart"],
+            "confirmed": True,
+        },
+        candidate_intelligence=snap,
+    )
+    intel = review["intelligence"]
+    assert intel is not None
+    assert intel["source"] == "candidate_intelligence_snapshot"
+    assert intel["career_goals"]["target_role"] == "Backend Developer"
+    assert "Python" in intel["demonstrated_strengths"] or any(
+        "python" in s.lower() for s in intel["demonstrated_strengths"]
+    )
+    assert any("sql" in s.lower() or "join" in s.lower() for s in intel["areas_requiring_improvement"])
+    # Redis claimed but not interview-answered → not listed as a weakness.
+    assert not any("redis" in s.lower() for s in intel["areas_requiring_improvement"])
+    assert "Redis" in intel["claimed_skills_without_interview"] or "Redis" in intel[
+        "unverified_claims"
+    ]
+    assert intel["policy"]["unknown_is_not_weak"] is True
+    # Vault project details come through (claims only).
+    project = next(p for p in intel["projects"] if p["name"] == "Campus Cart")
+    assert project["technologies"] == "FastAPI"
+    assert project["evidence_kind"] == "claim"
+    assert "architecture" in project["needs_clarification"]
+    # Roadmap prioritizes interview improvement evidence.
+    assert review["roadmap"][0]["subject"]
+    assert "sql" in review["roadmap"][0]["subject"].lower() or "join" in review["roadmap"][0][
+        "subject"
+    ].lower()
+    assert review["roadmap"][0].get("evidence_basis", {}).get("kind") == "interview_or_feedback"
+    # Python skill can be confirmed from demonstrated interview evidence.
+    python_status = next(s for s in review["item_statuses"] if s["title"] == "Python")
+    assert python_status["status"] == "confirmed"
+    redis_status = next(s for s in review["item_statuses"] if s["title"] == "Redis")
+    assert redis_status["status"] == "not_assessed"
+
+
+def test_snapshot_helpers_do_not_treat_claims_as_weak():
+    snap = _snapshot_with_evidence()
+    assessed = assessed_concepts_from_snapshot(snap)
+    assert any("python" in a for a in assessed)
+    assert any("sql" in a or "join" in a for a in assessed)
+    improvements = improvement_topics_from_snapshot(snap)
+    assert improvements
+    assert not any("redis" == t.lower() for t in improvements)
+    digest = intelligence_digest_from_snapshot(snap)
+    assert digest["policy"]["claims_are_not_proof"] is True
+    assert "Caching" in digest["not_assessed_from_briefs"] or "caching" in " ".join(
+        digest["not_assessed_from_briefs"]
+    ).lower()
+
+
+def test_missing_snapshot_sections_do_not_break_review():
+    review = build_review(
+        [_item(category="skill", title="Java")],
+        {"interests": ["skill"], "focus_skills": ["Java"], "confirmed": True},
+        candidate_intelligence={"snapshot_version": 1},  # incomplete / partial
+    )
+    assert review["summary"]
+    assert review["roadmap"]
+    assert review["intelligence"] is not None
+    assert review["intelligence"]["areas_requiring_improvement"] == []
+    assert review["intelligence"]["demonstrated_strengths"] == []
+    java = next(s for s in review["item_statuses"] if s["title"] == "Java")
+    assert java["status"] == "not_assessed"
+
+
+def test_build_roadmap_uses_snapshot_project_clarification():
+    snap = _snapshot_with_evidence()
+    roadmap = build_roadmap(
+        {
+            "interests": ["project"],
+            "focus_projects": ["Campus Cart"],
+            "confirmed": True,
+        },
+        [_item(category="project", title="Campus Cart", details={"purpose": "x"})],
+        candidate_intelligence=snap,
+    )
+    project_step = next(s for s in roadmap if "Campus Cart" in s["subject"])
+    assert "clarification" in project_step["why"].lower() or "missing" in " ".join(
+        project_step.get("evidence_basis", {}).get("needs_clarification") or []
+    ).lower() or project_step.get("evidence_basis", {}).get("needs_clarification")
+    assert project_step["evidence_basis"]["kind"] == "vault_project_claim"
 
 
 @pytest.mark.asyncio

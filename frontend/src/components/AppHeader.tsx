@@ -30,22 +30,17 @@ export default function AppHeader() {
 
   if (!user) return null;
 
-  return (
-    <header className="sticky top-0 z-40 overflow-x-clip border-b border-line bg-surface">
-      <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center gap-2 px-3 py-3 sm:gap-6 sm:px-4">
-        <Link
-          to="/"
-          onClick={(event) => {
-            if (requestLeave({ kind: "href", href: "/", focus: event.currentTarget })) {
-              event.preventDefault();
-            }
-          }}
-          className="shrink-0 text-sm font-bold tracking-tight text-ink sm:text-base"
-        >
-          Interview<span className="text-accent">Copilot</span>
-        </Link>
+  const tabClass = ({ isActive }: { isActive: boolean }) =>
+    `relative px-3 py-2 text-sm font-semibold transition sm:px-4 ${
+      isActive
+        ? "text-accent-strong after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent"
+        : "text-ink-soft hover:text-ink"
+    }`;
 
-        <nav className="flex min-w-0 gap-0.5 text-sm sm:gap-1">
+  return (
+    <header className="sticky top-0 z-30 overflow-x-clip border-b border-line bg-surface/95 backdrop-blur">
+      <div className="flex w-full min-w-0 items-center gap-2 px-3 py-2.5 sm:gap-4 sm:px-5">
+        <nav className="flex min-w-0 items-center gap-0.5 text-sm sm:gap-1" aria-label="Primary">
           <NavLink
             to="/"
             end
@@ -54,16 +49,21 @@ export default function AppHeader() {
                 event.preventDefault();
               }
             }}
-            className={({ isActive }) =>
-              `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
-                isActive
-                  ? "bg-accent-soft text-accent-strong"
-                  : "text-ink-soft hover:bg-page"
-              }`
-            }
+            className={tabClass}
           >
-            Tracks
+            InterviewCopilot
           </NavLink>
+          <a
+            href="/#tracks"
+            onClick={(event) => {
+              if (requestLeave({ kind: "href", href: "/#tracks", focus: event.currentTarget })) {
+                event.preventDefault();
+              }
+            }}
+            className={tabClass({ isActive: false })}
+          >
+            Track
+          </a>
           <NavLink
             to="/onboarding"
             onClick={(event) => {
@@ -71,13 +71,7 @@ export default function AppHeader() {
                 event.preventDefault();
               }
             }}
-            className={({ isActive }) =>
-              `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
-                isActive
-                  ? "bg-accent-soft text-accent-strong"
-                  : "text-ink-soft hover:bg-page"
-              }`
-            }
+            className={tabClass}
           >
             Onboarding
           </NavLink>
@@ -89,11 +83,7 @@ export default function AppHeader() {
                   event.preventDefault();
                 }
               }}
-              className={({ isActive }) =>
-                `rounded-full px-2.5 py-1.5 font-medium transition sm:px-3.5 ${
-                  isActive ? "bg-accent-soft text-accent-strong" : "text-ink-soft hover:bg-page"
-                }`
-              }
+              className={tabClass}
             >
               Admin
             </NavLink>
@@ -101,10 +91,6 @@ export default function AppHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
-          <span className="hidden max-w-[14rem] truncate text-sm text-ink-soft md:inline">
-            {user.email}
-          </span>
-
           <button
             type="button"
             className="grid h-9 w-9 place-items-center rounded-full text-ink-soft hover:bg-page"
@@ -156,7 +142,7 @@ export default function AppHeader() {
             {open && (
               <div
                 role="menu"
-                className="absolute right-0 mt-2 w-56 overflow-hidden rounded-lg border border-line bg-surface py-1.5 shadow-card"
+                className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border border-line bg-surface py-1.5 shadow-card"
               >
                 <Link
                   role="menuitem"
@@ -170,11 +156,6 @@ export default function AppHeader() {
                   }}
                   className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-page"
                 >
-                  <span className="grid h-7 w-7 place-items-center rounded-md bg-page text-ink-soft">
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
-                      <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4 0-7 2-7 4v1h14v-1c0-2-3-4-7-4Z" />
-                    </svg>
-                  </span>
                   My Profile
                 </Link>
                 <Link
@@ -190,18 +171,19 @@ export default function AppHeader() {
                   className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-page"
                   data-testid="nav-readiness"
                 >
-                  <span className="grid h-7 w-7 place-items-center rounded-md bg-page text-ink-soft">
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
-                      <path d="M7 3h10a2 2 0 0 1 2 2v14l-7-3-7 3V5a2 2 0 0 1 2-2Zm2 4v2h6V7H9Zm0 4v2h6v-2H9Z" />
-                    </svg>
-                  </span>
                   Resume readiness
                 </Link>
                 <Link
                   role="menuitem"
                   to="/profile#history"
                   onClick={(event) => {
-                    if (requestLeave({ kind: "href", href: "/profile#history", focus: event.currentTarget })) {
+                    if (
+                      requestLeave({
+                        kind: "href",
+                        href: "/profile#history",
+                        focus: event.currentTarget,
+                      })
+                    ) {
                       event.preventDefault();
                       return;
                     }
@@ -209,11 +191,6 @@ export default function AppHeader() {
                   }}
                   className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-page"
                 >
-                  <span className="grid h-7 w-7 place-items-center rounded-md bg-page text-ink-soft">
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
-                      <path d="M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z" />
-                    </svg>
-                  </span>
                   Assessment History
                 </Link>
                 <Link
@@ -228,11 +205,6 @@ export default function AppHeader() {
                   }}
                   className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-ink hover:bg-page"
                 >
-                  <span className="grid h-7 w-7 place-items-center rounded-md bg-page text-ink-soft">
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
-                      <path d="M19.1 12.9a7.5 7.5 0 0 0 .1-1.8l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.6-.9L14.8 3h-4l-.4 2.7a7.6 7.6 0 0 0-1.6.9l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0-.1 1.8l-2 1.6 2 3.4 2.4-1c.5.4 1 .7 1.6.9L10.8 21h4l.4-2.7c.6-.2 1.1-.5 1.6-.9l2.4 1 2-3.4-2-1.6ZM12 15.5A3.5 3.5 0 1 1 15.5 12 3.5 3.5 0 0 1 12 15.5Z" />
-                    </svg>
-                  </span>
                   Settings
                 </Link>
                 <div className="my-1 border-t border-line" />
@@ -250,11 +222,6 @@ export default function AppHeader() {
                   }}
                   className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-rose-600 hover:bg-rose-50"
                 >
-                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-rose-50 text-rose-600">
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" d="M15 12H3m0 0 3.5-3.5M3 12l3.5 3.5M12 4h5a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-5" />
-                    </svg>
-                  </span>
                   Sign out
                 </button>
               </div>

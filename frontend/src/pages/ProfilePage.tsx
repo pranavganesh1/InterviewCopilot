@@ -357,10 +357,16 @@ export default function ProfilePage() {
                 Assessment history
               </h3>
               <div className="space-y-2">
-                {history.map((a) => (
+                {history.map((a) => {
+                  const topics = [
+                    ...(a.strengths ?? []).slice(0, 3),
+                    ...(a.improvement_areas ?? []).slice(0, 2),
+                  ];
+                  return (
                   <div
                     key={a.report_id}
                     className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-stone-200 bg-white px-4 py-3"
+                    data-testid="assessment-history-row"
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-stone-900">
@@ -374,6 +380,16 @@ export default function ProfilePage() {
                           ? ` · ${a.overall_score}%`
                           : ""}
                       </p>
+                      {topics.length > 0 && (
+                        <p className="mt-1 text-xs text-stone-500">
+                          Topics: {topics.join(", ")}
+                        </p>
+                      )}
+                      {a.summary_overview && (
+                        <p className="mt-1 line-clamp-2 text-xs text-stone-600">
+                          {a.summary_overview}
+                        </p>
+                      )}
                     </div>
                     <Link
                       to={`/tracks/${a.track_id}/report/${a.session_id}`}
@@ -382,7 +398,8 @@ export default function ProfilePage() {
                       View Full Feedback
                     </Link>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </>

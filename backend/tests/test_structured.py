@@ -66,9 +66,12 @@ async def test_repairs_after_invalid_json():
 
 @pytest.mark.asyncio
 async def test_raises_after_second_failure():
+    from app.gateway.llm import LLMCause
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"choices": [{"message": {"content": "still not json"}}]})
 
     async with _client(handler) as client:
-        with pytest.raises(LLMGatewayError):
+        with pytest.raises(LLMGatewayError) as ei:
             await structured_completion(client, system="s", user_payload={}, schema=Out)
+    assert ei.value.cause == LLMCause.schema_rejected

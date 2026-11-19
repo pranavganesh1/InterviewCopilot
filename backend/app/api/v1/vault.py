@@ -9,15 +9,25 @@ from app.api.deps import get_current_user
 from app.core.logging import get_logger
 from app.db.s3 import get_s3_client
 from app.db.sqlalchemy import get_db
-from app.gateway.llm import LLMGatewayError
+from app.gateway.llm import LLMCause, LLMGatewayError
 from app.models.user import User
-from app.services import readiness as readiness_service
-from app.services.resume_service import ResumeUploadError, process_resume
 from app.services import onboarding_service
+from app.services import readiness as readiness_service
+from app.services.resume_service import (
+    ResumeUploadError,
+    process_resume,
+    reprocess_latest_resume,
+)
 from app.services.vault_service import (
+    apply_enrichment,
     create_items,
     delete_item,
+    find_near_duplicates,
     list_items,
+    list_resume_sourced_items,
+    reset_resume_sourced_items,
+    resolve_duplicate_pair,
+    suggest_keep_side,
     update_item,
 )
 
@@ -39,6 +49,23 @@ class VaultItemUpdate(BaseModel):
 
 class ReadinessRequest(BaseModel):
     refresh: bool = False
+
+
+class DuplicateResolveRequest(BaseModel):
+    keep_id: uuid.UUID
+    discard_id: uuid.UUID
+    merge_details: bool = True
+
+
+class EnrichmentApplyRequest(BaseModel):
+    item_id: uuid.UUID
+    details: dict[str, str] = {}
+    only_fill_empty: bool = True
+
+
+class ResumeResetRequest(BaseModel):
+    confirm: bool = False
+    confirm_phrase: str = ""
 
 
 @router.get("/items")
@@ -120,6 +147,49 @@ async def remove_item(
     return {"status": "ok"}
 
 
+def _resume_http_error(exc: Exception, *, request_id: str, user_id: str):
+    if isinstance(exc, ResumeUploadError):
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"message": exc.message, "code": exc.code},
+        ) from None
+    if isinstance(exc, LLMGatewayError):
+        if getattr(exc, "cause", None) == LLMCause.schema_rejected:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": (
+                        "We couldn't structure this resume into profile items. "
+                        "Please try again, or add items manually in onboarding."
+                    ),
+                    "code": "resume_structure_failed",
+                    "cause": LLMCause.schema_rejected.value,
+                },
+            ) from exc
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "The model is busy right now — retry in a minute.",
+                "code": "model_unavailable",
+            },
+        ) from exc
+    log.exception(
+        "resume_upload_unhandled",
+        stage="api",
+        error_class="unexpected",
+        user_id=user_id,
+        correlation_id=request_id,
+    )
+    raise HTTPException(
+        status_code=500,
+        detail={
+            "message": "Something went wrong uploading your resume. Please try again.",
+            "code": "internal_error",
+            "correlation_id": request_id,
+        },
+    ) from None
+
+
 @router.post("/resume")
 async def upload_resume(
     request: Request,
@@ -140,42 +210,160 @@ async def upload_resume(
             content_type=file.content_type,
             request_id=request_id,
         )
-        # Personalized welcome once — never duplicate on re-upload/refresh.
         items = await list_items(db, user.id)
-        welcome_seeded = await onboarding_service.seed_resume_welcome(
-            request.app.state.mongo_db, str(user.id), items
+        mongo = getattr(request.app.state, "mongo_db", None)
+        welcome_seeded = False
+        conversation_id = None
+        if mongo is not None:
+            seeded = await onboarding_service.seed_resume_welcome(
+                mongo, str(user.id), items, sync_result=result
+            )
+            welcome_seeded = bool(seeded.get("seeded"))
+            conversation_id = seeded.get("conversation_id")
+        await _refresh_review_after_vault_change(request, db, user)
+        return {
+            **result,
+            "welcome_seeded": welcome_seeded,
+            "conversation_id": conversation_id,
+            "conversation_started": welcome_seeded,
+        }
+    except (ResumeUploadError, LLMGatewayError, Exception) as exc:
+        _resume_http_error(exc, request_id=request_id, user_id=str(user.id))
+
+
+@router.post("/resume/reprocess")
+async def reprocess_resume(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-run extraction on the latest stored resume; sync against Profile Vault."""
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    s3 = get_s3_client()
+    try:
+        result = await reprocess_latest_resume(
+            db, s3, user, request_id=request_id
         )
-        return {**result, "welcome_seeded": welcome_seeded}
-    except ResumeUploadError as exc:
+        await _refresh_review_after_vault_change(request, db, user)
+        return result
+    except (ResumeUploadError, LLMGatewayError, Exception) as exc:
+        _resume_http_error(exc, request_id=request_id, user_id=str(user.id))
+
+
+@router.get("/duplicates")
+async def get_duplicates(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    items = await list_items(db, user.id)
+    pairs = find_near_duplicates(items)
+    return {
+        "pairs": [
+            {**pair, "suggested_keep": suggest_keep_side(pair)} for pair in pairs
+        ],
+        "count": len(pairs),
+        "note": (
+            "Suspected duplicates for your review. Nothing is deleted until you approve."
+        ),
+    }
+
+
+@router.post("/duplicates/resolve")
+async def resolve_duplicate(
+    body: DuplicateResolveRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    kept = await resolve_duplicate_pair(
+        db,
+        user.id,
+        keep_id=body.keep_id,
+        discard_id=body.discard_id,
+        merge_details=body.merge_details,
+    )
+    if kept is None:
         raise HTTPException(
-            status_code=exc.status,
-            detail={"message": exc.message, "code": exc.code},
-        ) from None
-    except LLMGatewayError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": "The model is busy right now — retry in a minute.",
-                "code": "model_unavailable",
-            },
-        ) from exc
-    except Exception:
-        correlation_id = request_id
-        log.exception(
-            "resume_upload_unhandled",
-            stage="api",
-            error_class="unexpected",
-            user_id=str(user.id),
-            correlation_id=correlation_id,
+            status_code=404,
+            detail="Duplicate pair not found or not owned by this account.",
         )
+    await _refresh_review_after_vault_change(request, db, user)
+    return {"status": "resolved", "kept": kept}
+
+
+@router.post("/enrichment/apply")
+async def enrichment_apply(
+    body: EnrichmentApplyRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    item = await apply_enrichment(
+        db,
+        user.id,
+        item_id=body.item_id,
+        details=body.details,
+        only_fill_empty=body.only_fill_empty,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Vault item not found")
+    await _refresh_review_after_vault_change(request, db, user)
+    return {
+        "id": str(item.id),
+        "category": item.category,
+        "title": item.title,
+        "details": item.details or {},
+        "source": item.source,
+    }
+
+
+@router.get("/resume-data/reset-preview")
+async def resume_reset_preview(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await list_resume_sourced_items(db, user.id)
+    return {
+        "count": len(rows),
+        "items": [
+            {
+                "id": str(r.id),
+                "category": r.category,
+                "title": r.title,
+                "source": r.source,
+            }
+            for r in rows
+        ],
+        "scope": (
+            "Only Profile Vault rows with source=resume for your account. "
+            "Manual entries, chat-added items, interviews, answers, reports, "
+            "and account data are not included."
+        ),
+        "confirm_phrase": "RESET RESUME DATA",
+    }
+
+
+@router.post("/resume-data/reset")
+async def resume_reset(
+    body: ResumeResetRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not body.confirm or body.confirm_phrase.strip().upper() != "RESET RESUME DATA":
         raise HTTPException(
-            status_code=500,
+            status_code=422,
             detail={
-                "message": "Something went wrong uploading your resume. Please try again.",
-                "code": "internal_error",
-                "correlation_id": correlation_id,
+                "message": (
+                    "Confirmation required. Set confirm=true and confirm_phrase="
+                    "'RESET RESUME DATA'."
+                ),
+                "code": "confirmation_required",
             },
-        ) from None
+        )
+    result = await reset_resume_sourced_items(db, user.id)
+    await _refresh_review_after_vault_change(request, db, user)
+    return {"status": "ok", **result}
 
 
 @router.post("/readiness")

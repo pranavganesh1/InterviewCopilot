@@ -73,79 +73,102 @@ export default function PreparationReviewPanel({
   const confirmedCount = review.confirmed?.length ?? 0;
   const totalItems = review.item_statuses?.length ?? 0;
 
+  const targetLabel =
+    review.goal_labels?.find((g) => /role|engineer|intern|analyst|developer/i.test(g)) ||
+    review.goal_labels?.[0] ||
+    null;
+
   return (
     <section className="space-y-4" data-testid="preparation-review">
-      <div className="rounded-xl border border-accent/25 bg-gradient-to-br from-accent-soft/70 via-white to-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-accent">
-            Welcome back{userName ? `, ${userName.split(" ")[0]}` : ""}
-          </p>
-          {onRefresh && (
-            <button
-              type="button"
-              data-testid="preparation-review-refresh"
-              disabled={pending || refreshPending}
-              onClick={onRefresh}
-              className="rounded-md border border-accent/30 bg-white px-3 py-1.5 text-xs font-semibold text-accent-strong hover:bg-accent-soft disabled:opacity-50"
-            >
-              {refreshPending ? "Refreshing…" : "Refresh plan"}
-            </button>
-          )}
+      <div className="overflow-hidden rounded-2xl border border-accent/20 bg-gradient-to-r from-accent-soft via-[#ece9fe] to-white p-5 shadow-card sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium uppercase tracking-wide text-accent">
+              Welcome back{userName ? `, ${userName.split(" ")[0]}` : ""}
+            </p>
+            <h2 className="mt-1 text-xl font-bold tracking-tight text-ink sm:text-2xl">
+              Your Personalized Preparation Plan
+            </h2>
+            <p className="mt-1 max-w-2xl text-sm text-ink-soft">
+              Based on your vault and goals — not guessed proficiency scores.
+            </p>
+            {refreshError && (
+              <p
+                role="alert"
+                data-testid="preparation-review-refresh-error"
+                className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
+              >
+                {refreshError}
+              </p>
+            )}
+            {totalItems > 0 && (
+              <p className="mt-2 text-xs text-ink-faint" data-testid="profile-completeness">
+                Profile signals: {confirmedCount} confirmed
+                {clarify.length > 0 ? ` · ${clarify.length} need clarification` : ""}
+                {notAssessed.length > 0
+                  ? ` · ${notAssessed.length} not yet interview-assessed`
+                  : ""}
+              </p>
+            )}
+          </div>
+          <div className="flex w-full flex-col gap-2 sm:max-w-xs lg:w-72">
+            <div className="rounded-xl border border-white/80 bg-white/90 p-3 shadow-sm backdrop-blur">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                Target Role
+              </p>
+              <p className="mt-1 text-sm font-semibold text-ink">
+                {targetLabel || "Set a target role in onboarding"}
+              </p>
+              <Link
+                to="/onboarding"
+                className="mt-2 inline-flex text-xs font-semibold text-accent-strong hover:underline"
+              >
+                Update Goal
+              </Link>
+            </div>
+            {onRefresh && (
+              <button
+                type="button"
+                data-testid="preparation-review-refresh"
+                disabled={pending || refreshPending}
+                onClick={onRefresh}
+                className="rounded-xl border border-accent/30 bg-white px-3 py-2 text-xs font-semibold text-accent-strong hover:bg-accent-soft disabled:opacity-50"
+              >
+                {refreshPending ? "Refreshing…" : "Refresh plan"}
+              </button>
+            )}
+          </div>
         </div>
-        <h2 className="mt-1 text-lg font-semibold text-stone-900">
-          Your personalized preparation plan
-        </h2>
-        <p className="mt-1 text-sm text-stone-600">
-          Based on your vault and goals — not guessed proficiency scores.
-        </p>
-        {refreshError && (
-          <p
-            role="alert"
-            data-testid="preparation-review-refresh-error"
-            className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
-          >
-            {refreshError}
-          </p>
-        )}
-        {totalItems > 0 && (
-          <p className="mt-2 text-xs text-stone-500" data-testid="profile-completeness">
-            Profile signals: {confirmedCount} confirmed
-            {clarify.length > 0 ? ` · ${clarify.length} need clarification` : ""}
-            {notAssessed.length > 0
-              ? ` · ${notAssessed.length} not yet interview-assessed`
-              : ""}
-          </p>
-        )}
 
         {next && (
           <div
-            className="mt-4 rounded-lg border border-accent/30 bg-white p-4"
+            className="mt-4 rounded-xl border border-accent/25 bg-white/95 p-4 shadow-sm"
             data-testid="next-action"
             data-kind={next.kind || "recommend_track"}
           >
-            <p className="text-sm font-semibold text-stone-900">{next.title}</p>
+            <p className="text-sm font-semibold text-ink">{next.title}</p>
             {next.reason && (
-              <p className="mt-1 text-xs text-stone-500">{next.reason}</p>
+              <p className="mt-1 text-xs text-ink-soft">{next.reason}</p>
             )}
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 disabled={pending}
                 onClick={() => onNextAction(next)}
-                className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
+                className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
               >
                 {next.action_label || "Continue"}
               </button>
               <button
                 type="button"
                 onClick={onBrowseTracks}
-                className="rounded-md bg-white px-4 py-2 text-sm font-medium text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50"
+                className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-page"
               >
                 Browse other tracks
               </button>
               <Link
                 to="/onboarding"
-                className="rounded-md px-4 py-2 text-sm font-medium text-accent-strong hover:underline"
+                className="rounded-xl px-4 py-2 text-sm font-medium text-accent-strong hover:underline"
               >
                 Edit profile vault
               </Link>

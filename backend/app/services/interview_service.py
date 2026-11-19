@@ -566,6 +566,33 @@ async def start_session(
         for qa in (brief_content.get("question_areas") or [])
         if isinstance(qa, dict) and qa.get("topic")
     ]
+
+    # Shared Candidate Intelligence Snapshot (graceful fallback).
+    from app.services.candidate_intelligence import (
+        build_interview_prep_context,
+        filter_vault_items_for_selected_projects,
+        get_candidate_intelligence_for_user,
+    )
+
+    snapshot = None
+    prep_context: dict | None = None
+    try:
+        snapshot = await get_candidate_intelligence_for_user(
+            db, user.id, mongo_db=mongo_db, user=user
+        )
+        prep_context = build_interview_prep_context(
+            snapshot,
+            track_id=str(track_id),
+            track_subject=str(track_brief["track"].get("subject") or ""),
+            claim_seeds=claim_seeds,
+            mode=mode,
+            duration_minutes=duration_minutes,
+        )
+    except Exception:  # noqa: BLE001 — start must still work without intelligence
+        snapshot = None
+        prep_context = None
+
+    selected_projects = list((prep_context or {}).get("selected_projects") or [])
     plan_brief = {
         **brief_content,
         "plan_seed": str(session_id),
@@ -575,9 +602,37 @@ async def start_session(
             brief_areas, [row["area"] for row in history if row.get("turn_index") == 1]
         ),
     }
+    # Enrich plan_brief with prep context for authoring-aware planning metadata
+    # (deterministic planner ignores unknown keys; session opts persist the context).
+    if prep_context:
+        plan_brief["candidate_prep_context"] = {
+            "selected_projects": selected_projects,
+            "demonstrated_strengths": list(prep_context.get("demonstrated_strengths") or [])[:8],
+            "demonstrated_weaknesses": list(prep_context.get("demonstrated_weaknesses") or [])[:8],
+            "covered_concepts": list(prep_context.get("covered_concepts") or [])[:12],
+            "not_assessed": list(prep_context.get("not_assessed") or [])[:8],
+            "evidence_scope": prep_context.get("evidence_scope"),
+            "career_goals": prep_context.get("career_goals"),
+            "policy": prep_context.get("policy"),
+        }
+        # Prefer opening areas that are not already demonstrated strengths on this track.
+        covered = {
+            str(c).strip().lower()
+            for c in (prep_context.get("covered_concepts") or [])
+            if c
+        }
+        if covered:
+            avoid = list(plan_brief.get("avoid_areas") or [])
+            for name in prep_context.get("demonstrated_strengths") or []:
+                label = str(name).strip()
+                if label and label.lower() in covered and label not in avoid:
+                    avoid.append(label)
+            plan_brief["avoid_areas"] = avoid[:12]
+
     # Vault personalization: fold real vault topics into the plan when the
     # candidate opts in (use_resume / include_vault_topics / defense_mode).
-    # Never invent domains. Defense mode prepends project titles.
+    # Never invent domains. Never auto-pick an arbitrary primary project —
+    # projects enter the plan only when explicitly selected.
     defense_mode = bool(defense_mode)
     if defense_mode:
         use_resume = True
@@ -586,28 +641,51 @@ async def start_session(
     project_titles: list[str] = []
     if personalize_vault:
         vault_items_raw = await list_items(db, user.id)
+        # Projects: only explicitly selected. Skills/internships still allowed.
+        vault_items_raw = filter_vault_items_for_selected_projects(
+            vault_items_raw,
+            selected_projects,
+            include_non_projects=True,
+        )
         if defense_mode:
-            vault_for_plan = probe_service.vault_plan_areas(
-                vault_items_raw,
-                limit=8,
-                categories=("project",),
-            )
-            project_titles = [
-                str(a.get("topic") or "").strip()
-                for a in vault_for_plan
-                if a.get("topic")
-            ]
-            # No projects → keep normal interview (do not invent projects).
-            if vault_for_plan:
-                existing = [
-                    qa
-                    for qa in (plan_brief.get("question_areas") or [])
-                    if isinstance(qa, dict) and qa.get("topic")
-                ]
-                plan_brief["question_areas"] = probe_service.merge_defense_question_areas(
-                    existing, vault_for_plan, cap=12, track_keep=4
+            if selected_projects:
+                vault_for_plan = probe_service.vault_plan_areas(
+                    vault_items_raw,
+                    limit=8,
+                    categories=("project",),
                 )
+                # Keep only selected project topics.
+                selected_l = {t.lower() for t in selected_projects}
+                vault_for_plan = [
+                    a
+                    for a in vault_for_plan
+                    if (a.get("topic") or "").strip().lower() in selected_l
+                    or any(
+                        (a.get("topic") or "").strip().lower() in s
+                        or s in (a.get("topic") or "").strip().lower()
+                        for s in selected_l
+                    )
+                ]
+                project_titles = [
+                    str(a.get("topic") or "").strip()
+                    for a in vault_for_plan
+                    if a.get("topic")
+                ]
+                if vault_for_plan:
+                    existing = [
+                        qa
+                        for qa in (plan_brief.get("question_areas") or [])
+                        if isinstance(qa, dict) and qa.get("topic")
+                    ]
+                    plan_brief["question_areas"] = (
+                        probe_service.merge_defense_question_areas(
+                            existing, vault_for_plan, cap=12, track_keep=4
+                        )
+                    )
+                else:
+                    defense_mode = False
             else:
+                # Defense requested but no explicit project — keep a normal interview.
                 defense_mode = False
         else:
             vault_for_plan = probe_service.vault_plan_areas(vault_items_raw, limit=8)
@@ -644,6 +722,24 @@ async def start_session(
     answered_turns, session_ids = await _track_answered_turns(db, user.id, track_id)
     weak_summary = weakness_service.aggregate_turns(answered_turns, session_order=session_ids)
     weak_names = weakness_service.weak_concept_names(weak_summary, focus=focus_weak)
+    # Prefer track-scoped snapshot weaknesses when present (still track-local).
+    if prep_context and prep_context.get("evidence_scope") == "track":
+        snap_weak = [
+            str(w)
+            for w in (prep_context.get("demonstrated_weaknesses") or [])
+            if w
+        ]
+        if snap_weak:
+            # Dedupe while preferring snapshot order, then turn aggregate.
+            merged_weak: list[str] = []
+            seen_w: set[str] = set()
+            for name in [*snap_weak, *weak_names]:
+                key = name.lower()
+                if key in seen_w:
+                    continue
+                seen_w.add(key)
+                merged_weak.append(name)
+            weak_names = merged_weak
     if focus_weak and weak_names:
         # Replace ~30% of slots with weak-concept objectives (new questions later).
         for i, slot in enumerate(plan):
@@ -671,6 +767,8 @@ async def start_session(
         persona_id=persona_id,
         claim_seeds=seeds,
         domain_profile=start_profile,
+        candidate_context=prep_context,
+        selected_projects=selected_projects,
     )
     session = InterviewSession(
         id=session_id,
@@ -832,14 +930,23 @@ async def submit_answer(
     last_turn.evaluation_coverage = decision.evaluation.coverage
     last_turn.evaluation_strengths = decision.evaluation.strengths
     last_turn.evaluation_gaps = decision.evaluation.gaps
+    from app.agents.interviewer import CLOSING_MESSAGE, classify_answer_outcome
+
+    eval_checks = list(getattr(decision, "evaluator_checks", None) or [])
+    adaptive_outcome = classify_answer_outcome(
+        decision.evaluation.coverage,
+        answer_text=last_turn.answer,
+        checks=eval_checks,
+    )
     detail = {
         "expected_answer_explanation": decision.evaluation.expected_answer_explanation,
         "corrected_code": decision.evaluation.corrected_code,
         "time_complexity": decision.evaluation.time_complexity,
         "space_complexity": decision.evaluation.space_complexity,
         "rubric_version": getattr(decision, "rubric_version", None) or "v1",
-        "evaluator_checks": list(getattr(decision, "evaluator_checks", None) or []),
+        "evaluator_checks": eval_checks,
         "adaptive_action": decision.decision,
+        "adaptive_outcome": adaptive_outcome,
     }
     # Coding answers are reviewed statically — never executed in this product yet.
     prior = last_turn.evaluation_detail if isinstance(last_turn.evaluation_detail, dict) else {}
@@ -892,7 +999,15 @@ async def submit_answer(
         or turns_so_far >= get_settings().interview_max_turns
     ):
         await _finish(db, session, nc=nc)
-        return {"completed": True, "evaluation": decision.evaluation.model_dump()}
+        closing = (decision.next_question or "").strip() if decision.decision == "complete" else ""
+        if "?" in closing:
+            closing = CLOSING_MESSAGE
+        return {
+            "completed": True,
+            "evaluation": decision.evaluation.model_dump(),
+            "closing_message": closing or CLOSING_MESSAGE,
+            "adaptive_outcome": adaptive_outcome,
+        }
 
     # Avoid creating a second open question if one somehow already exists.
     latest = await _latest_turn(db, session.id)
@@ -1372,16 +1487,37 @@ async def _decide(
     if vault_personalize or opts.get("focus_weak"):
         if vault_personalize:
             raw_items = await list_items(db, session.user_id)
+            selected = list(opts.get("selected_projects") or [])
+            if selected:
+                from app.services.candidate_intelligence import (
+                    filter_vault_items_for_selected_projects,
+                )
+
+                raw_items = filter_vault_items_for_selected_projects(
+                    raw_items, selected, include_non_projects=not defense_on
+                )
+            elif defense_on:
+                # No explicit project selected — do not inject arbitrary projects.
+                raw_items = []
             if defense_on:
                 vault_items = probe_service.sanitize_vault_items(
                     raw_items, categories=("project",)
                 )
-                if not vault_items:
-                    vault_items = probe_service.sanitize_vault_items(raw_items)
             else:
                 vault_items = probe_service.sanitize_vault_items(raw_items)
             if vault_items:
                 payload["vault_prompt_block"] = probe_service.vault_prompt_block(vault_items)
+        ctx = opts.get("candidate_context")
+        if isinstance(ctx, dict) and ctx:
+            payload["candidate_prep_context"] = {
+                "selected_projects": list(ctx.get("selected_projects") or [])[:4],
+                "demonstrated_strengths": list(ctx.get("demonstrated_strengths") or [])[:6],
+                "demonstrated_weaknesses": list(ctx.get("demonstrated_weaknesses") or [])[:6],
+                "covered_concepts": list(ctx.get("covered_concepts") or [])[:8],
+                "not_assessed": list(ctx.get("not_assessed") or [])[:6],
+                "evidence_scope": ctx.get("evidence_scope"),
+                "policy": ctx.get("policy"),
+            }
         answered_turns, session_ids = await _track_answered_turns(
             db, session.user_id, session.track_id
         )

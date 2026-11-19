@@ -51,9 +51,12 @@ Conversation shape (almost every turn):
 
 Tone:
 - Warm, attentive, encouraging. 2–5 short sentences is fine when they gave a rich answer.
-- Vary openings. Ban stock loops: "Got it", "Got it — thanks", "Thanks for sharing",
+- Vary openings from the prior exchange — often ask the next question with no lead-in.
+  Ban stock loops: "Got it", "Got it — thanks", "Thanks for sharing",
   "Thanks for the details", "I've noted that", "I've added … to your profile/entry",
-  "Nice —", "That gives me a clearer picture", "That gives me a clear picture".
+  "Nice —", "That gives me a clearer picture", "That gives me a clear picture",
+  and rote topic intros: "Let's dig into…", "Let's explore…", "Let's move on to…",
+  "Tell me about your experience with…", "Staying with…", "Continuing with…".
 - Never narrate database/vault bookkeeping ("I've added the purpose, technologies…").
   Silently put facts in extracted_items only; the reply must sound human, not like a form.
 - Never invent education, skills, projects, jobs, or achievements.
@@ -84,6 +87,13 @@ Hard rules:
    Never treat them as a new topic pick. If they already affirmed a topic offer
    (focus_locked / current_topic set), do NOT ask them to confirm that topic again —
    advance with a real explore question.
+4b. Uncertainty vs move-on (context, not stock scripts):
+   - Bare uncertainty ("not sure" / can't recall an example) while focus_locked: SIMPLIFY
+     or rephrase on the SAME topic — do not jump topics or offer a skill menu.
+   - Explicit move-on / skip / "something else": acknowledge, mark topic not assessed
+     (not a weakness), then ONE question on a different verified experience.
+   - Repeated uncertainty on the same topic: change topic gracefully.
+   - Never reply with a multi-skill picker ("Which skill… Java, SQL, React, or Python?").
 5. Topic lock: if focus_locked and current_topic are set, stay there until the user
    asks to switch, skips, or the topic is sufficiently explored (several solid details
    already in conversation / vault for that item). Then bridge naturally, e.g.
@@ -402,7 +412,13 @@ def sanitize_coach_reply(reply: str) -> str:
     # Drop leading stock acks / filler bridges when more substance follows.
     cleaned = re.sub(
         r"(?i)^(?:(?:got it|thanks for(?: the)?(?: sharing|details)?|"
-        r"nice|that gives me a clear(?:er)? picture(?: of [^.?!,—\-]*)?)\b"
+        r"nice|that gives me a clear(?:er)? picture(?: of [^.?!,—\-]*)?|"
+        r"let'?s dig into[^.?!\n]{0,80}|"
+        r"let'?s explore(?: another area of your experience)?[^.?!\n]{0,40}|"
+        r"let'?s move on to[^.?!\n]{0,60}|"
+        r"tell me about your experience with[^.?!\n]{0,60}|"
+        r"staying with[^.?!\n]{0,60}|"
+        r"continuing with[^.?!\n]{0,60})\b"
         r"[.!,—\-\s]*)+",
         "",
         cleaned,
@@ -436,9 +452,8 @@ def is_affirmative(message: str) -> bool:
     }
 
 
-def is_negative_or_skip(message: str) -> bool:
-    t = _norm_msg(message)
-    return t in {
+_SKIP_EXACT = frozenset(
+    {
         "no",
         "n",
         "nope",
@@ -452,7 +467,81 @@ def is_negative_or_skip(message: str) -> bool:
         "none",
         "nothing",
         "later",
+        "next",
+        "move next",
+        "move on",
     }
+)
+
+_SKIP_PHRASES = (
+    "don't know",
+    "dont know",
+    "not sure",
+    "skip this",
+    "skip it",
+    "skip that",
+    "let's skip",
+    "lets skip",
+    "pass on this",
+    "not comfortable",
+    "no experience with",
+    "don't have experience",
+    "dont have experience",
+    "i don't have experience",
+    "i dont have experience",
+    "come back later",
+    "return to this later",
+    "later on this",
+)
+
+_MOVE_ON_PHRASES = (
+    "move on",
+    "move next",
+    "next topic",
+    "next question",
+    "ask me something else",
+    "something else",
+    "discuss something else",
+    "talk about something else",
+    "another topic",
+    "different topic",
+    "change topic",
+    "we can move",
+)
+
+
+def wants_stop_session(message: str) -> bool:
+    t = _norm_msg(message)
+    return any(
+        c in t
+        for c in (
+            "stop here",
+            "let's stop",
+            "lets stop",
+            "that's enough",
+            "thats enough",
+            "end for now",
+            "pause here",
+            "i want to stop",
+        )
+    )
+
+
+def is_negative_or_skip(message: str) -> bool:
+    """True for skip / uncertainty / move-on — including natural compound phrases."""
+    t = _norm_msg(message)
+    if not t:
+        return False
+    if t in _SKIP_EXACT:
+        return True
+    if wants_stop_session(t):
+        return True
+    if any(c in t for c in _MOVE_ON_PHRASES):
+        return True
+    # Short uncertain replies; avoid treating long explanatory answers as skips.
+    if len(t) <= 100 and any(c in t for c in _SKIP_PHRASES):
+        return True
+    return False
 
 
 def wants_topic_switch(message: str) -> bool:
@@ -460,6 +549,8 @@ def wants_topic_switch(message: str) -> bool:
     low = (message or "").strip().lower()
     if not low:
         return False
+    if is_negative_or_skip(low) and any(c in low for c in _MOVE_ON_PHRASES):
+        return True
     cues = (
         "another topic",
         "different topic",
@@ -471,11 +562,284 @@ def wants_topic_switch(message: str) -> bool:
         "change topic",
         "talk about something else",
         "something else",
+        "ask me something else",
         "move on",
+        "move next",
         "next topic",
+        "next question",
         "instead",
     )
     return any(c in low for c in cues)
+
+
+# --- Contextual turn decisions (coach). Signals inform the decision; replies
+# are built from action + conversation state, not from phrase→template maps. ---
+
+CoachAction = Literal[
+    "advance",
+    "clarify",
+    "simplify",
+    "guide",
+    "follow_up",
+    "change_topic",
+    "pause",
+]
+
+
+def _message_signals(message: str) -> dict[str, bool]:
+    """Soft conversational cues — used only together with coach/interview context."""
+    t = _norm_msg(message)
+    words = t.split()
+    short = len(words) <= 12
+    return {
+        "pause": wants_stop_session(t),
+        "move_on": any(c in t for c in _MOVE_ON_PHRASES)
+        or wants_topic_switch(t)
+        or any(
+            c in t
+            for c in (
+                "skip this",
+                "skip it",
+                "skip that",
+                "let's skip",
+                "lets skip",
+                "come back later",
+                "return to this later",
+                "pass on this",
+            )
+        ),
+        "deepen": any(
+            c in t
+            for c in (
+                "go deeper",
+                "dig deeper",
+                "more detail",
+                "dive deeper",
+                "tell me more",
+            )
+        ),
+        "uncertainty": short
+        and any(
+            c in t
+            for c in (
+                "don't know",
+                "dont know",
+                "not sure",
+                "no idea",
+                "idk",
+                "can't remember",
+                "cant remember",
+                "cannot remember",
+                "nothing comes to mind",
+            )
+        ),
+
+        "confused": any(
+            c in t
+            for c in (
+                "don't understand",
+                "dont understand",
+                "what do you mean",
+                "rephrase",
+                "repeat the question",
+                "confused",
+            )
+        ),
+        "hint": any(
+            c in t
+            for c in ("hint", "help me", "give me a clue", "nudge", "can you guide")
+        ),
+        "no_experience": short
+        and any(
+            c in t
+            for c in (
+                "no experience",
+                "don't have experience",
+                "dont have experience",
+                "never used",
+                "haven't used",
+                "havent used",
+            )
+        ),
+        "partial": 20 <= len(t) <= 140
+        and not any(c in t for c in _MOVE_ON_PHRASES)
+        and "?" not in t,
+        "detailed": len(t) >= 160
+        or (len(words) >= 28 and any(c in t for c in ("because", "for example", "i used", "we built"))),
+        "subject_shift": bool(
+            re.search(
+                r"\b(actually|instead|can we talk about|let'?s talk about)\b",
+                t,
+            )
+        ),
+    }
+
+
+def decide_conversational_action(
+    message: str,
+    *,
+    coach_context: dict | None = None,
+    mode: str = "guided",
+) -> dict:
+    """Choose the next conversational action from message + session context.
+
+    Returns ``{"action": CoachAction, "reason": str}``. Does not produce reply text.
+    """
+    ctx = coach_context or {}
+    sig = _message_signals(message)
+    mode_l = (mode or "guided").strip().lower()
+    if mode_l not in ("strict", "guided", "coach"):
+        mode_l = "guided"
+    locked = bool(ctx.get("focus_locked") and ctx.get("current_topic"))
+    intent = str(ctx.get("last_question_intent") or "")
+    try:
+        streak = int(ctx.get("uncertainty_streak") or 0)
+    except (TypeError, ValueError):
+        streak = 0
+    answers_n = len(ctx.get("answers_received") or [])
+
+    if sig["pause"]:
+        return {"action": "pause", "reason": "candidate_requested_pause"}
+
+    # Explicit leave-topic beats uncertainty softening.
+    if sig["move_on"] or (sig["no_experience"] and locked):
+        return {"action": "change_topic", "reason": "explicit_move_on_or_no_experience"}
+
+    if sig["subject_shift"] and locked and not sig["detailed"]:
+        return {"action": "change_topic", "reason": "subject_shift"}
+
+    if sig["hint"]:
+        if mode_l == "strict":
+            return {"action": "simplify", "reason": "hint_blocked_in_strict"}
+        return {"action": "guide", "reason": "hint_requested"}
+
+    if sig["confused"]:
+        return {"action": "simplify", "reason": "question_not_understood"}
+
+    if sig["uncertainty"]:
+        if locked and streak >= 2:
+            return {"action": "change_topic", "reason": "repeated_uncertainty"}
+        if locked and intent in ("explore", "detail", "other", ""):
+            return {"action": "simplify", "reason": "uncertain_on_locked_topic"}
+        if locked:
+            return {"action": "simplify", "reason": "uncertain_on_locked_topic"}
+        return {"action": "change_topic", "reason": "uncertain_without_focus"}
+
+    if sig["deepen"] and locked:
+        return {"action": "follow_up", "reason": "candidate_wants_depth"}
+
+    if sig["detailed"] and locked:
+        return {"action": "advance", "reason": "substantive_answer"}
+
+    if sig["partial"] and locked:
+        return {"action": "follow_up", "reason": "partial_answer"}
+
+    if locked and answers_n >= 1 and len(_norm_msg(message).split()) <= 3:
+        # Tiny non-ack replies after an open ask → clarify once.
+        if intent in ("explore", "detail"):
+            return {"action": "clarify", "reason": "too_brief_for_open_ask"}
+
+    return {"action": "advance", "reason": "default_continue"}
+
+
+def _simpler_skill_or_topic_ask(topic: str, kind: str, last_q: str) -> str:
+    """One softer question on the same topic; avoid near-echo of the last ask."""
+    title = (topic or "this").strip() or "this"
+    kind_l = (kind or "topic").lower()
+    candidates: list[str]
+    if kind_l == "skill":
+        candidates = [
+            f"No worries. Have you used {title} in coursework, a small script, or even debugging something?",
+            f"Let's make it easier — what's the first thing that comes to mind when you hear {title}?",
+            f"Okay — forget a full project story. What's one task where {title} showed up at all?",
+        ]
+    elif kind_l == "project":
+        candidates = [
+            f"That's fine. For “{title}”, what was the simplest piece you personally touched?",
+            f"Let's zoom out — in one sentence, what was “{title}” meant to do?",
+            f"No pressure. Who was “{title}” for, even roughly?",
+        ]
+    elif kind_l == "internship":
+        candidates = [
+            f"All good. At {title}, what did a typical day look like for you?",
+            f"Let's keep it light — what team or tool did you work with most at {title}?",
+        ]
+    else:
+        candidates = [
+            f"No problem. What's one concrete detail about {title} you remember clearly?",
+            f"Let's rephrase — how would you introduce {title} to a classmate in one sentence?",
+        ]
+    last_fp = _question_fingerprint(last_q)
+    for c in candidates:
+        if not last_fp or _question_fingerprint(c)[:40] not in last_fp:
+            return c
+    return candidates[-1]
+
+
+def render_coach_action_reply(
+    action: str,
+    *,
+    coach_context: dict | None = None,
+    vault_summary: list[dict] | None = None,
+    mode: str = "guided",
+) -> str:
+    """Build a natural reply for a decided action (context-driven, not phrase maps)."""
+    ctx = coach_context or {}
+    topic = str(ctx.get("current_topic") or "").strip()
+    kind = str(ctx.get("focus_kind") or "").strip()
+    last_q = str(ctx.get("last_assistant_question") or "")
+    mode_l = (mode or "guided").strip().lower()
+
+    if action == "pause":
+        return (
+            "Of course — we can pause here. "
+            "Come back whenever you're ready and we'll pick up from where it makes sense."
+        )
+    if action == "change_topic":
+        return skip_move_on_reply(ctx, vault_summary)
+    if action == "simplify":
+        if topic:
+            return _simpler_skill_or_topic_ask(topic, kind, last_q)
+        return (
+            "Let's try a simpler angle. "
+            "What part of your background would you like to talk through first?"
+        )
+    if action == "guide":
+        if mode_l == "strict":
+            return _simpler_skill_or_topic_ask(topic or "this topic", kind, last_q)
+        anchor = topic or "what we just asked"
+        return (
+            f"Happy to nudge. For {anchor}, start with the situation, "
+            "then one action you took — even a small one. What comes to mind?"
+        )
+    if action == "clarify":
+        if topic:
+            return (
+                f"Could you add one concrete detail about {topic} — "
+                "a tool, a task, or an outcome?"
+            )
+        return "Could you share one concrete detail so I know where to go next?"
+    if action == "follow_up":
+        return (
+            continue_topic_reply(ctx, vault_summary)
+            or _simpler_skill_or_topic_ask(topic or "this topic", kind, last_q)
+        )
+    # advance: caller should prefer the LLM / normal pipeline
+    return (
+        continue_topic_reply(ctx, vault_summary)
+        or "What would you like to explore next from your experience?"
+    )
+
+
+def coach_action_requires_deterministic_reply(action: str) -> bool:
+    """True when the service should answer without calling the onboarding LLM."""
+    return action in {
+        "pause",
+        "change_topic",
+        "simplify",
+        "guide",
+        "clarify",
+    }
 
 
 def ensure_nonempty_reply(
@@ -490,7 +854,7 @@ def ensure_nonempty_reply(
         return text
     if duplicates_resolved == "keep_both":
         return (
-            "Kept both entries. Which project or skill should we dig into next?"
+            "Kept both entries. Which project or skill should we discuss next?"
         )
     if duplicates_resolved == "merge":
         return (
@@ -512,11 +876,11 @@ def ensure_nonempty_reply(
     ]
     if projects:
         return (
-            f"What was the goal of your “{projects[0]}” project, "
-            "and which tools did you use?"
+            "Which project did you work on and want to discuss — "
+            "what was the goal, and which tools did you use?"
         )
     if skills:
-        return f"How have you used {skills[0]} in a real task or project?"
+        return "Which skill have you used in a real task, and how?"
     return (
         "What would you like to prepare for first — a project story, "
         "a skill, or a target role?"
@@ -900,11 +1264,20 @@ def resolve_topic_confirmation(
     }
 
 
-def topic_focus_reply(item: dict) -> str:
-    """Concrete next question from vault facts — never invent details."""
-    title = (item.get("title") or "this topic").strip()
-    kind = (item.get("kind") or item.get("category") or "topic").lower()
-    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+def _answer_fragment(text: str, *, limit: int = 72) -> str:
+    """Short concrete fragment from the candidate's last words (for continuity)."""
+    cleaned = " ".join((text or "").split()).strip(" .,;:!-")
+    if len(cleaned) < 24:
+        return ""
+    if len(cleaned) <= limit:
+        return cleaned
+    cut = cleaned[:limit].rsplit(" ", 1)[0].strip(" .,;:")
+    return cut if len(cut) >= 20 else cleaned[:limit].rstrip()
+
+
+def _focus_core_question(title: str, kind: str, details: dict | None = None) -> str:
+    """The substance of the ask — topic named in the question, no stock lead-in."""
+    details = details if isinstance(details, dict) else {}
     purpose = str(
         details.get("purpose")
         or details.get("description")
@@ -921,41 +1294,108 @@ def topic_focus_reply(item: dict) -> str:
         or ""
     ).strip()
     if kind == "skill":
-        lead = f"Let's dig into your {title} experience."
         return (
-            f"{lead} How have you used it in a real task or project, "
+            f"How have you used {title} in a real task or project, "
             "and what was the outcome?"
         )
     if kind == "education":
-        lead = f"I'd like to understand your path through {title}."
         return (
-            f"{lead} What did you focus on most, "
+            f"In your {title} studies, what did you focus on most, "
             "and which course or topic felt strongest?"
         )
     if kind == "internship":
-        lead = f"Your {title} internship sounds worth unpacking."
         return (
-            f"{lead} What was your main responsibility, "
+            f"What was your main responsibility at {title}, "
             "and what did you deliver?"
         )
-    lead = f"I'd love to explore your “{title}” project with you."
+    if kind == "achievement":
+        return f"What led to your “{title}” achievement?"
+    # project / default
+    if purpose and tech:
+        first = tech.split(",")[0].strip() or tech
+        return (
+            f"For “{title}” ({purpose[:100]}), what was the main purpose "
+            f"of the system, and how did you use {first}?"
+        )
     if purpose:
-        lead = f"{lead} From what I see, it was about {purpose[:120]}."
+        return (
+            f"“{title}” looks tied to {purpose[:100]} — "
+            "what was the main purpose, and which tools or methods did you use?"
+        )
     if tech:
         first = tech.split(",")[0].strip() or tech
         return (
-            f"{lead} What was the main purpose of the system, "
+            f"What was the main purpose of “{title}”, "
             f"and how did you use {first}?"
         )
     return (
-        f"{lead} What was the main purpose, "
+        f"What was the main purpose of “{title}”, "
         "and which tools or methods did you use?"
     )
 
 
-def project_focus_reply(project: dict) -> str:
+def _continuity_bridge(
+    *,
+    prev_topic: str,
+    next_title: str,
+    last_answer: str,
+    last_q: str,
+) -> str:
+    """Context-only bridge. Empty means ask the next question directly."""
+    prev = (prev_topic or "").strip()
+    nxt = (next_title or "").strip()
+    if not prev or not nxt or prev.lower() == nxt.lower():
+        return ""
+    last_q_l = (last_q or "").lower()
+    # Avoid stacking another transition after a move-on / simplify ack.
+    if any(
+        p in last_q_l
+        for p in ("move on", "no problem", "no worries", "let's try a simpler")
+    ):
+        return ""
+    fragment = _answer_fragment(last_answer)
+    if fragment:
+        # Tie off their words, then the core question carries the new topic.
+        return f"You mentioned {fragment}."
+    # Skill→skill or thin prior answer: no intro — question naming is enough.
+    return ""
+
+
+def topic_focus_reply(
+    item: dict,
+    coach_context: dict | None = None,
+) -> str:
+    """Concrete next question from vault facts — never invent details.
+
+    Uses conversation context for continuity; prefers a direct question over
+    rote intros like \"Let's dig into your X experience.\"
+    """
+    title = (item.get("title") or "this topic").strip()
+    kind = (item.get("kind") or item.get("category") or "topic").lower()
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    ctx = coach_context or {}
+    prev = str(ctx.get("current_topic") or "").strip()
+    last_q = str(ctx.get("last_assistant_question") or "")
+    answers = list(ctx.get("answers_received") or [])
+    last_answer = str(answers[-1] if answers else "").strip()
+    question = _focus_core_question(title, kind, details)
+    bridge = _continuity_bridge(
+        prev_topic=prev,
+        next_title=title,
+        last_answer=last_answer,
+        last_q=last_q,
+    )
+    if bridge:
+        return f"{bridge} {question}"
+    return question
+
+
+def project_focus_reply(
+    project: dict,
+    coach_context: dict | None = None,
+) -> str:
     """Backward-compatible alias for topic_focus_reply."""
-    return topic_focus_reply(project)
+    return topic_focus_reply(project, coach_context=coach_context)
 
 
 def _probe_already_asked(probe: str, asked: list[str], last_q: str) -> bool:
@@ -975,31 +1415,38 @@ def _pick_probe(probes: list[str], *, asked: list[str], last_q: str, offset: int
 
 
 _PROJECT_PROBES = (
-    "What problem were you solving, and who was it for?",
-    "Walk me through one design or implementation choice you made and why.",
-    "What broke or surprised you while building it, and how did you handle that?",
-    "If an interviewer asked for the strongest result, what would you point to?",
+    "What problem were you solving with “{topic}”, and who was it for?",
+    "Walk me through one design or implementation choice you made on “{topic}” and why.",
+    "What broke or surprised you while building “{topic}”, and how did you handle that?",
+    "If an interviewer asked for the strongest result from “{topic}”, what would you point to?",
 )
 _SKILL_PROBES = (
-    "Walk me through one concrete example where you applied it — situation and result?",
-    "What part of it still feels hardest to explain clearly in an interview?",
-    "How would you teach the core idea to someone new in two minutes?",
+    "Walk me through one concrete example where you applied {topic} — situation and result?",
+    "What part of {topic} still feels hardest to explain clearly in an interview?",
+    "How would you teach the core idea of {topic} to someone new in two minutes?",
 )
 _EDU_PROBES = (
-    "Which concept from it would you explain confidently in an interview, and why?",
-    "What assignment or lab forced you to apply it for real?",
-    "How does it connect to the role or field you want next?",
+    "Which concept from {topic} would you explain confidently in an interview, and why?",
+    "What assignment or lab in {topic} forced you to apply it for real?",
+    "How does {topic} connect to the role or field you want next?",
 )
 _INTERN_PROBES = (
-    "What was your main responsibility, and what did you deliver?",
-    "What feedback or result are you most proud of?",
-    "Which skill from that experience transfers most to your next role?",
+    "At {topic}, what was your main responsibility, and what did you deliver?",
+    "From {topic}, what feedback or result are you most proud of?",
+    "Which skill from {topic} transfers most to your next role?",
 )
 _GENERIC_PROBES = (
-    "What else should an interviewer really understand about it?",
-    "Which part would you highlight first in a short interview story?",
-    "What would you do differently if you revisited it now?",
+    "What else should an interviewer really understand about {topic}?",
+    "Which part of {topic} would you highlight first in a short interview story?",
+    "What would you do differently if you revisited {topic} now?",
 )
+
+
+def _format_probe(template: str, topic: str) -> str:
+    try:
+        return template.format(topic=topic)
+    except (KeyError, ValueError):
+        return template
 
 
 def continue_topic_reply(
@@ -1015,6 +1462,8 @@ def continue_topic_reply(
     kind = (ctx.get("focus_kind") or (item or {}).get("category") or "topic").lower()
     details = _compact_details((item or {}).get("details") if item else {})
     answers_n = len(ctx.get("answers_received") or [])
+    answers = list(ctx.get("answers_received") or [])
+    last_answer = str(answers[-1] if answers else "").strip()
     asked = [str(a) for a in (ctx.get("asked_questions") or []) if a]
     last_q = str(ctx.get("last_assistant_question") or "")
     tech = str(
@@ -1025,52 +1474,40 @@ def continue_topic_reply(
     ).strip()
     first_tech = (tech.split(",")[0].strip() if tech else "") or ""
 
-    # Enough depth → natural bridge (no stock "clearer picture" filler).
+    # Enough depth → move on with continuity from their words, not a stock intro.
     if answers_n >= 3:
         nxt_list = suggested_next_topics(vault_summary, topic)
         if nxt_list:
             nxt = nxt_list[0]
-            if nxt["kind"] == "skill":
-                return (
-                    f"You've covered a lot on “{topic}”. "
-                    f"Next, I'd like to understand your {nxt['title']} — "
-                    "what have you used it for?"
-                )
-            return (
-                f"You've covered a lot on “{topic}”. "
-                f"Shall we look at your “{nxt['title']}” {nxt['kind']} next — "
-                "what was the main goal?"
+            question = _focus_core_question(nxt["title"], nxt["kind"], {})
+            bridge = _continuity_bridge(
+                prev_topic=topic,
+                next_title=nxt["title"],
+                last_answer=last_answer,
+                last_q=last_q,
             )
+            return f"{bridge} {question}".strip() if bridge else question
 
     if kind == "project":
-        probes = list(_PROJECT_PROBES)
+        probes = [_format_probe(p, topic) for p in _PROJECT_PROBES]
         if first_tech:
             probes.insert(
                 1,
-                f"How did you decide to use {first_tech}, "
+                f"How did you decide to use {first_tech} in “{topic}”, "
                 "and what challenge did that choice create?",
             )
-        probe = _pick_probe(probes, asked=asked, last_q=last_q, offset=answers_n)
-        return f"Staying with “{topic}” — {probe}"
+        return _pick_probe(probes, asked=asked, last_q=last_q, offset=answers_n)
     if kind == "skill":
-        probe = _pick_probe(
-            list(_SKILL_PROBES), asked=asked, last_q=last_q, offset=answers_n
-        )
-        return f"On {topic}: {probe}"
+        probes = [_format_probe(p, topic) for p in _SKILL_PROBES]
+        return _pick_probe(probes, asked=asked, last_q=last_q, offset=answers_n)
     if kind == "education":
-        probe = _pick_probe(
-            list(_EDU_PROBES), asked=asked, last_q=last_q, offset=answers_n
-        )
-        return f"About {topic} — {probe}"
+        probes = [_format_probe(p, topic) for p in _EDU_PROBES]
+        return _pick_probe(probes, asked=asked, last_q=last_q, offset=answers_n)
     if kind == "internship":
-        probe = _pick_probe(
-            list(_INTERN_PROBES), asked=asked, last_q=last_q, offset=answers_n
-        )
-        return f"About your {topic} experience — {probe}"
-    probe = _pick_probe(
-        list(_GENERIC_PROBES), asked=asked, last_q=last_q, offset=answers_n
-    )
-    return f"Continuing with “{topic}” — {probe}"
+        probes = [_format_probe(p, topic) for p in _INTERN_PROBES]
+        return _pick_probe(probes, asked=asked, last_q=last_q, offset=answers_n)
+    probes = [_format_probe(p, topic) for p in _GENERIC_PROBES]
+    return _pick_probe(probes, asked=asked, last_q=last_q, offset=answers_n)
 
 
 def suggested_next_topics(
@@ -1078,10 +1515,16 @@ def suggested_next_topics(
     current_topic: str | None,
     *,
     limit: int = 4,
+    exclude_titles: list[str] | None = None,
 ) -> list[dict]:
     """Other vault items the coach can bridge to after the current focus."""
     current = (current_topic or "").strip().lower()
-    out: list[dict] = []
+    excluded = {str(t).strip().lower() for t in (exclude_titles or []) if t}
+    if current:
+        excluded.add(current)
+    # Prefer lived experience over skill-menu style transitions.
+    prefer = ("internship", "project", "education", "achievement", "skill")
+    buckets: dict[str, list[dict]] = {k: [] for k in prefer}
     for item in vault_summary or []:
         if not isinstance(item, dict):
             continue
@@ -1089,12 +1532,47 @@ def suggested_next_topics(
         cat = (item.get("category") or "").lower()
         if not title or cat not in _FOCUSABLE_CATEGORIES:
             continue
-        if title.lower() == current:
+        if title.lower() in excluded:
             continue
-        out.append({"title": title[:80], "kind": cat})
-        if len(out) >= limit:
-            break
+        buckets.setdefault(cat, []).append({"title": title[:80], "kind": cat})
+    out: list[dict] = []
+    for cat in prefer:
+        for row in buckets.get(cat) or []:
+            out.append(row)
+            if len(out) >= limit:
+                return out
     return out
+
+
+def skip_move_on_reply(
+    coach_context: dict | None = None,
+    vault_summary: list[dict] | None = None,
+) -> str:
+    """Acknowledge skip/move-on and ask one natural question on a different topic."""
+    ctx = coach_context or {}
+    prev = str(ctx.get("current_topic") or "").strip()
+    skipped = [
+        str(x).split(":", 1)[-1]
+        for x in (ctx.get("skipped_categories") or [])
+        if isinstance(x, str) and x.startswith("topic:")
+    ]
+    if prev:
+        skipped.append(prev)
+    nxt_list = suggested_next_topics(
+        vault_summary, prev, exclude_titles=skipped, limit=6
+    )
+    ack = "No problem — we can move on."
+    if not nxt_list:
+        return (
+            f"{ack}\n\nWhat would you like to cover next — an experience from your "
+            "resume, or the kind of role you're aiming for?"
+        )
+    pick = nxt_list[0]
+    title = pick["title"]
+    kind = pick["kind"]
+    # Acknowledge once, then ask directly — no second "Let's explore…" lead-in.
+    q = _focus_core_question(title, kind, {})
+    return f"{ack} {q}"
 
 
 def infer_question_intent(reply: str) -> str:

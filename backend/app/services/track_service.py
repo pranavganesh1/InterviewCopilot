@@ -37,9 +37,18 @@ async def run_bank_regeneration_turn(**kwargs):
 
 
 async def build_track_creator_brief(
-    *, objective: dict, vault_summary: list[dict], meta: dict | None = None
+    *,
+    objective: dict,
+    vault_summary: list[dict],
+    meta: dict | None = None,
+    candidate_intelligence: dict | None = None,
 ) -> dict:
-    """Author the brief + validated question bank (no DB). Testable in isolation."""
+    """Author the brief + validated question bank (no DB). Testable in isolation.
+
+    Optional ``candidate_intelligence`` is a compact prep context (not the full
+    snapshot) so authoring can respect goals, selected projects, and prior
+    track evidence without inventing vault facts.
+    """
     problem = subject_problem(str(objective.get("subject") or ""))
     if problem:
         return {
@@ -58,7 +67,12 @@ async def build_track_creator_brief(
         regen_runner=run_bank_regeneration_turn,
     )
     result = await graph.ainvoke(
-        {"objective": objective, "vault_summary": vault_summary, "meta": meta or {}}
+        {
+            "objective": objective,
+            "vault_summary": vault_summary,
+            "meta": meta or {},
+            "candidate_intelligence": candidate_intelligence,
+        }
     )
     return result["brief"]
 
@@ -117,11 +131,30 @@ async def author_brief_for_track(db: AsyncSession, track_id: uuid.UUID) -> dict 
         "company": track.company,
         "jd_text": track.jd_text,
     }
+    prep_context = None
+    try:
+        from app.services.candidate_intelligence import (
+            build_interview_prep_context,
+            compact_brief_authoring_context,
+            get_candidate_intelligence_for_user,
+        )
+
+        snapshot = await get_candidate_intelligence_for_user(db, track.user_id)
+        prep_context = compact_brief_authoring_context(
+            build_interview_prep_context(
+                snapshot,
+                track_id=str(track.id),
+                track_subject=str(track.subject or ""),
+            )
+        )
+    except Exception:  # noqa: BLE001 — authoring continues with vault only
+        prep_context = None
     try:
         content = await build_track_creator_brief(
             objective=objective,
             vault_summary=await vault_summary(db, track.user_id),
             meta={"user_id": str(track.user_id), "track_id": str(track.id)},
+            candidate_intelligence=prep_context,
         )
     except Exception:
         track.brief_status = "failed"

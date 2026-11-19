@@ -89,8 +89,9 @@ def test_strong_streak_increases_difficulty_on_plan():
         {"topic": "Accounting", "difficulty": "foundational"},
         {"topic": "Finance", "difficulty": "foundational"},
     ]
+    # Gradual: foundational → intermediate (not a jump to advanced).
     assert apply_plan_difficulty_nudge(plan, questions_asked=1, coverage="excellent")
-    assert plan[1]["difficulty"] == "advanced"
+    assert plan[1]["difficulty"] == "intermediate"
 
 
 def test_weak_coverage_lowers_next_slot_difficulty():
@@ -98,8 +99,9 @@ def test_weak_coverage_lowers_next_slot_difficulty():
         {"topic": "OS", "difficulty": "advanced"},
         {"topic": "DBMS", "difficulty": "advanced"},
     ]
+    # Gradual: advanced → intermediate (not a jump to foundational).
     assert apply_plan_difficulty_nudge(plan, questions_asked=1, coverage="none")
-    assert plan[1]["difficulty"] == "foundational"
+    assert plan[1]["difficulty"] == "intermediate"
 
 
 def test_knowledge_gaps_prioritize_remaining_areas():

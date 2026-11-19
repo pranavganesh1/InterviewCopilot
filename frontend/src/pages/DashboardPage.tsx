@@ -7,18 +7,22 @@ import StartInterviewModal from "../components/StartInterviewModal";
 import TrackOptionsMenu from "../components/TrackOptionsMenu";
 import TrackTypePicker from "../components/TrackTypePicker";
 import UserAvatar from "../components/UserAvatar";
-import StatCard from "../components/ui/StatCard";
 import ProgressRing from "../components/ui/ProgressRing";
 import SectionHeader from "../components/ui/SectionHeader";
+import DashboardProgressChart from "../components/DashboardProgressChart";
 import PreparationReviewPanel from "../components/PreparationReviewPanel";
+import CompetencyOverview from "../components/CompetencyOverview";
+import ProjectPrepPanel from "../components/ProjectPrepPanel";
 import {
   ApiError,
   api,
   type AssessmentSummary,
   type AssessmentsDashboard,
+  type CareerIntelligence,
   type NextAction,
   type OpenSessionRow,
   type ProfileReview,
+  type RoadmapCompletion,
   type RoadmapStep,
   type Track,
   type TrackWeaknesses,
@@ -232,6 +236,12 @@ export default function DashboardPage() {
     queryKey: ["me-assessments"],
     queryFn: () => api<AssessmentsDashboard>("/me/assessments"),
   });
+  const career = useQuery({
+    queryKey: ["career-intelligence"],
+    enabled: Boolean(user?.onboarding_completed),
+    queryFn: () => api<CareerIntelligence>("/me/career-intelligence"),
+    retry: false,
+  });
 
   const openSessions = useQuery({
     queryKey: ["me-open-sessions"],
@@ -324,6 +334,7 @@ export default function DashboardPage() {
   const trackList = tracks.data ?? [];
   const assessmentList = assessments.data?.assessments ?? [];
   const dash = assessments.data?.dashboard;
+  const review = profileReview.data ?? user?.profile_review;
 
   const topicOptions = useMemo(() => {
     const list = tracks.data ?? [];
@@ -389,12 +400,97 @@ export default function DashboardPage() {
 
   const visibleAssessments = assessmentList.filter((item) => !item.track_archived);
   const activeTrackCount = trackList.filter((item) => !item.archived).length;
-  const progressLabel = scoreDelta(visibleAssessments);
+  const comparableProgress = career.data?.progress?.available === true;
+  const progressLabel = comparableProgress
+    ? scoreDelta(visibleAssessments)
+    : null;
+  const progressUnavailableNote =
+    career.data?.progress?.comparison_note ||
+    career.data?.progress?.reason ||
+    (visibleAssessments.length < 2
+      ? "Need more comparable interviews before showing a trend"
+      : null);
   const recent = visibleAssessments.slice(0, 5);
   const avgScore = dash?.average_score ?? null;
   const interviewsTaken = dash?.completed_interviews ?? 0;
   const openList = openSessions.data ?? [];
   const inProgressCount = openList.length;
+  const readinessScore = career.data?.career_readiness?.evidence_index ?? null;
+  const readinessLevel = career.data?.career_readiness?.level;
+  const readinessSummary = career.data?.career_readiness?.summary;
+  const targetRole =
+    career.data?.career_readiness?.target_role ||
+    user?.preparation_preferences?.target_role ||
+    null;
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const interviewsThisWeek = visibleAssessments.filter(
+    (a) => new Date(a.created_at).getTime() >= weekAgo,
+  ).length;
+  const chartPoints = useMemo(() => {
+    const trend = career.data?.progress?.session_score_trend;
+    if (trend && trend.length > 0) {
+      return trend.slice(-5).map((row, idx) => ({
+        label: `Interview ${idx + 1}`,
+        overall: row.overall_score ?? null,
+        technical: null as number | null,
+      }));
+    }
+    return [...visibleAssessments]
+      .sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      )
+      .slice(-5)
+      .map((a, idx) => ({
+        label: `Interview ${idx + 1}`,
+        overall: a.overall_score,
+        technical: null as number | null,
+      }));
+  }, [career.data?.progress?.session_score_trend, visibleAssessments]);
+  const strengthItems =
+    career.data?.strengths?.length
+      ? career.data.strengths.slice(0, 4).map((s) => s.concept)
+      : (dash?.strongest_skills ?? []).slice(0, 4);
+  const improveItems =
+    career.data?.improvement_areas?.length
+      ? career.data.improvement_areas.slice(0, 4).map((s) => s.concept)
+      : (dash?.skills_needing_improvement ?? []).slice(0, 4);
+  const roadmapSteps =
+    (review?.roadmap?.length ?? 0) > 0
+      ? review!.roadmap.slice(0, 4)
+      : (career.data?.roadmap ?? []).slice(0, 4).map((step, i) => ({
+          id: `career-${step.order ?? i}`,
+          title: step.topic || `Step ${i + 1}`,
+          why: step.reason || "",
+          topics: [] as string[],
+          practise: step.activity || "",
+          track_type: "topic",
+          subject: step.track_subject || step.topic || "",
+          action_label: "Start practice",
+          priority: step.priority,
+          // Career roadmap has no completion flag — do not invent one.
+          completion: undefined as RoadmapCompletion | undefined,
+          evidence: step.supporting_evidence || step.evidence_basis || "",
+        }));
+  const primaryNext =
+    review?.next_action ||
+    (career.data?.next_actions?.[0]
+      ? {
+          title: career.data.next_actions[0].title,
+          reason: career.data.next_actions[0].reason,
+          action_label: career.data.next_actions[0].action_label,
+          href: career.data.next_actions[0].href,
+          kind: undefined,
+        }
+      : null);
+  const readinessLevelLabel: Record<string, string> = {
+    insufficient_evidence: "Building evidence",
+    early: "Early signal",
+    building: "Building",
+    developing: "Developing",
+    needs_focused_practice: "Needs focus",
+    strong_evidence: "Strong preparation",
+  };
   const openSessionsErrorMessage =
     openSessions.error instanceof ApiError
       ? openSessions.error.message
@@ -437,7 +533,6 @@ export default function DashboardPage() {
     await restore.mutateAsync(target.id);
   }
 
-  const review = profileReview.data ?? user?.profile_review;
   const reviewBusy =
     saveReview.isPending || startRecommended.isPending || refreshReview.isPending;
   const refreshReviewError = (() => {
@@ -503,7 +598,390 @@ export default function DashboardPage() {
         />
       )}
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      {user?.onboarding_completed && (
+        <section className="space-y-4" data-testid="career-intelligence">
+          {career.isError && (
+            <div
+              role="alert"
+              data-testid="career-intelligence-error"
+              className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900"
+            >
+              <p className="font-semibold">Couldn’t load career readiness</p>
+              <p className="mt-1">
+                {career.error instanceof ApiError
+                  ? career.error.message
+                  : career.error instanceof Error
+                    ? career.error.message
+                    : "Could not load career readiness."}
+              </p>
+              <button
+                type="button"
+                onClick={() => void career.refetch()}
+                className="mt-2 text-sm font-semibold underline-offset-2 hover:underline"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <article className="rounded-2xl border border-line bg-white p-4 shadow-card">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                Career Readiness
+              </p>
+              <div className="mt-3 flex items-center gap-3">
+                <ProgressRing
+                  value={career.isLoading ? null : readinessScore}
+                  size="md"
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-ink" data-testid="career-readiness-summary">
+                    {career.isLoading
+                      ? "Loading…"
+                      : readinessLevel
+                        ? readinessLevelLabel[readinessLevel] || readinessLevel
+                        : "No evidence yet"}
+                  </p>
+                  {progressLabel && progressLabel.startsWith("+") && (
+                    <p className="mt-1 text-xs font-medium text-emerald-600">
+                      ↑ {progressLabel} trend
+                    </p>
+                  )}
+                </div>
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-line bg-white p-4 shadow-card">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                Interviews Completed
+              </p>
+              <p className="mt-3 text-3xl font-bold tabular-nums text-ink">
+                {assessments.isLoading ? "…" : assessments.isError ? "—" : interviewsTaken}
+              </p>
+              <p className="mt-1 text-xs text-ink-soft">
+                {assessments.isLoading || assessments.isError
+                  ? "—"
+                  : interviewsThisWeek > 0
+                    ? `+${interviewsThisWeek} this week`
+                    : "No new interviews this week"}
+              </p>
+            </article>
+
+            <article className="rounded-2xl border border-line bg-white p-4 shadow-card">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                Overall Performance
+              </p>
+              <p className="mt-3 text-3xl font-bold tabular-nums text-ink">
+                {assessments.isLoading
+                  ? "…"
+                  : assessments.isError
+                    ? "—"
+                    : avgScore != null
+                      ? `${avgScore}%`
+                      : "—"}
+              </p>
+              <p
+                className={`mt-1 text-xs font-medium ${
+                  progressLabel?.startsWith("+")
+                    ? "text-emerald-600"
+                    : progressLabel?.startsWith("-")
+                      ? "text-rose-600"
+                      : "text-ink-soft"
+                }`}
+              >
+                {assessments.isLoading || assessments.isError
+                  ? "—"
+                  : progressLabel
+                    ? `${progressLabel} vs earlier interviews`
+                    : progressUnavailableNote ||
+                      "Need more comparable interviews for a trend"}
+              </p>
+            </article>
+
+            <article className="rounded-2xl border border-line bg-white p-4 shadow-card">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                Target Role Readiness
+              </p>
+              <div className="mt-3 flex gap-3">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent-soft text-accent">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+                    <path d="M12 2a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm0 16a7 7 0 1 1 7-7 7 7 0 0 1-7 7Zm0-10a3 3 0 1 0 3 3 3 3 0 0 0-3-3Z" />
+                  </svg>
+                </span>
+                <p className="text-sm leading-snug text-ink">
+                  {targetRole
+                    ? readinessSummary ||
+                      `Preparation signals for ${targetRole} from your completed interviews.`
+                    : readinessSummary ||
+                      "Set a target role in onboarding to personalize readiness."}
+                </p>
+              </div>
+            </article>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            <article className="rounded-2xl border border-line bg-white p-5 shadow-card xl:col-span-1">
+              <h3 className="text-sm font-semibold text-ink">Strength & Weakness Analysis</h3>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                    Your Strengths
+                  </p>
+                  {strengthItems.length === 0 ? (
+                    <p className="mt-2 text-sm text-ink-faint">No strengths with enough evidence yet.</p>
+                  ) : (
+                    <ul className="mt-2 space-y-2">
+                      {strengthItems.map((item) => (
+                        <li key={item} className="flex items-start gap-2 text-sm text-ink">
+                          <span className="mt-0.5 text-emerald-600" aria-hidden="true">✓</span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
+                    Areas to Improve
+                  </p>
+                  {improveItems.length === 0 ? (
+                    <p className="mt-2 text-sm text-ink-faint">No demonstrated gaps yet.</p>
+                  ) : (
+                    <ul className="mt-2 space-y-2">
+                      {improveItems.map((item) => (
+                        <li key={item} className="flex items-start gap-2 text-sm text-ink">
+                          <span className="mt-0.5 text-orange-500" aria-hidden="true">!</span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+              {(readinessSummary || dash?.recommended_topics?.length) && (
+                <div className="mt-4 rounded-xl bg-accent-soft/60 p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-accent-strong">
+                    Key Insight
+                  </p>
+                  <p className="mt-1 text-sm text-ink">
+                    {readinessSummary ||
+                      `Recommended focus: ${(dash?.recommended_topics ?? []).slice(0, 3).join(", ")}`}
+                  </p>
+                </div>
+              )}
+            </article>
+
+            <article className="rounded-2xl border border-line bg-white p-5 shadow-card">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-ink">Progress Overview</h3>
+                <span className="text-[11px] text-ink-faint">Last {Math.max(chartPoints.length, 1)} interviews</span>
+              </div>
+              <div className="mt-3">
+                <DashboardProgressChart
+                  points={chartPoints}
+                  emptyMessage={
+                    assessments.isLoading
+                      ? "Loading progress…"
+                      : "Complete interviews to see progress."
+                  }
+                />
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-line bg-white p-5 shadow-card">
+              <h3 className="text-sm font-semibold text-ink">Preparation Roadmap</h3>
+              {roadmapSteps.length === 0 ? (
+                <p className="mt-3 text-sm text-ink-faint">
+                  Finish onboarding or interviews to unlock a roadmap.
+                </p>
+              ) : (
+                <ol className="mt-3 space-y-3" data-testid="dashboard-roadmap">
+                  {roadmapSteps.map((step, index) => {
+                    const priority =
+                      "priority" in step && typeof step.priority === "string"
+                        ? step.priority
+                        : index === 0
+                          ? "high"
+                          : "medium";
+                    const completion =
+                      "completion" in step && typeof step.completion === "string"
+                        ? step.completion
+                        : null;
+                    const evidence =
+                      "evidence" in step && typeof step.evidence === "string"
+                        ? step.evidence
+                        : step.practise;
+                    return (
+                      <li key={step.id} className="flex gap-3">
+                        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-soft text-xs font-bold text-accent-strong">
+                          {index + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold text-ink">{step.title}</p>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                /high/i.test(priority)
+                                  ? "bg-rose-50 text-rose-700"
+                                  : "bg-amber-50 text-amber-800"
+                              }`}
+                            >
+                              {/high/i.test(priority) ? "High Priority" : "Medium"}
+                            </span>
+                            {completion && (
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  completion === "completed"
+                                    ? "bg-emerald-50 text-emerald-800"
+                                    : completion === "in_progress"
+                                      ? "bg-sky-50 text-sky-800"
+                                      : "bg-stone-100 text-stone-600"
+                                }`}
+                              >
+                                {completion === "completed"
+                                  ? "Completed"
+                                  : completion === "in_progress"
+                                    ? "In progress"
+                                    : "Not started"}
+                              </span>
+                            )}
+                          </div>
+                          {step.why && (
+                            <p className="mt-0.5 text-xs text-ink-soft line-clamp-2">{step.why}</p>
+                          )}
+                          {step.subject && (
+                            <p className="mt-0.5 text-[11px] text-ink-faint">
+                              Track focus: {step.subject}
+                            </p>
+                          )}
+                          {evidence && (
+                            <p className="mt-0.5 text-[11px] text-ink-faint line-clamp-2">
+                              {evidence}
+                            </p>
+                          )}
+                          {"action_label" in step &&
+                            step.subject &&
+                            completion !== "completed" && (
+                            <button
+                              type="button"
+                              disabled={reviewBusy}
+                              onClick={() =>
+                                startRecommended.mutate({
+                                  subject: step.subject,
+                                  track_type: step.track_type || "topic",
+                                })
+                              }
+                              className="mt-1.5 text-xs font-semibold text-accent-strong hover:underline disabled:opacity-50"
+                            >
+                              {step.action_label || "Start"}
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+              <Link
+                to="/readiness"
+                className="mt-4 inline-flex text-xs font-semibold text-accent-strong hover:underline"
+              >
+                View Full Roadmap →
+              </Link>
+            </article>
+          </div>
+
+          {career.data && (
+            <CompetencyOverview data={career.data} compact />
+          )}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ProjectPrepPanel
+              data={career.data?.project_intelligence}
+              defense={career.data?.project_defense}
+              canDefend={Boolean(focusTrackId)}
+              onDefend={() => {
+                const track = (tracks.data ?? []).find((t) => t.id === focusTrackId);
+                if (!track) return;
+                setStartFocusWeak(false);
+                setStartDefenseMode(true);
+                setStartTrack(track);
+              }}
+            />
+
+            <article className="rounded-2xl border border-line bg-white p-5 shadow-card">
+              <h3 className="text-sm font-semibold text-ink">Continuous preparation</h3>
+              <p className="mt-1 text-xs text-ink-soft">
+                Interview → Assessment → Evidence → Career Intelligence → Practice → Reassessment
+              </p>
+              {primaryNext ? (
+                <div
+                  className="mt-4 rounded-xl border border-accent/20 bg-accent-soft/50 p-4"
+                  data-testid="career-preparation-loop"
+                >
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-accent-strong">
+                    Next useful action
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-ink">{primaryNext.title}</p>
+                  {primaryNext.reason && (
+                    <p className="mt-1 text-xs text-ink-soft">{primaryNext.reason}</p>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2" data-testid="career-next-actions">
+                    {review?.next_action ? (
+                      <button
+                        type="button"
+                        disabled={reviewBusy}
+                        onClick={() => handleNextAction(review.next_action!)}
+                        className="rounded-xl bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-strong disabled:opacity-50"
+                      >
+                        {primaryNext.action_label || "Continue"}
+                      </button>
+                    ) : primaryNext.href ? (
+                      <Link
+                        to={primaryNext.href}
+                        className="rounded-xl bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-strong"
+                      >
+                        {primaryNext.action_label || "Continue"}
+                      </Link>
+                    ) : null}
+                    <button
+                      type="button"
+                      data-testid="practice-weak-areas"
+                      disabled={!focusTrackId}
+                      onClick={() => {
+                        if (!focusTrackId) return;
+                        const track = (tracks.data ?? []).find((t) => t.id === focusTrackId);
+                        if (!track) return;
+                        setStartDefenseMode(false);
+                        setStartFocusWeak(true);
+                        setStartTrack(track);
+                      }}
+                      className="rounded-xl border border-line bg-page px-3 py-2 text-xs font-semibold text-ink hover:bg-white disabled:opacity-50"
+                    >
+                      Practice weak areas
+                    </button>
+                    <Link
+                      to="/readiness"
+                      className="rounded-xl border border-line bg-page px-3 py-2 text-xs font-semibold text-ink hover:bg-white"
+                    >
+                      Open full readiness
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-ink-faint">
+                  Complete an interview to unlock your next preparation action.
+                </p>
+              )}
+              {career.data?.disclaimer && (
+                <p className="mt-3 text-[11px] text-ink-faint">{career.data.disclaimer}</p>
+              )}
+            </article>
+          </div>
+        </section>
+      )}
+
+      <div id="tracks" className="flex flex-wrap items-start justify-between gap-3 scroll-mt-24">
         <SectionHeader
           title="Preparation tracks"
           subtitle="Each track has its own interviews, feedback, and progression."
@@ -511,7 +989,7 @@ export default function DashboardPage() {
         <button
           type="button"
           onClick={() => setShowForm((v) => !v)}
-          className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-card hover:bg-accent-strong"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-card hover:bg-accent-strong"
         >
           {showForm ? (
             "Cancel"
@@ -690,65 +1168,6 @@ export default function DashboardPage() {
           </div>
         </form>
       )}
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Total Tracks"
-          value={String(activeTrackCount)}
-          icon={
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-              <path d="M4 19h4V9H4v10Zm6 0h4V5h-4v14Zm6 0h4v-7h-4v7Z" />
-            </svg>
-          }
-        />
-        <StatCard
-          label="Interviews Taken"
-          value={
-            assessments.isLoading
-              ? "…"
-              : assessments.isError
-                ? "—"
-                : String(interviewsTaken)
-          }
-          icon={
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-              <path d="M8 5v14l11-7L8 5Z" />
-            </svg>
-          }
-        />
-        <StatCard
-          label="Avg. Score"
-          value={
-            assessments.isLoading
-              ? "…"
-              : assessments.isError
-                ? "—"
-                : avgScore != null
-                  ? `${avgScore}%`
-                  : "—"
-          }
-          icon={
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-              <path d="M12 2 9.5 8.5 2 9.3l5.5 4.7L5.8 21 12 17.3 18.2 21l-1.7-7 5.5-4.7-7.5-.8L12 2Z" />
-            </svg>
-          }
-        />
-        <StatCard
-          label="Progress"
-          value={
-            assessments.isLoading || assessments.isError
-              ? assessments.isLoading
-                ? "…"
-                : "—"
-              : (progressLabel ?? "—")
-          }
-          icon={
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l5-5 4 4 7-8" />
-            </svg>
-          }
-        />
-      </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="space-y-4">
@@ -1161,10 +1580,10 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="rounded-lg border border-line bg-white p-5">
+          <div className="rounded-lg border border-line bg-white p-5" data-testid="dashboard-interview-history">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-ink">
-                Recent Activity
+                Interview history
               </h2>
               <Link
                 to="/profile#history"
@@ -1197,34 +1616,54 @@ export default function DashboardPage() {
                 className="mt-3 rounded-md bg-page px-3 py-4 text-center text-xs text-ink-faint"
                 data-testid="dashboard-assessments-empty"
               >
-                No completed assessments yet.
+                No completed assessments yet. Finish an interview to build evidence here.
               </p>
             ) : (
               <ul className="mt-3 space-y-3">
-                {recent.map((a) => (
-                  <li key={a.report_id} className="flex gap-2.5">
-                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600">
-                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
-                      </svg>
-                    </span>
-                    <div className="min-w-0">
-                      <Link
-                        to={`/tracks/${a.track_id}/report/${a.session_id}`}
-                        className="block truncate text-sm font-medium text-ink hover:text-accent-strong"
-                      >
-                        {a.track_subject} Interview
-                      </Link>
-                      <p className="text-xs text-ink-soft">
-                        Completed
-                        {a.overall_score != null
-                          ? ` · Score: ${a.overall_score}%`
-                          : ""}{" "}
-                        · {formatDate(a.created_at)}
-                      </p>
-                    </div>
-                  </li>
-                ))}
+                {recent.map((a) => {
+                  const topics = [
+                    ...(a.strengths ?? []).slice(0, 2),
+                    ...(a.improvement_areas ?? []).slice(0, 1),
+                  ];
+                  return (
+                    <li key={a.report_id} className="flex gap-2.5">
+                      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600">
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
+                        </svg>
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <Link
+                          to={`/tracks/${a.track_id}/report/${a.session_id}`}
+                          className="block truncate text-sm font-medium text-ink hover:text-accent-strong"
+                        >
+                          {a.track_subject}
+                        </Link>
+                        <p className="text-xs text-ink-soft">
+                          {formatDate(a.created_at)} · {a.session_mode}
+                          {a.overall_score != null ? ` · ${a.overall_score}%` : ""}
+                          {a.coverage_status ? ` · ${a.coverage_status}` : ""}
+                        </p>
+                        {topics.length > 0 && (
+                          <p className="mt-0.5 truncate text-[11px] text-ink-faint">
+                            Topics: {topics.join(", ")}
+                          </p>
+                        )}
+                        {a.summary_overview && (
+                          <p className="mt-0.5 line-clamp-2 text-[11px] text-ink-soft">
+                            {a.summary_overview}
+                          </p>
+                        )}
+                        <Link
+                          to={`/tracks/${a.track_id}/report/${a.session_id}`}
+                          className="mt-1 inline-flex text-[11px] font-semibold text-accent-strong hover:underline"
+                        >
+                          View feedback report
+                        </Link>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

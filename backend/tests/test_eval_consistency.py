@@ -42,16 +42,17 @@ async def test_guards_skip_llm_for_empty_idk_short(monkeypatch):
 
     monkeypatch.setattr("app.agents.interviewer.structured_completion", boom)
 
-    for answer, check in (
-        ("", "empty_answer"),
-        ("I don't know", "idk_answer"),
-        ("idk", "idk_answer"),
-        ("ok", "too_short_answer"),
+    for answer, check, coverage in (
+        ("", "empty_answer", "none"),
+        ("I don't know", "idk_answer", "none"),
+        ("idk", "idk_answer", "none"),
+        # Short answers are unclear/insufficient (partial), not auto-incorrect.
+        ("ok", "too_short_answer", "partial"),
     ):
         ev, checks = await evaluate_answer_with_meta(
             {"last_answer": answer, "last_question": "What is an array?", "mode": "strict"}
         )
-        assert ev.coverage == "none"
+        assert ev.coverage == coverage
         assert check in checks
         assert ev.gaps
     assert calls == 0

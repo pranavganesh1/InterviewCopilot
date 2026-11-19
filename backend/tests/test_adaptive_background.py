@@ -72,7 +72,8 @@ def test_welcome_personalized_by_field():
     ]
     msg = build_profile_review_message(commerce_items)
     assert RESUME_WELCOME_MARKER in msg
-    assert "Commerce" in msg or "B.Com" in msg or "Finance" in msg
+    assert "make sure everything looks right" in msg
+    assert "caught my eye" not in msg.lower()
     assert "11 more" not in msg
 
     physics_items = [
@@ -85,7 +86,8 @@ def test_welcome_personalized_by_field():
         ),
     ]
     pmsg = build_profile_review_message(physics_items)
-    assert "Physics" in pmsg or "analytical" in pmsg.lower()
+    assert RESUME_WELCOME_MARKER in pmsg
+    assert "make sure everything looks right" in pmsg
 
 
 def test_incomplete_no_projects_no_experience_self_taught():

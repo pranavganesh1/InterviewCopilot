@@ -9,7 +9,9 @@ from app.agents.question_dedupe import (
     duplicate_of,
     fingerprint_tuple,
     is_duplicate_question,
+    is_near_duplicate,
     normalize_question,
+    revisit_justified,
 )
 from app.agents.question_quality import (
     CODING_STATIC_REVIEW_RULES,
@@ -38,6 +40,9 @@ Persona (human interviewer):
 - Warm, curious, professional; light humour at most once every few questions — never mocking.
 - next_question is ONLY the question. Do not store a reaction in that field.
 - Ask exactly ONE concise question (max two short sentences). No lists of sub-questions.
+- Prefer asking the next question directly. Avoid rote topic intros every turn
+  ("Let's dig into…", "Let's explore…", "Let's move on to…",
+  "Tell me about your experience with…"). Use prior answers for continuity when useful.
 - Use covered_so_far / memory_instruction when present.
 - prior_track_questions lists questions this candidate already saw on this track.
   Do not repeat them.
@@ -45,23 +50,30 @@ Persona (human interviewer):
 STRICT_REACTION_RULE = """
 Strict reactions:
 - Never evaluate the previous answer. Forbidden openers include "I see", "Let's explore",
-  "Let's dive deeper", "Good", "Great", "Nice", "Interesting", "Right", "Okay so",
-  "Exactly", "Good start", "Let's start with the basics", "That's right", and "Not quite".
+  "Let's dig into", "Let's move on to", "Let's dive deeper", "Good", "Great", "Nice",
+  "Interesting", "Right", "Okay so", "Exactly", "Good start",
+  "Let's start with the basics", "That's right", and "Not quite".
 - A neutral lead-in is optional and must NOT be part of next_question. Allowed spoken
   lead-ins, kept out of the stored question: "Thanks. Next topic:" / "Understood. Moving on."
   / "Let's continue with <area>."
 """
 GUIDED_REACTION_RULE = """
 Guided reactions:
-- You may keep a short encouraging reaction in next_question, such as
-  "Good start — let's go a bit deeper." Full answers still belong in the assistance API.
+- You may keep a short encouraging reaction in next_question when it adds continuity,
+  but do not open every turn with the same "Let's dig into / explore …" pattern.
+  Full answers still belong in the assistance API.
 """
 
 COVERAGE_RUBRIC = """Coverage rubric:
 - none      = no relevant content, or the answer is wrong
-- partial   = some correct points, important parts missing or wrong
+- partial   = some correct points, important parts missing or wrong; OR too brief/unclear to fully judge
 - good      = mostly correct and complete, minor gaps
 - excellent = correct, complete, with sound reasoning (and complexity/edge cases where relevant)
+Map outcomes: excellent/good → Correct; partial → Partially correct; none → Incorrect;
+brief/unclear without a clear factual error → Unclear or insufficient information (coverage=partial).
+Assess technical correctness, conceptual understanding, completeness, explanation quality,
+practical application, and relevant examples when the question calls for them.
+A short answer is not automatically incorrect — mark partial/unclear when substance is missing.
 """
 
 RUBRIC_VERSION = "v1"
@@ -401,10 +413,29 @@ def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
         asked = _known_questions(payload)
         collide = duplicate_of(decision.next_question, asked)
         if collide is not None:
-            return (
-                "next_question repeats or closely paraphrases a previously asked "
-                f"question: {collide[:120]}"
-            )
+            # Follow-ups may share topic vocabulary; block only near-exact repeats.
+            # Justified revisits (difficulty change / prior weakness) may share concepts.
+            if decision.decision == "follow_up":
+                if is_near_duplicate(decision.next_question, collide, threshold=0.88):
+                    return (
+                        "follow_up repeats or closely paraphrases a previously asked "
+                        f"question: {collide[:120]}"
+                    )
+            elif revisit_justified(
+                difficulty_changed=bool(payload.get("difficulty_changed")),
+                prior_coverage=str(payload.get("prior_concept_coverage") or ""),
+                deeper_probe=bool(payload.get("deeper_probe")),
+            ):
+                if is_near_duplicate(decision.next_question, collide, threshold=0.92):
+                    return (
+                        "next_question repeats a previously asked question: "
+                        f"{collide[:120]}"
+                    )
+            else:
+                return (
+                    "next_question repeats or closely paraphrases a previously asked "
+                    f"question: {collide[:120]}"
+                )
         focus = question_focus_violation(decision.next_question)
         if focus:
             return focus
@@ -443,12 +474,55 @@ def _planned_topic(payload: dict) -> str:
     return ""
 
 
+# Default planned depth per subject (~3). Duration-aware planners may use 2–5.
+DEFAULT_TOPIC_QUESTIONS = 3
+
+CLOSING_MESSAGE = (
+    "Thank you for your time — that concludes this interview. "
+    "Your answers have been recorded, and feedback will be prepared shortly."
+)
+
+
+def classify_answer_outcome(
+    coverage: str | None,
+    *,
+    answer_text: str | None = None,
+    checks: list[str] | None = None,
+) -> str:
+    """Map coverage (+ guards) to a human-readable adaptive outcome.
+
+    Does not invent mastery. Short answers are unclear/insufficient, not
+    automatically "Incorrect".
+    """
+    cov = (coverage or "").strip().lower()
+    checks_l = {str(c).lower() for c in (checks or [])}
+    # Only treat as empty when the answer was provided and blank, or the empty guard fired.
+    if "empty_answer" in checks_l or (
+        answer_text is not None and not str(answer_text).strip()
+    ):
+        return "Unclear or insufficient information"
+    if "idk_answer" in checks_l:
+        # Uncertainty is not automatically a scored incorrect / weakness.
+        return "Unclear or insufficient information"
+    if "too_short_answer" in checks_l or "brief_unclear" in checks_l:
+        return "Unclear or insufficient information"
+    if cov == "excellent":
+        return "Correct"
+    if cov == "good":
+        return "Correct"
+    if cov == "partial":
+        return "Partially correct"
+    if cov == "none":
+        return "Incorrect"
+    return "Unclear or insufficient information"
+
+
 def _topic_budget(payload: dict) -> int:
     raw = payload.get("topic_budget")
     try:
         return max(2, min(5, int(raw)))
     except (TypeError, ValueError):
-        return 3
+        return DEFAULT_TOPIC_QUESTIONS
 
 
 def _force_topic(decision: TurnDecision, topic: str) -> TurnDecision:
@@ -460,11 +534,38 @@ def _force_topic(decision: TurnDecision, topic: str) -> TurnDecision:
     )
 
 
+def _selected_projects_from_payload(payload: dict) -> list[str]:
+    ctx = payload.get("candidate_prep_context")
+    if isinstance(ctx, dict):
+        projects = ctx.get("selected_projects") or []
+        if isinstance(projects, list) and projects:
+            return [str(p).strip() for p in projects if str(p).strip()][:6]
+    raw = payload.get("selected_projects")
+    if isinstance(raw, list):
+        return [str(p).strip() for p in raw if str(p).strip()][:6]
+    return []
+
+
 def _progression_target(payload: dict, current: str) -> str | None:
-    """Best next subject: distinct planned slot, then remaining areas, else planned."""
+    """Best next subject: distinct planned slot, then remaining areas, else planned.
+
+    When project defense is active, prefer an explicitly selected project that
+    still appears in remaining_areas — never invents a project name.
+    """
     remaining = list(payload.get("remaining_areas") or [])
     planned = _planned_topic(payload)
     current_key = (current or "").strip().lower()
+    if payload.get("defense_mode"):
+        selected = _selected_projects_from_payload(payload)
+        selected_l = {s.lower() for s in selected}
+        for topic in remaining:
+            text = (topic or "").strip()
+            key = text.lower()
+            if text and key != current_key and (
+                key in selected_l
+                or any(key in s or s in key for s in selected_l if s)
+            ):
+                return text
     if planned and planned.lower() != current_key:
         return planned
     for topic in remaining:
@@ -482,6 +583,48 @@ def _progression_target(payload: dict, current: str) -> str | None:
     if distinct:
         return distinct
     return planned or None
+
+
+def _apply_closing(decision: TurnDecision) -> TurnDecision:
+    """Ensure complete decisions carry a natural closing message (no new question)."""
+    msg = (decision.next_question or "").strip() or CLOSING_MESSAGE
+    # Closing must not look like a new assessment prompt.
+    if "?" in msg and msg != CLOSING_MESSAGE:
+        msg = CLOSING_MESSAGE
+    return decision.model_copy(
+        update={"decision": "complete", "next_question": msg}
+    )
+
+
+_CHOICE_MENU_RE = re.compile(
+    r"(would you like to\s+(switch|choose|pick|dive)|"
+    r"another skill like|"
+    r"which skill\b|"
+    r"switch to another|"
+    r"\bor\b.+\bor\b)",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_choice_menu(question: str) -> bool:
+    text = (question or "").strip()
+    if not text:
+        return False
+    return bool(_CHOICE_MENU_RE.search(text))
+
+
+def _simplified_follow_up_question(area: str, *, mode: str) -> str:
+    """Same-topic soft prompt; never reveals answers or offers a skill menu."""
+    topic = (area or "this topic").strip() or "this topic"
+    if (mode or "").lower() == "guided":
+        return (
+            f"Let's simplify. What's one concrete place you've encountered {topic}, "
+            "even briefly?"
+        )
+    return (
+        f"Let's try a simpler angle on {topic}. "
+        "What is one concrete idea or experience you associate with it?"
+    )
 
 
 def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
@@ -504,21 +647,61 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
     knowledge = covered.get("knowledge_state") if isinstance(covered, dict) else {}
     recent = list((knowledge or {}).get("recent_coverage") or [])
     strong_streak = len(recent) >= 2 and all(c in ("good", "excellent") for c in recent[-2:])
+    minutes = payload.get("minutes_remaining")
+    checks_l = {
+        str(c).lower()
+        for c in (getattr(decision, "evaluator_checks", None) or [])
+    }
+    last_answer = str(payload.get("last_answer") or "").strip()
+    uncertain = "idk_answer" in checks_l or bool(
+        last_answer and _IDK_RE.match(last_answer)
+    )
+    try:
+        minutes_left = float(minutes) if minutes is not None else None
+    except (TypeError, ValueError):
+        minutes_left = None
 
     if remaining_slots is not None and int(remaining_slots) <= 0:
-        return decision.model_copy(update={"decision": "complete", "next_question": ""})
+        return _apply_closing(decision)
+    if minutes_left is not None and minutes_left <= 5 and payload.get("last_answer"):
+        # Time governor: stop assessment questions; closing only.
+        return _apply_closing(decision)
 
-    # B: First weak answer → allow one focused follow-up (do not burn the plan).
+    # B: First weak/unclear answer → allow one focused follow-up (do not burn the plan).
+    # Do not abandon the topic after a single incomplete answer.
     if (
         decision.decision == "next_area"
         and coverage in ("none", "partial")
         and turns_in_area <= 1
         and payload.get("last_answer")
     ):
+        gaps = list(getattr(decision.evaluation, "gaps", None) or [])
+        gap_hint = str(gaps[0]).strip() if gaps else ""
+        notes = (decision.notes_for_report or "").strip()
+        if uncertain:
+            notes = (notes + " " if notes else "") + "Simplify; uncertainty not scored as weakness."
+        elif gap_hint and gap_hint.lower() not in notes.lower():
+            notes = (notes + " " if notes else "") + f"Follow up on: {gap_hint[:120]}"
         decision = decision.model_copy(
             update={
                 "decision": "follow_up",
                 "question_area": current or decision.question_area or "General",
+                "notes_for_report": notes[:500],
+            }
+        )
+
+    # Uncertainty / first soft follow-up: stay on topic, simplify, never skill menus.
+    if (
+        decision.decision == "follow_up"
+        and coverage in ("none", "partial")
+        and turns_in_area <= 1
+        and (uncertain or _looks_like_choice_menu(decision.next_question))
+    ):
+        area = current or decision.question_area or "General"
+        decision = decision.model_copy(
+            update={
+                "question_area": area,
+                "next_question": _simplified_follow_up_question(area, mode=mode),
             }
         )
 
@@ -542,9 +725,9 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
         if target:
             decision = _force_topic(decision, target)
         else:
-            return decision.model_copy(update={"decision": "complete", "next_question": ""})
+            return _apply_closing(decision)
 
-    # Finish the subject block, then leave — do not linger indefinitely.
+    # Finish the subject block (~topic_budget, default 3), then leave.
     if decision.decision != "complete" and current and turns_in_area >= budget:
         target = _progression_target(payload, current)
         if target:
@@ -574,10 +757,12 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
             decision = _force_topic(decision, target)
 
     if decision.decision == "complete" and not _plan_still_open(payload, remaining_slots):
-        return decision.model_copy(update={"next_question": decision.next_question or ""})
+        return _apply_closing(decision)
 
     if mode == "strict" and decision.next_question:
-        cleaned = strip_strict_praise(strip_strict_spoilers(decision.next_question))
+        # Praise first, then spoilers — otherwise a leading "Great job!" stops
+        # spoiler stripping before "The answer is …" is removed.
+        cleaned = strip_strict_spoilers(strip_strict_praise(decision.next_question))
         if cleaned != decision.next_question:
             decision = decision.model_copy(update={"next_question": cleaned})
     if (
@@ -602,6 +787,22 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
             }
         )
     decision = _prefer_unused_bank(decision, payload)
+    # Honor preferred behavioral format when the plan asks for it and type is allowed.
+    preferred = str(payload.get("preferred_format") or "").strip().lower()
+    if (
+        decision.decision != "complete"
+        and preferred == "behavioral"
+        and question_type_allowed("behavioral", payload)
+        and decision.question_type != "behavioral"
+    ):
+        decision = decision.model_copy(
+            update={
+                "question_type": "behavioral",
+                "code_snippet": "",
+                "options": [],
+                "scenario": decision.scenario or "",
+            }
+        )
     if decision.decision != "complete" and decision.next_question:
         served = prepare_served_question(decision.next_question, mode=mode)
         if served and served != decision.next_question:
@@ -615,6 +816,8 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
                 "scenario": "",
             }
         )
+    if decision.decision == "complete":
+        return _apply_closing(decision)
     return decision
 
 
@@ -1147,6 +1350,11 @@ def _safe_eval_fallback(ev: AnswerEvaluation, issues: list[str]) -> AnswerEvalua
     return ev.model_copy(update={"coverage": coverage, "strengths": strengths, "gaps": gaps})
 
 
+_FIXED_BRIEF_GAP = (
+    "Answer was too brief to fully assess — expand on the key points for this question."
+)
+
+
 def _guarded_none_evaluation(*, check: str) -> tuple[AnswerEvaluation, list[str]]:
     ev = AnswerEvaluation(
         coverage="none",
@@ -1155,6 +1363,17 @@ def _guarded_none_evaluation(*, check: str) -> tuple[AnswerEvaluation, list[str]
         expected_answer_explanation="",
     )
     return ev, [check]
+
+
+def _guarded_brief_evaluation(*, check: str = "too_short_answer") -> tuple[AnswerEvaluation, list[str]]:
+    """Short answers are unclear/insufficient — not automatically Incorrect."""
+    ev = AnswerEvaluation(
+        coverage="partial",
+        strengths=[],
+        gaps=[_FIXED_BRIEF_GAP],
+        expected_answer_explanation="",
+    )
+    return ev, [check, "brief_unclear"]
 
 
 async def evaluate_answer(payload: dict) -> AnswerEvaluation:
@@ -1175,7 +1394,7 @@ async def evaluate_answer_with_meta(payload: dict) -> tuple[AnswerEvaluation, li
         return _guarded_none_evaluation(check="idk_answer")
     min_chars = int(get_settings().eval_min_answer_chars)
     if len(text) < min_chars:
-        return _guarded_none_evaluation(check="too_short_answer")
+        return _guarded_brief_evaluation(check="too_short_answer")
 
     is_code = _looks_like_code_answer(payload, text)
     mode = payload.get("mode") or "strict"
@@ -1297,7 +1516,7 @@ async def run_interviewer_turn(
                 }
             )
         if is_too_short:
-            ev, checks = _guarded_none_evaluation(check="too_short_answer")
+            ev, checks = _guarded_brief_evaluation(check="too_short_answer")
             return d.model_copy(
                 update={
                     "evaluation": ev,
