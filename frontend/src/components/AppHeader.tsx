@@ -62,7 +62,7 @@ export default function AppHeader() {
             }}
             className={tabClass({ isActive: false })}
           >
-            Track
+            Tracks
           </a>
           <NavLink
             to="/onboarding"

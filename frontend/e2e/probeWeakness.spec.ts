@@ -177,7 +177,7 @@ test("report diagnostics render and Practice weak areas opens popup", async ({ p
   const chart = page.getByRole("img", { name: "Progress over time by area" });
   await expect(chart).toBeVisible();
   await chart.locator("circle").first().focus();
-  await page.getByRole("button", { name: "Practice weak areas" }).click();
+  await page.getByRole("button", { name: "Practice weak areas" }).first().click();
   await expect(page.getByLabel("Focus on weak areas")).toBeChecked();
 });
 

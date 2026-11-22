@@ -130,7 +130,7 @@ test("interview completion does not claim feedback is ready", async ({ page }) =
 
   await page.goto("/tracks/t1/interview/s1");
   await page.fill("textarea", "SYN SYN-ACK ACK");
-  await page.getByRole("button", { name: "Submit Answer" }).click();
+  await page.getByTestId("submit-answer").click();
 
   await expect(page.getByTestId("evaluation-feedback")).toBeVisible();
   await expect(page.getByText("Interview completed.")).toBeVisible();

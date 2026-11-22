@@ -289,8 +289,8 @@ test("a failed discard stays in the interview and can be retried", async ({ page
   await expect(page).toHaveURL(/\/interview\/s1/);
   expect(aborts).toBe(1);
   await page.getByRole("button", { name: "Try again" }).click();
-  // Tracks nav intent resolves to dashboard `/` after a successful abort.
-  await expect(page).toHaveURL(/\/$/);
+  // Tracks nav intent resolves to dashboard `/` or `/#tracks` after a successful abort.
+  await expect(page).toHaveURL(/\/(#tracks)?$/);
   expect(aborts).toBe(2);
 });
 

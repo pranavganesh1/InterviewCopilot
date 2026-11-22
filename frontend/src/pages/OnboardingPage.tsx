@@ -1251,26 +1251,28 @@ export default function OnboardingPage() {
       >
         <div className="flex flex-wrap items-center gap-3">
           {resumeDropzone}
-          <div
-            className="min-w-0 flex-1"
-            data-testid="onboarding-progress"
-            aria-label={`Profile ${profilePercent}% complete`}
-          >
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-[11px] font-medium text-ink-soft">
-                Onboarding progress
-              </span>
-              <span className="text-[11px] font-semibold text-accent-strong">
-                {profilePercent}%
-              </span>
+          {!finished && (
+            <div
+              className="min-w-0 flex-1"
+              data-testid="onboarding-progress"
+              aria-label={`Profile ${profilePercent}% complete`}
+            >
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-ink-soft">
+                  Onboarding progress
+                </span>
+                <span className="text-[11px] font-semibold text-accent-strong">
+                  {profilePercent}%
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-accent-soft">
+                <div
+                  className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                  style={{ width: `${profilePercent}%` }}
+                />
+              </div>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-accent-soft">
-              <div
-                className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
-                style={{ width: `${profilePercent}%` }}
-              />
-            </div>
-          </div>
+          )}
         </div>
         {resumeStatus}
       </div>

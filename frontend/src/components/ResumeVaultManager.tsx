@@ -16,7 +16,7 @@ function syncSummary(data: ResumeSyncResult): string {
   if (!c) {
     const created = data.items_created?.length ?? 0;
     return created
-      ? `Added ${created} new item${created === 1 ? "" : "s"}.`
+      ? `Added ${created} vault item${created === 1 ? "" : "s"}.`
       : "No new vault items.";
   }
   const parts = [

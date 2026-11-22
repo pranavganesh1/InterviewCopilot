@@ -106,7 +106,8 @@ test("menu opens and closes, delete updates counts, and undo restores", async ({
   });
 
   await page.goto("/");
-  await expect(page.getByText("Interviews Taken").locator("xpath=..")).toContainText("1");
+  const progress = page.getByRole("heading", { name: "Interview Progress" }).locator("..");
+  await expect(progress.getByText("Assessments").locator("..")).toContainText("1");
   await page.getByRole("button", { name: "Track options" }).click();
   await expect(page.getByRole("menuitem", { name: "Open track" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Delete track" })).toBeVisible();
@@ -131,12 +132,12 @@ test("menu opens and closes, delete updates counts, and undo restores", async ({
   await page.keyboard.press("Enter");
 
   await expect(page.getByRole("button", { name: "Graphs" })).toHaveCount(0);
-  await expect(page.getByText("Total Tracks").locator("xpath=..")).toContainText("0");
-  await expect(page.getByText("Interviews Taken").locator("xpath=..")).toContainText("0");
+  await expect(progress.getByText("Tracks", { exact: true }).locator("..")).toContainText("0");
+  await expect(progress.getByText("Assessments").locator("..")).toContainText("0");
   await expect(page.getByRole("status")).toContainText("Track deleted");
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.getByRole("button", { name: "Graphs" })).toBeVisible();
-  await expect(page.getByText("Total Tracks").locator("xpath=..")).toContainText("1");
+  await expect(progress.getByText("Track", { exact: true }).locator("..")).toContainText("1");
 });
 
 test("deleting a track with an unfinished interview succeeds and aborts it", async ({

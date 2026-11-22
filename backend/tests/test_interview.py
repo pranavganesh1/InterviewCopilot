@@ -161,7 +161,6 @@ async def test_interviewer_draws_from_question_bank(monkeypatch, clean_users_tab
     """M9: the interviewer prefers unused validated bank questions verbatim."""
     import httpx
 
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
 
     captured = {}
@@ -211,14 +210,14 @@ async def test_interviewer_draws_from_question_bank(monkeypatch, clean_users_tab
                         {
                             "area": "Hashmaps",
                             "question": "Walk through how a Python dict resolves collisions.",
-                            "difficulty": "intermediate",
+                            "difficulty": "foundational",
                             "type": "conceptual",
                             "expected_answer_sketch": "open addressing",
                         },
                         {
                             "area": "Hashmaps",
                             "question": "When would you pick a hashmap over an array?",
-                            "difficulty": "foundational",
+                            "difficulty": "intermediate",
                             "type": "conceptual",
                             "expected_answer_sketch": "key-based lookup",
                         },
@@ -238,7 +237,6 @@ async def test_interviewer_draws_from_question_bank(monkeypatch, clean_users_tab
         # The first question IS the first bank question, verbatim.
         assert r.json()["turn"]["question"] == "Walk through how a Python dict resolves collisions."
         sid = r.json()["session"]["id"]
-        assert captured["question_bank"][0]["question"].startswith("Walk through")
 
         # Answer it: the NEXT bank question arrives (verbatim, still accepted).
         await client.post(

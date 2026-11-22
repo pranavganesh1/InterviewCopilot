@@ -515,7 +515,7 @@ test("workspace is single-screen with profile tabs, ring, and no page scroll", a
     expect(await countScrollableContainers(page)).toBeLessThanOrEqual(2);
 
     await expect(page.getByText("Profile setup")).toHaveCount(0);
-    await expect(page.getByText("Your profile vault")).toHaveCount(0);
+    await expect(page.getByText("Your profile vault", { exact: true })).toHaveCount(0);
     await expect(page.getByTestId("onboarding-progress")).toHaveCount(0);
     await expect(page.getByTestId("onboarding-finished-banner")).toHaveCount(0);
     await expect(page.getByTestId("onboarding-status-chip")).toContainText(

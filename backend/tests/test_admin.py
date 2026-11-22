@@ -39,6 +39,9 @@ async def test_admin_endpoints_401_when_logged_out(path):
     from app.main import create_app
 
     app = create_app()
+    from app.db.mongo import get_mongo_db
+
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(path)
@@ -52,6 +55,9 @@ async def test_admin_endpoints_403_for_non_admin(admin_env, clean_users_table, p
     from app.main import create_app
 
     app = create_app()
+    from app.db.mongo import get_mongo_db
+
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(path, cookies={"ic_access": token})
@@ -64,6 +70,9 @@ async def test_overview_403_for_non_admin(admin_env, clean_users_table):
     from app.main import create_app
 
     app = create_app()
+    from app.db.mongo import get_mongo_db
+
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.get("/api/v1/admin/overview", cookies={"ic_access": token})
@@ -83,6 +92,9 @@ async def test_overview_counts_and_cost(admin_env, clean_users_table):
     token = create_access_token(str(user.id))
 
     app = create_app()
+    from app.db.mongo import get_mongo_db
+
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.get("/api/v1/admin/overview", cookies={"ic_access": token})
