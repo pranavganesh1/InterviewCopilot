@@ -1527,6 +1527,32 @@ async def run_interviewer_turn(
         return d.model_copy(update={"rubric_version": RUBRIC_VERSION})
 
     turn_started = time.monotonic()
+    # Cheap guards first: do not spend an LLM call on empty / IDK / too-short answers.
+    if not text_answer or is_idk or is_too_short:
+        area = (payload.get("current_area") or payload.get("question_area") or "General").strip() or "General"
+        if not text_answer:
+            ev, checks = _empty_evaluation(), ["empty_answer"]
+        elif is_idk:
+            ev, checks = _guarded_none_evaluation(check="idk_answer")
+        else:
+            ev, checks = _guarded_brief_evaluation(check="too_short_answer")
+        decision = TurnDecision(
+            evaluation=ev,
+            decision="follow_up",
+            next_question=_simplified_follow_up_question(area, mode=mode),
+            question_area=area,
+            question_type="conceptual",
+            evaluator_checks=checks,
+            rubric_version=RUBRIC_VERSION,
+        )
+        decision = apply_local_policy(decision, routed)
+        log.info(
+            "interviewer_turn_timing",
+            stage="guarded_skip_llm",
+            elapsed_ms=int((time.monotonic() - turn_started) * 1000),
+        )
+        return decision
+
     decision = await structured_completion(
         system=system,
         user_payload=_prompt_payload(routed),

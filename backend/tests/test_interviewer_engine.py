@@ -173,6 +173,10 @@ async def test_run_interviewer_turn_repairs_then_forces_unique(monkeypatch):
     decision = await mod.run_interviewer_turn(
         payload={
             "mode": "strict",
+            "last_answer": (
+                "A hashmap stores key-value pairs with average O(1) lookup "
+                "using a hash function into buckets."
+            ),
             "asked_questions": ["Same question"],
             "turns_in_current_area": 0,
             "remaining_areas": ["Big-O"],
@@ -180,7 +184,7 @@ async def test_run_interviewer_turn_repairs_then_forces_unique(monkeypatch):
             "questions_remaining": 10,
         }
     )
-    # No last_answer → evaluator skipped; initial + 1 repair, then force_unique.
+    # Substantive answer → LLM turn + 1 repair, then force_unique.
     assert len(calls) == 2
     assert all(c.get("mode") == "strict" for c in calls)
     assert not is_duplicate_question(decision.next_question, ["Same question"])
@@ -247,17 +251,20 @@ async def test_empty_answer_skips_evaluator(monkeypatch):
         payload={
             "mode": "strict",
             "last_answer": None,
+            "current_area": "Hashmaps",
             "asked_questions": [],
             "turns_in_current_area": 0,
-            "remaining_areas": ["Hashmaps"],
+            "remaining_areas": ["Trees"],
             "questions_remaining": 10,
         }
     )
     assert eval_calls == 0
-    assert q_calls == 1
+    assert q_calls == 0  # empty answer skips LLM entirely
     assert isinstance(decision, TurnDecision)
     assert decision.evaluation.coverage == "none"
-    assert decision.next_question == "Explain hashmaps."
+    assert "empty_answer" in (decision.evaluator_checks or [])
+    assert decision.next_question.strip()
+    assert "hashmaps" in decision.next_question.lower()
 
 
 def _assert_no_dsa_leak(question: str) -> None:

@@ -103,6 +103,20 @@ class LLMGatewayError(Exception):
         self.provider_code = provider_code
 
 
+def gateway_http_status(exc: LLMGatewayError) -> int:
+    """HTTP status for API surfaces that forward LLMGatewayError."""
+    cause = getattr(exc.cause, "value", LLMCause.unknown.value)
+    if cause == LLMCause.rate_limited.value:
+        return 429
+    if cause == LLMCause.schema_rejected.value:
+        return 422
+    if cause == LLMCause.timeout.value:
+        return 504
+    if cause == LLMCause.auth_failed.value:
+        return 503
+    return 503
+
+
 def gateway_error_detail(exc: LLMGatewayError) -> dict:
     """Map gateway failures to safe customer-facing API detail."""
     cause = getattr(exc.cause, "value", LLMCause.unknown.value)
