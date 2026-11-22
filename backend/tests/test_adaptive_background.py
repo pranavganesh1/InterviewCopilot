@@ -8,7 +8,7 @@ import pytest
 from app.agents.onboarding import compute_profile_gaps, derive_phase, vault_is_ready
 from app.core.config import get_settings
 from app.core.security import create_access_token
-from app.db.mongo import get_mongo_client
+from app.db.mongo import get_mongo_db
 from app.db.sqlalchemy import SessionFactory
 from app.main import create_app
 from app.models.user import User
@@ -72,7 +72,8 @@ def test_welcome_personalized_by_field():
     ]
     msg = build_profile_review_message(commerce_items)
     assert RESUME_WELCOME_MARKER in msg
-    assert "Commerce" in msg or "B.Com" in msg or "Finance" in msg
+    assert "make sure everything looks right" in msg
+    assert "caught my eye" not in msg.lower()
     assert "11 more" not in msg
 
     physics_items = [
@@ -85,7 +86,8 @@ def test_welcome_personalized_by_field():
         ),
     ]
     pmsg = build_profile_review_message(physics_items)
-    assert "Physics" in pmsg or "analytical" in pmsg.lower()
+    assert RESUME_WELCOME_MARKER in pmsg
+    assert "make sure everything looks right" in pmsg
 
 
 def test_incomplete_no_projects_no_experience_self_taught():
@@ -189,7 +191,7 @@ async def test_complete_with_skill_only_vault(clean_users_table):
         user_id = str(user.id)
 
     app = create_app()
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     await app.state.mongo_db.onboarding_conversations.delete_many({"user_id": user_id})
 
     await set_preparation_preferences(
@@ -231,7 +233,7 @@ async def test_coach_context_persists_across_state(clean_users_table):
         user_id = str(user.id)
 
     app = create_app()
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     await app.state.mongo_db.onboarding_conversations.delete_many({"user_id": user_id})
 
     await merge_coach_context(

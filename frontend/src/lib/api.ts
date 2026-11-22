@@ -236,6 +236,73 @@ export interface VaultItem {
   source?: string;
 }
 
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  reason?: string;
+  message_count?: number;
+  updated_at?: string | null;
+  created_at?: string | null;
+  archived_at?: string | null;
+  active?: boolean;
+}
+
+export interface ResumeSyncResult {
+  items_created: { id: string; category: string; title: string }[];
+  items_skipped?: number | { title: string; category?: string; reason?: string }[];
+  items_skipped_detail?: { title: string; category?: string; reason?: string }[];
+  conversation_id?: string | null;
+  conversation_started?: boolean;
+  enrichment_candidates?: {
+    title: string;
+    category: string;
+    existing_id: string;
+    existing_title?: string;
+    proposed_details?: Record<string, string>;
+    reason?: string;
+  }[];
+  uncertain_matches?: {
+    title: string;
+    category: string;
+    existing_id: string;
+    existing_title?: string;
+    reason?: string;
+  }[];
+  items_failed?: { title: string; reason?: string }[];
+  counts?: {
+    created: number;
+    skipped: number;
+    enrichment_candidates: number;
+    uncertain_matches: number;
+    failed: number;
+  };
+  s3_key?: string;
+  mode?: string;
+  welcome_seeded?: boolean;
+  reused_stored_resume?: boolean;
+}
+
+export interface VaultDuplicatePair {
+  category: string;
+  reason: string;
+  match: string;
+  suggested_keep: "a" | "b";
+  a: {
+    id: string;
+    title: string;
+    source?: string;
+    details?: Record<string, string>;
+    detail_count?: number;
+  };
+  b: {
+    id: string;
+    title: string;
+    source?: string;
+    details?: Record<string, string>;
+    detail_count?: number;
+  };
+}
+
 export interface ReadinessClaim {
   claim: string;
   excerpt: string;
@@ -301,6 +368,185 @@ export interface ReportDiagnostics {
     study_topics: string[];
     practice_themes: string[];
   }[];
+  project_defense?: {
+    projects_assessed?: string[];
+    demonstrated?: string[];
+    knowledge_gaps?: string[];
+    ownership_unclear?: string[];
+    has_data?: boolean;
+  };
+}
+
+export interface CareerConceptEvidence {
+  concept: string;
+  status?: string;
+  evidence_label?: string;
+  times_asked?: number;
+  last_coverage?: string | null;
+  trend?: string[];
+  missing_concepts?: string[];
+  evidence?: {
+    session_id?: string;
+    turn_index?: number;
+    coverage?: string;
+  }[];
+}
+
+export interface CompetencyEvidenceRow {
+  competency: string;
+  assessment?: string | null;
+  evidence_kind?: string;
+  evidence_source?: string;
+  track_id?: string | null;
+  track_subject?: string | null;
+  times_asked?: number | null;
+  last_coverage?: string | null;
+  trend?: string[];
+  evidence?: {
+    session_id?: string;
+    turn_index?: number;
+    coverage?: string;
+  }[];
+  freshness?: { note?: string; session_ids?: string[] };
+}
+
+export interface KnowledgeGapsBucket {
+  demonstrated_weaknesses?: {
+    concept?: string;
+    status?: string;
+    times_asked?: number;
+    last_coverage?: string | null;
+    evidence_kind?: string;
+  }[];
+  needs_improvement?: {
+    concept?: string;
+    status?: string;
+    times_asked?: number;
+    last_coverage?: string | null;
+    evidence_kind?: string;
+  }[];
+  insufficient_evidence?: {
+    concept?: string;
+    status?: string;
+    evidence_kind?: string;
+  }[];
+  not_assessed?: string[];
+  unverified_claims?: string[];
+  claimed_skills_without_interview?: string[];
+  by_track?: {
+    track_id?: string;
+    track_subject?: string;
+    demonstrated_weaknesses?: string[];
+    not_assessed?: string[];
+    scope?: string;
+  }[];
+  policy?: {
+    unknown_is_not_weak?: boolean;
+    claims_are_not_proof?: boolean;
+    note?: string;
+  };
+}
+
+export interface ProjectIntelligence {
+  projects?: {
+    name?: string;
+    technologies?: string[] | string | null;
+    contribution?: string | null;
+    architecture?: string | null;
+    outcomes?: string | null;
+    needs_clarification?: string[];
+    discussion_ready?: boolean;
+    evidence_kind?: string;
+  }[];
+  internships?: { title?: string; details?: Record<string, string> }[];
+  source?: string;
+  note?: string;
+}
+
+export interface CareerIntelligence {
+  disclaimer: string;
+  career_readiness: {
+    level: string;
+    summary: string;
+    target_role?: string | null;
+    discipline?: string;
+    evidence_index?: number | null;
+    evidence_method?: string | null;
+    disclaimer?: string;
+    counts?: Record<string, number>;
+  };
+  strengths: CareerConceptEvidence[];
+  improvement_areas: CareerConceptEvidence[];
+  developing?: CareerConceptEvidence[];
+  not_yet_assessed: string[];
+  progress: {
+    available: boolean;
+    reason?: string;
+    comparison_note?: string;
+    improving?: string[];
+    declining?: string[];
+    consistent_strengths?: string[];
+    persistent_weaknesses?: string[];
+    session_score_trend?: {
+      session_id?: string;
+      track_subject?: string;
+      overall_score?: number | null;
+      created_at?: string | null;
+    }[];
+  };
+  recommendations: {
+    topic: string;
+    why: string;
+    evidence: string;
+    practice: string;
+    expected_outcome?: string;
+    evidence_basis?: string;
+    track_subject?: string;
+    priority?: string;
+  }[];
+  roadmap: {
+    order: number;
+    topic?: string;
+    reason?: string;
+    activity?: string;
+    expected_outcome?: string;
+    priority?: string;
+    evidence_basis?: string;
+    track_subject?: string;
+    supporting_evidence?: string;
+  }[];
+  next_actions: {
+    kind: string;
+    title: string;
+    reason?: string;
+    action_label?: string;
+    href?: string;
+    track_id?: string;
+  }[];
+  project_defense?: {
+    projects_assessed?: string[];
+    demonstrated?: string[];
+    knowledge_gaps?: string[];
+    ownership_unclear?: string[];
+    has_data?: boolean;
+  } | null;
+  candidate_overview?: {
+    education?: unknown;
+    skills?: unknown;
+    internships?: unknown;
+    projects?: unknown;
+    career_goals?: unknown;
+  };
+  competency_evidence?: CompetencyEvidenceRow[];
+  knowledge_gaps?: KnowledgeGapsBucket;
+  project_intelligence?: ProjectIntelligence | null;
+  integrations?: {
+    adaptive_knowledge?: boolean;
+    project_defense?: boolean;
+    vault_claims?: boolean;
+    preparation_preferences?: boolean;
+    candidate_intelligence?: boolean;
+  };
 }
 
 export interface PreparationPreferences {
@@ -331,6 +577,9 @@ export interface ConversationStarter {
 
 export interface OnboardingState {
   messages: { role: string; content: string; created_at?: string }[];
+  conversation_id?: string | null;
+  conversation_title?: string | null;
+  conversations?: ConversationSummary[];
   vault_items: VaultItem[];
   onboarding_complete?: boolean;
   onboarding_finished?: boolean;
@@ -466,6 +715,12 @@ export interface SessionInfo {
   practice_label?: string;
   persona_id?: string;
   persona_name?: string;
+  domain_profile?: {
+    category?: string | null;
+    uses_code?: boolean;
+    uses_math?: boolean;
+    allowed_types?: string[];
+  } | null;
 }
 
 export interface TurnEvaluation {

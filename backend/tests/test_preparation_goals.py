@@ -5,7 +5,7 @@ import pytest
 
 from app.core.config import get_settings
 from app.core.security import create_access_token
-from app.db.mongo import get_mongo_client
+from app.db.mongo import get_mongo_db
 from app.db.sqlalchemy import SessionFactory
 from app.main import create_app
 from app.models.user import User
@@ -69,12 +69,16 @@ def test_resume_goal_options_and_followups():
     assert any(p["label"] == "QCGNN" for p in opts["project_options"])
     assert "ML Intern" in opts["suggested_roles"]
     assert opts["project_aspect_options"]
-    assert GOALS_INTRO_MARKER in goals_intro_message(summary)
-    assert "QCGNN" in goals_intro_message(summary)
+    intro = goals_intro_message(summary)
+    assert GOALS_INTRO_MARKER in intro
+    assert "QCGNN" not in intro
+    assert "role" in intro.lower()
+    assert "on file" not in intro.lower()
 
     prefs = merge_preferences(None, {"interests": ["project"]})
     reply = goals_followup_reply(prefs, summary)
-    assert "QCGNN" in reply
+    assert "QCGNN" not in reply
+    assert "project" in reply.lower()
     assert next_goal_followup(prefs) == "projects"
     assert followups_complete(prefs) is False
 
@@ -130,7 +134,7 @@ async def test_goals_endpoint_and_complete(monkeypatch, clean_users_table):
     monkeypatch.setattr(svc, "run_onboarding_turn", fake_turn)
 
     app = create_app()
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     await app.state.mongo_db.onboarding_conversations.delete_many({"user_id": user_id})
 
     transport = httpx.ASGITransport(app=app)

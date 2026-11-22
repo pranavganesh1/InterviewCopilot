@@ -79,6 +79,7 @@ export default function DiagnosticSection({
   const weak = diagnostics.identified_weaknesses || [];
   const strengths = diagnostics.strengths || [];
   const practice = diagnostics.recommended_practice || [];
+  const defense = diagnostics.project_defense;
 
   return (
     <section className="space-y-4 rounded-lg border border-line bg-white p-5">
@@ -99,6 +100,34 @@ export default function DiagnosticSection({
           </button>
         )}
       </div>
+
+      {defense?.has_data && (
+        <div data-testid="project-defense-diagnostic">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+            Project defense
+          </h3>
+          {(defense.projects_assessed?.length ?? 0) > 0 && (
+            <p className="mt-2 text-sm text-ink">
+              Projects assessed: {defense.projects_assessed!.slice(0, 4).join(", ")}
+            </p>
+          )}
+          {(defense.demonstrated?.length ?? 0) > 0 && (
+            <p className="mt-1 text-xs text-emerald-800">
+              Demonstrated: {defense.demonstrated!.slice(0, 3).join("; ")}
+            </p>
+          )}
+          {(defense.knowledge_gaps?.length ?? 0) > 0 && (
+            <p className="mt-1 text-xs text-amber-800">
+              Gaps: {defense.knowledge_gaps!.slice(0, 3).join("; ")}
+            </p>
+          )}
+          {(defense.ownership_unclear?.length ?? 0) > 0 && (
+            <p className="mt-1 text-xs text-ink-soft">
+              Ownership still unclear: {defense.ownership_unclear!.slice(0, 3).join(", ")}
+            </p>
+          )}
+        </div>
+      )}
 
       <div>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-soft">

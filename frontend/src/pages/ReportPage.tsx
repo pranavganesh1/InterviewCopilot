@@ -296,6 +296,32 @@ export default function ReportPage() {
         diagnostics={c.diagnostics}
         onPracticeWeak={() => setPracticeOpen(true)}
       />
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-white p-4"
+        data-testid="report-career-next"
+      >
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-ink">What to do next</p>
+          <p className="mt-1 text-xs text-ink-soft">
+            Practice weak areas from this report, or open career readiness for your roadmap.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setPracticeOpen(true)}
+            className="rounded-md bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-strong"
+          >
+            Practice weak areas
+          </button>
+          <Link
+            to="/readiness"
+            className="rounded-md border border-line bg-page px-3 py-2 text-xs font-semibold text-ink hover:bg-white"
+          >
+            Career readiness
+          </Link>
+        </div>
+      </div>
       <StartInterviewModal
         track={
           practiceOpen && trackId

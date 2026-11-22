@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -168,7 +169,11 @@ def build_covered_so_far(
     plan: list | None,
     questions_asked: int,
 ) -> dict:
-    """Compact session memory for the interviewer (no new tables)."""
+    """Compact session memory for the interviewer (no new tables).
+
+    Includes an adaptive knowledge snapshot derived only from persisted turn
+    evaluations — never invents abilities or resume gaps.
+    """
     covered_objectives: list[str] = []
     seen: set[str] = set()
     if isinstance(plan, list):
@@ -197,21 +202,56 @@ def build_covered_so_far(
             }
 
     weak_areas: list[dict] = []
+    strengths: list[str] = []
+    recent_coverage: list[str] = []
     for t in turns:
         cov = (getattr(t, "evaluation_coverage", None) or "").lower()
-        if cov in ("none", "partial") and getattr(t, "answer", None):
+        if not getattr(t, "answer", None):
+            continue
+        if cov:
+            recent_coverage.append(cov)
+        area = (getattr(t, "question_area", None) or "").strip()
+        if cov in ("none", "partial"):
             weak_areas.append(
                 {
-                    "area": t.question_area,
+                    "area": area,
                     "coverage": cov,
                     "question": (t.question or "")[:160],
+                    "gaps": list(getattr(t, "evaluation_gaps", None) or [])[:4],
                 }
             )
+        elif cov in ("good", "excellent") and area:
+            strengths.append(area)
+
+    # Dedupe strengths while preserving order.
+    seen_strength: set[str] = set()
+    strength_areas: list[str] = []
+    for area in strengths:
+        key = area.lower()
+        if key in seen_strength:
+            continue
+        seen_strength.add(key)
+        strength_areas.append(area)
+
+    knowledge_state = {
+        "demonstrated_strengths": strength_areas[:8],
+        "knowledge_gaps": [
+            {
+                "area": row.get("area") or "",
+                "coverage": row.get("coverage") or "",
+                "gaps": row.get("gaps") or [],
+            }
+            for row in weak_areas[:8]
+        ],
+        "recent_coverage": recent_coverage[-6:],
+        "questions_assessed": len(recent_coverage),
+    }
 
     return {
         "covered_objectives": covered_objectives,
         "next_planned_objective": next_planned,
         "weak_areas": weak_areas[:8],
+        "knowledge_state": knowledge_state,
     }
 
 
@@ -254,15 +294,20 @@ def _session_options_match(
     use_resume: bool,
     focus_weak: bool,
     persona_id: str | None,
+    include_vault_topics: bool = False,
+    defense_mode: bool = False,
 ) -> bool:
     if session.mode != mode:
         return False
     if int(getattr(session, "duration_minutes", None) or 60) != int(duration_minutes):
         return False
     opts = probe_service.session_opts_from_plan(getattr(session, "question_plan", None))
+    want_vault = bool(use_resume or include_vault_topics or defense_mode)
+    have_vault = probe_service.personalize_from_vault(opts)
     return (
-        bool(opts.get("use_resume")) == bool(use_resume)
+        have_vault == want_vault
         and bool(opts.get("focus_weak")) == bool(focus_weak)
+        and bool(opts.get("defense_mode")) == bool(defense_mode)
         and (opts.get("persona_id") or "balanced") == (persona_id or "balanced")
     )
 
@@ -300,6 +345,76 @@ async def _list_open_sessions_for_track(
     return list((await db.execute(stmt)).scalars().all())
 
 
+def _opening_from_question_bank(
+    brief_content: dict,
+    *,
+    plan: list | None,
+    session_id,
+    mode: str,
+    history: list[dict],
+) -> "TurnDecision | None":
+    """Serve Q1 from the validated bank when possible — no LLM round-trip."""
+    from app.agents.interviewer import TurnDecision
+    from app.agents.session_pool import pick_pool_question
+
+    bank = [
+        q
+        for q in (brief_content.get("question_bank") or [])
+        if isinstance(q, dict) and (q.get("question") or "").strip()
+    ]
+    if not bank:
+        return None
+    slot = plan[0] if isinstance(plan, list) and plan and isinstance(plan[0], dict) else None
+    prior_texts = [row["question"] for row in history if row.get("question")]
+    avoid = opening_areas_to_avoid(
+        [qa.get("topic") for qa in (brief_content.get("question_areas") or []) if qa.get("topic")],
+        [row["area"] for row in history if row.get("turn_index") == 1 and row.get("area")],
+    )
+    chosen = pick_pool_question(
+        bank,
+        seed=str(session_id),
+        slot=slot,
+        asked=[],
+        history=prior_texts,
+        covered_areas=[],
+        mode=mode,
+        fingerprints=[
+            tuple(fp)
+            for row in history
+            if (fp := row.get("fingerprint")) and len(fp) >= 4
+        ],
+        avoid_areas=avoid,
+        reuse=False,
+    )
+    if not chosen:
+        return None
+    area = (
+        (chosen.get("area") or "").strip()
+        or (slot or {}).get("topic")
+        or "Core concepts"
+    )
+    qtype = (chosen.get("type") or chosen.get("question_type") or "conceptual").strip()
+    if qtype not in (
+        "coding",
+        "conceptual",
+        "behavioral",
+        "mcq",
+        "code_read",
+        "case_study",
+        "numeric",
+    ):
+        qtype = "conceptual"
+    return TurnDecision(
+        evaluation={"coverage": "none", "strengths": [], "gaps": []},
+        decision="next_area",
+        next_question=(chosen.get("question") or "").strip(),
+        question_area=str(area)[:255],
+        question_type=qtype,  # type: ignore[arg-type]
+        objective=str((slot or {}).get("objective") or "")[:500],
+        notes_for_report="question_bank",
+    )
+
+
 async def start_session(
     db: AsyncSession,
     user: User,
@@ -307,13 +422,18 @@ async def start_session(
     mode: str = "strict",
     duration_minutes: int = 60,
     use_resume: bool = False,
+    include_vault_topics: bool = False,
     focus_weak: bool = False,
+    defense_mode: bool = False,
     persona_id: str | None = None,
     claim_seeds: list | None = None,
     mongo_db: object = None,
+    request_id: str | None = None,
 ) -> dict:
     from app.agents.persona import bias_plan_for_persona, normalize_persona_id
 
+    started = time.monotonic()
+    rid = (request_id or "")[:64] or None
     track_brief = await get_track_with_brief(db, user, track_id)
     if track_brief is None:
         raise LookupError("track_not_found")
@@ -338,13 +458,45 @@ async def start_session(
     open_rows = await _list_open_sessions_for_track(db, user.id, track_id, for_update=True)
     empty_opens: list[InterviewSession] = []
     answered_opens: list[InterviewSession] = []
+    expired_for_feedback: list[InterviewSession] = []
+    closed_expired = False
+    now = datetime.now(UTC)
     for row in open_rows:
+        # Never reuse / block on a session whose timer already expired.
+        # Keep the advisory xact lock: mutate in-place; commit with this start.
+        if _session_timed_out(row):
+            answered = await _answered_turn_count(db, row.id)
+            if answered == 0:
+                row.status = "aborted"
+                row.completed_at = now
+                closed_expired = True
+                log.info(
+                    "interview_expired_empty_aborted",
+                    session_id=str(row.id),
+                    track_id=str(track_id),
+                )
+            else:
+                row.status = "completed"
+                row.completed_at = now
+                closed_expired = True
+                expired_for_feedback.append(row)
+                log.info(
+                    "interview_expired_answered_finished",
+                    session_id=str(row.id),
+                    track_id=str(track_id),
+                )
+            continue
         if await _answered_turn_count(db, row.id) == 0:
             empty_opens.append(row)
         else:
             answered_opens.append(row)
 
     if answered_opens:
+        # Persist any expired closures before refusing a second active session.
+        if closed_expired:
+            await db.commit()
+            for done in expired_for_feedback:
+                await _dispatch_feedback(done)
         # Resume/finish must be explicit; do not open a second in-progress session.
         raise PermissionError("open_session_in_progress")
 
@@ -357,29 +509,55 @@ async def start_session(
                 mode=mode,
                 duration_minutes=duration_minutes,
                 use_resume=use_resume,
+                include_vault_topics=include_vault_topics,
                 focus_weak=focus_weak,
+                defense_mode=defense_mode,
                 persona_id=persona_id,
             )
         ]
-        # Prefer matching options; otherwise return newest empty without changing it.
-        chosen = matching[0] if matching else empty_opens[0]
-        turn = await _latest_turn(db, chosen.id)
-        if turn is None:
-            # Rare orphan (in_progress, no turns): mint Q1 instead of creating a twin.
-            try:
-                decision = await _decide(
-                    db, chosen, brief_content, last_answer=None, mongo_db=mongo_db
-                )
-            except Exception:
-                chosen.status = "aborted"
-                chosen.completed_at = datetime.now(UTC)
-                await db.commit()
-                raise
-            turn = await _append_turn(db, chosen, decision)
-        return {
-            "session": _session_dict(chosen, practice_label=practice),
-            "turn": _turn_dict(turn),
-        }
+        if matching:
+            # Active empty with same options — safe dedupe / refresh (keep timer).
+            chosen = matching[0]
+            turn = await _latest_turn(db, chosen.id)
+            if turn is None:
+                # Rare orphan (in_progress, no turns): mint Q1 instead of creating a twin.
+                try:
+                    hist = await _track_history(
+                        db, user.id, track_id, exclude_session_id=chosen.id
+                    )
+                    decision = _opening_from_question_bank(
+                        brief_content,
+                        plan=getattr(chosen, "question_plan", None),
+                        session_id=chosen.id,
+                        mode=mode,
+                        history=hist,
+                    )
+                    if decision is None:
+                        decision = await _decide(
+                            db,
+                            chosen,
+                            brief_content,
+                            last_answer=None,
+                            mongo_db=mongo_db,
+                        )
+                except Exception:
+                    chosen.status = "aborted"
+                    chosen.completed_at = datetime.now(UTC)
+                    await db.commit()
+                    raise
+                turn = await _append_turn(db, chosen, decision)
+            await db.commit()
+            for done in expired_for_feedback:
+                await _dispatch_feedback(done)
+            return {
+                "session": _session_dict(chosen, practice_label=practice),
+                "turn": _turn_dict(turn),
+            }
+        # Different mode/duration/persona: close stale empties, then create fresh.
+        for row in empty_opens:
+            row.status = "aborted"
+            row.completed_at = now
+        # Fall through — new session commit also persists these aborts.
 
     history = await _track_history(db, user.id, track_id)
     session_id = uuid.uuid4()
@@ -388,6 +566,33 @@ async def start_session(
         for qa in (brief_content.get("question_areas") or [])
         if isinstance(qa, dict) and qa.get("topic")
     ]
+
+    # Shared Candidate Intelligence Snapshot (graceful fallback).
+    from app.services.candidate_intelligence import (
+        build_interview_prep_context,
+        filter_vault_items_for_selected_projects,
+        get_candidate_intelligence_for_user,
+    )
+
+    snapshot = None
+    prep_context: dict | None = None
+    try:
+        snapshot = await get_candidate_intelligence_for_user(
+            db, user.id, mongo_db=mongo_db, user=user
+        )
+        prep_context = build_interview_prep_context(
+            snapshot,
+            track_id=str(track_id),
+            track_subject=str(track_brief["track"].get("subject") or ""),
+            claim_seeds=claim_seeds,
+            mode=mode,
+            duration_minutes=duration_minutes,
+        )
+    except Exception:  # noqa: BLE001 — start must still work without intelligence
+        snapshot = None
+        prep_context = None
+
+    selected_projects = list((prep_context or {}).get("selected_projects") or [])
     plan_brief = {
         **brief_content,
         "plan_seed": str(session_id),
@@ -397,10 +602,144 @@ async def start_session(
             brief_areas, [row["area"] for row in history if row.get("turn_index") == 1]
         ),
     }
-    plan = await question_plan.build_question_plan(plan_brief, get_settings().interview_max_turns)
+    # Enrich plan_brief with prep context for authoring-aware planning metadata
+    # (deterministic planner ignores unknown keys; session opts persist the context).
+    if prep_context:
+        plan_brief["candidate_prep_context"] = {
+            "selected_projects": selected_projects,
+            "demonstrated_strengths": list(prep_context.get("demonstrated_strengths") or [])[:8],
+            "demonstrated_weaknesses": list(prep_context.get("demonstrated_weaknesses") or [])[:8],
+            "covered_concepts": list(prep_context.get("covered_concepts") or [])[:12],
+            "not_assessed": list(prep_context.get("not_assessed") or [])[:8],
+            "evidence_scope": prep_context.get("evidence_scope"),
+            "career_goals": prep_context.get("career_goals"),
+            "policy": prep_context.get("policy"),
+        }
+        # Prefer opening areas that are not already demonstrated strengths on this track.
+        covered = {
+            str(c).strip().lower()
+            for c in (prep_context.get("covered_concepts") or [])
+            if c
+        }
+        if covered:
+            avoid = list(plan_brief.get("avoid_areas") or [])
+            for name in prep_context.get("demonstrated_strengths") or []:
+                label = str(name).strip()
+                if label and label.lower() in covered and label not in avoid:
+                    avoid.append(label)
+            plan_brief["avoid_areas"] = avoid[:12]
+
+    # Vault personalization: fold real vault topics into the plan when the
+    # candidate opts in (use_resume / include_vault_topics / defense_mode).
+    # Never invent domains. Never auto-pick an arbitrary primary project —
+    # projects enter the plan only when explicitly selected.
+    defense_mode = bool(defense_mode)
+    if defense_mode:
+        use_resume = True
+        include_vault_topics = True
+    personalize_vault = bool(use_resume or include_vault_topics or defense_mode)
+    project_titles: list[str] = []
+    if personalize_vault:
+        vault_items_raw = await list_items(db, user.id)
+        # Projects: only explicitly selected. Skills/internships still allowed.
+        vault_items_raw = filter_vault_items_for_selected_projects(
+            vault_items_raw,
+            selected_projects,
+            include_non_projects=True,
+        )
+        if defense_mode:
+            if selected_projects:
+                vault_for_plan = probe_service.vault_plan_areas(
+                    vault_items_raw,
+                    limit=8,
+                    categories=("project",),
+                )
+                # Keep only selected project topics.
+                selected_l = {t.lower() for t in selected_projects}
+                vault_for_plan = [
+                    a
+                    for a in vault_for_plan
+                    if (a.get("topic") or "").strip().lower() in selected_l
+                    or any(
+                        (a.get("topic") or "").strip().lower() in s
+                        or s in (a.get("topic") or "").strip().lower()
+                        for s in selected_l
+                    )
+                ]
+                project_titles = [
+                    str(a.get("topic") or "").strip()
+                    for a in vault_for_plan
+                    if a.get("topic")
+                ]
+                if vault_for_plan:
+                    existing = [
+                        qa
+                        for qa in (plan_brief.get("question_areas") or [])
+                        if isinstance(qa, dict) and qa.get("topic")
+                    ]
+                    plan_brief["question_areas"] = (
+                        probe_service.merge_defense_question_areas(
+                            existing, vault_for_plan, cap=12, track_keep=4
+                        )
+                    )
+                else:
+                    defense_mode = False
+            else:
+                # Defense requested but no explicit project — keep a normal interview.
+                defense_mode = False
+        else:
+            vault_for_plan = probe_service.vault_plan_areas(vault_items_raw, limit=8)
+            if vault_for_plan:
+                existing = [
+                    qa
+                    for qa in (plan_brief.get("question_areas") or [])
+                    if isinstance(qa, dict) and qa.get("topic")
+                ]
+                seen = {(qa.get("topic") or "").strip().lower() for qa in existing}
+                merged = list(existing)
+                for area in vault_for_plan:
+                    key = (area.get("topic") or "").strip().lower()
+                    if key and key not in seen:
+                        seen.add(key)
+                        merged.append(area)
+                plan_brief["question_areas"] = merged[:12]
+    t_plan = time.monotonic()
+    # Deterministic plan only at start — avoids a full LLM plan call before Q1.
+    plan = await question_plan.build_question_plan(
+        plan_brief,
+        get_settings().interview_max_turns,
+        allow_llm=False,
+        duration_minutes=duration_minutes,
+    )
+    log.info(
+        "interview_start_timing",
+        stage="question_plan",
+        request_id=rid,
+        elapsed_ms=int((time.monotonic() - t_plan) * 1000),
+        allow_llm=False,
+        slots=len(plan),
+    )
     answered_turns, session_ids = await _track_answered_turns(db, user.id, track_id)
     weak_summary = weakness_service.aggregate_turns(answered_turns, session_order=session_ids)
     weak_names = weakness_service.weak_concept_names(weak_summary, focus=focus_weak)
+    # Prefer track-scoped snapshot weaknesses when present (still track-local).
+    if prep_context and prep_context.get("evidence_scope") == "track":
+        snap_weak = [
+            str(w)
+            for w in (prep_context.get("demonstrated_weaknesses") or [])
+            if w
+        ]
+        if snap_weak:
+            # Dedupe while preferring snapshot order, then turn aggregate.
+            merged_weak: list[str] = []
+            seen_w: set[str] = set()
+            for name in [*snap_weak, *weak_names]:
+                key = name.lower()
+                if key in seen_w:
+                    continue
+                seen_w.add(key)
+                merged_weak.append(name)
+            weak_names = merged_weak
     if focus_weak and weak_names:
         # Replace ~30% of slots with weak-concept objectives (new questions later).
         for i, slot in enumerate(plan):
@@ -414,14 +753,22 @@ async def start_session(
                 plan[i] = slot
     elif weak_names:
         plan = probe_service.bias_plan_for_weaknesses(plan, weak_names)
+    if defense_mode and project_titles:
+        plan = probe_service.bias_plan_for_defense(plan, project_titles)
     plan = bias_plan_for_persona(plan, persona_id)
-    seeds = claim_seeds if use_resume else None
+    seeds = claim_seeds if (personalize_vault or defense_mode) else None
+    start_profile = active_profile(brief_content)
     plan = probe_service.attach_session_opts(
         plan,
-        use_resume=use_resume,
+        use_resume=use_resume or defense_mode,
+        include_vault_topics=personalize_vault or defense_mode,
         focus_weak=focus_weak,
+        defense_mode=defense_mode,
         persona_id=persona_id,
         claim_seeds=seeds,
+        domain_profile=start_profile,
+        candidate_context=prep_context,
+        selected_projects=selected_projects,
     )
     session = InterviewSession(
         id=session_id,
@@ -434,20 +781,67 @@ async def start_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
+    log.info(
+        "interview_start_timing",
+        stage="session_persisted",
+        request_id=rid,
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+        session_id=str(session.id),
+    )
 
     # M11 fix: if the first question fails, don't leave a stuck orphan
     # session (in_progress with zero turns). Mark aborted, then re-raise —
     # the user retries cleanly and nothing is stuck on "Preparing…".
     try:
-        decision = await _decide(db, session, brief_content, last_answer=None, mongo_db=mongo_db)
+        t_q1 = time.monotonic()
+        decision = _opening_from_question_bank(
+            brief_content,
+            plan=plan,
+            session_id=session.id,
+            mode=mode,
+            history=history,
+        )
+        q1_path = "question_bank"
+        if decision is None:
+            q1_path = "llm"
+            decision = await _decide(
+                db, session, brief_content, last_answer=None, mongo_db=mongo_db
+            )
         turn = await _append_turn(db, session, decision)
-    except Exception:
+        log.info(
+            "interview_start_timing",
+            stage="first_question",
+            request_id=rid,
+            path=q1_path,
+            elapsed_ms=int((time.monotonic() - t_q1) * 1000),
+            total_ms=int((time.monotonic() - started) * 1000),
+        )
+    except Exception as exc:
         session.status = "aborted"
         await db.commit()
+        log.warning(
+            "interview_start_failed",
+            request_id=rid,
+            cause=type(exc).__name__,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
         raise
+    for done in expired_for_feedback:
+        await _dispatch_feedback(done)
     _maybe_topup(brief_content, history, track_id)
+    log.info(
+        "interview_start_timing",
+        stage="total",
+        request_id=rid,
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+        path=q1_path,
+    )
     return {
-        "session": _session_dict(session, practice_label=practice),
+        "session": _session_dict(
+            session,
+            practice_label=practice,
+            domain_profile=start_profile,
+        ),
         "turn": _turn_dict(turn),
     }
 
@@ -460,7 +854,7 @@ async def submit_answer(
         raise LookupError("session_not_active")
     # Deadline already passed: finish through the same path as manual complete,
     # and do not store the late answer.
-    if _minutes_remaining(session) <= 0:
+    if _session_timed_out(session):
         await _finish(db, session, nc=nc)
         raise LookupError("deadline_passed")
     last_turn = await _latest_turn(db, session.id)
@@ -471,12 +865,13 @@ async def submit_answer(
         last_turn.answered_at = datetime.now(UTC)
         last_turn.assisted = bool(last_turn.assistance_level and last_turn.assistance_level > 0)
         await db.commit()
-    elif (
-        last_turn.answer or ""
-    ).strip() == answer.strip() and last_turn.evaluation_coverage is None:
-        # Quota/503 left the answer saved and the turn unevaluated. Retry
-        # scores this same turn instead of opening another one.
-        pass
+    elif last_turn.evaluation_coverage is None:
+        # Answer was saved but evaluation / next question never finished
+        # (timeout, 503, etc.). Allow retry with the same or edited text.
+        last_turn.answer = answer
+        last_turn.answered_at = datetime.now(UTC)
+        last_turn.assisted = bool(last_turn.assistance_level and last_turn.assistance_level > 0)
+        await db.commit()
     else:
         raise LookupError("no_open_question")
 
@@ -529,19 +924,29 @@ async def submit_answer(
         )
 
     # M9.2: time is the primary governor — hard-complete at the deadline.
-    time_up = _minutes_remaining(session) <= 0
+    time_up = _session_timed_out(session)
 
     # Persist the evaluation on the answered turn so feedback survives refreshes.
     last_turn.evaluation_coverage = decision.evaluation.coverage
     last_turn.evaluation_strengths = decision.evaluation.strengths
     last_turn.evaluation_gaps = decision.evaluation.gaps
+    from app.agents.interviewer import CLOSING_MESSAGE, classify_answer_outcome
+
+    eval_checks = list(getattr(decision, "evaluator_checks", None) or [])
+    adaptive_outcome = classify_answer_outcome(
+        decision.evaluation.coverage,
+        answer_text=last_turn.answer,
+        checks=eval_checks,
+    )
     detail = {
         "expected_answer_explanation": decision.evaluation.expected_answer_explanation,
         "corrected_code": decision.evaluation.corrected_code,
         "time_complexity": decision.evaluation.time_complexity,
         "space_complexity": decision.evaluation.space_complexity,
         "rubric_version": getattr(decision, "rubric_version", None) or "v1",
-        "evaluator_checks": list(getattr(decision, "evaluator_checks", None) or []),
+        "evaluator_checks": eval_checks,
+        "adaptive_action": decision.decision,
+        "adaptive_outcome": adaptive_outcome,
     }
     # Coding answers are reviewed statically — never executed in this product yet.
     prior = last_turn.evaluation_detail if isinstance(last_turn.evaluation_detail, dict) else {}
@@ -552,8 +957,39 @@ async def submit_answer(
     used_model = getattr(decision, "model", None) or llm_model_used.get()
     if used_model:
         detail["model"] = used_model
+    # Snapshot knowledge state from answered turns including this evaluation.
+    answered_snapshot = list(await _turns(db, session.id))
+    for t in answered_snapshot:
+        if t.id == last_turn.id:
+            t.evaluation_coverage = last_turn.evaluation_coverage
+            t.evaluation_gaps = last_turn.evaluation_gaps
+            t.evaluation_strengths = last_turn.evaluation_strengths
+            break
+    knowledge = build_covered_so_far(
+        answered_snapshot,
+        plan=getattr(session, "question_plan", None)
+        if isinstance(getattr(session, "question_plan", None), list)
+        else None,
+        questions_asked=len([t for t in answered_snapshot if t.answer]),
+    ).get("knowledge_state")
+    if knowledge:
+        detail["knowledge_state"] = knowledge
+    opts_now = probe_service.session_opts_from_plan(getattr(session, "question_plan", None))
+    if opts_now.get("defense_mode"):
+        detail["project_defense"] = probe_service.project_defense_findings(answered_snapshot)
     last_turn.evaluation_detail = detail
     last_turn.interviewer_notes = decision.notes_for_report
+
+    # Adaptive difficulty nudge on the next plan slot from demonstrated coverage.
+    raw_plan = getattr(session, "question_plan", None)
+    if isinstance(raw_plan, list) and weakness_service.apply_plan_difficulty_nudge(
+        raw_plan,
+        questions_asked=len([t for t in answered_snapshot if t.answer]),
+        coverage=decision.evaluation.coverage,
+    ):
+        session.question_plan = raw_plan
+        flag_modified(session, "question_plan")
+
     await db.commit()
 
     turns_so_far = await _count_turns(db, session.id)
@@ -563,7 +999,15 @@ async def submit_answer(
         or turns_so_far >= get_settings().interview_max_turns
     ):
         await _finish(db, session, nc=nc)
-        return {"completed": True, "evaluation": decision.evaluation.model_dump()}
+        closing = (decision.next_question or "").strip() if decision.decision == "complete" else ""
+        if "?" in closing:
+            closing = CLOSING_MESSAGE
+        return {
+            "completed": True,
+            "evaluation": decision.evaluation.model_dump(),
+            "closing_message": closing or CLOSING_MESSAGE,
+            "adaptive_outcome": adaptive_outcome,
+        }
 
     # Avoid creating a second open question if one somehow already exists.
     latest = await _latest_turn(db, session.id)
@@ -591,6 +1035,7 @@ def _open_session_progress(turns: list[SessionTurn]) -> tuple[int, int]:
 def _open_session_payload(session: InterviewSession, turns: list[SessionTurn]) -> dict:
     answered, question_index = _open_session_progress(turns)
     created = getattr(session, "created_at", None)
+    remaining = round(max(0.0, _minutes_remaining(session)), 1)
     return {
         "id": str(session.id),
         "mode": session.mode,
@@ -598,8 +1043,9 @@ def _open_session_payload(session: InterviewSession, turns: list[SessionTurn]) -
         "question_index": question_index,
         "max_turns": get_settings().interview_max_turns,
         "answered_count": answered,
-        "created_at": created.isoformat() if created is not None else None,
+        "created_at": _as_utc(created).isoformat() if created is not None else None,
         "duration_minutes": int(getattr(session, "duration_minutes", None) or 60),
+        "minutes_remaining": remaining,
     }
 
 
@@ -612,9 +1058,13 @@ async def get_open_session(
     limit = max(1, min(int(limit or 20), 50))
     rows = await _list_open_sessions_for_track(db, user.id, track_id)
     sessions: list[dict] = []
-    for session in rows[:limit]:
+    for session in rows:
+        if _session_timed_out(session):
+            continue
         turns = await _turns(db, session.id)
         sessions.append(_open_session_payload(session, turns))
+        if len(sessions) >= limit:
+            break
     return {"session": sessions[0] if sessions else None, "sessions": sessions}
 
 
@@ -638,6 +1088,8 @@ async def list_open_sessions_for_user(
     max_turns = get_settings().interview_max_turns
     items: list[dict] = []
     for session, track in rows:
+        if _session_timed_out(session):
+            continue
         turns = await _turns(db, session.id)
         answered, question_index = _open_session_progress(turns)
         created = getattr(session, "created_at", None)
@@ -651,8 +1103,9 @@ async def list_open_sessions_for_user(
                 "question_index": question_index,
                 "max_turns": max_turns,
                 "answered_count": answered,
-                "created_at": created.isoformat() if created is not None else None,
+                "created_at": _as_utc(created).isoformat() if created is not None else None,
                 "duration_minutes": int(getattr(session, "duration_minutes", None) or 60),
+                "minutes_remaining": round(max(0.0, _minutes_remaining(session)), 1),
             }
         )
     return items
@@ -746,7 +1199,11 @@ async def get_session(db: AsyncSession, user: User, session_id) -> dict | None:
     track_brief = await get_track_with_brief(db, user, session.track_id)
     brief_content = ((track_brief or {}).get("brief") or {}).get("content") or {}
     return {
-        "session": _session_dict(session, practice_label=practice_label_for(brief_content)),
+        "session": _session_dict(
+            session,
+            practice_label=practice_label_for(brief_content),
+            domain_profile=active_profile(brief_content),
+        ),
         "turns": [
             _turn_dict_full(t, reveal=session.mode == "guided" and t.answer is not None)
             for t in turns
@@ -843,7 +1300,6 @@ async def _decide(
     asked_areas = [t.question_area for t in turns]
     covered_areas = list(dict.fromkeys(asked_areas))  # stable unique
     brief_areas = [qa["topic"] for qa in brief_content.get("question_areas", []) if qa.get("topic")]
-    remaining_areas = [topic for topic in brief_areas if topic not in covered_areas]
     max_turns = get_settings().interview_max_turns
     questions_asked = len(turns)
     # After this decision we will append one more turn when not completing,
@@ -859,7 +1315,22 @@ async def _decide(
     diversity = ""  # static rules live in the system prompts (M11 trim)
     raw_plan = getattr(session, "question_plan", None)
     plan = raw_plan if isinstance(raw_plan, list) else None
+    # Prefer subjects from the persisted plan (includes duration enrichment) so
+    # progression works even when the brief itself is thin.
+    subject_pool = question_plan.plan_topics(plan) or brief_areas
+    covered_keys = {a.lower() for a in covered_areas if a}
+    remaining_areas = [t for t in subject_pool if t.lower() not in covered_keys]
     covered_so_far = build_covered_so_far(turns, plan=plan, questions_asked=questions_asked)
+    # Adaptive Knowledge: reorder remaining subjects toward session gaps first.
+    session_weak = [
+        str(row.get("area") or "")
+        for row in (covered_so_far.get("weak_areas") or [])
+        if isinstance(row, dict) and row.get("area")
+    ]
+    remaining_areas = weakness_service.prioritize_remaining_areas(
+        remaining_areas,
+        session_weak_areas=session_weak,
+    )
 
     duration = int(getattr(session, "duration_minutes", None) or 60)
     # Tests may pass a lightweight namespace without created_at / duration.
@@ -941,8 +1412,11 @@ async def _decide(
         "last_answer": last_answer,
         "open_question_type": getattr(turns[-1], "question_type", None) if turns else None,
         "turns_in_current_area": sum(1 for t in turns if t.question_area == current_area),
+        "current_area": current_area,
+        "topic_budget": question_plan.topic_block_size(plan, current_area),
         "remaining_areas": remaining_areas,
         "covered_areas": covered_areas,
+        "question_plan": plan,
         "questions_asked": questions_asked,
         "questions_remaining": questions_remaining,
         "max_turns": max_turns,
@@ -962,9 +1436,14 @@ async def _decide(
         ],
         "covered_so_far": covered_so_far,
         "memory_instruction": (
-            "Use covered_so_far: avoid repeating covered_objectives; prefer "
-            "next_planned_objective when present; you may revisit ONE weak_areas "
-            "entry with a DIFFERENT question (never a rephrase of asked_questions)."
+            "Use covered_so_far and knowledge_state: avoid repeating covered_objectives; "
+            "prefer next_planned_objective when present; stay on the planned subject for "
+            "about topic_budget questions, then advance to the next planned subject "
+            "automatically — do not wait for the candidate to ask for the next topic. "
+            "follow_up only once for none/partial coverage; never burn the plan on soft "
+            "same-concept follow-ups. Prefer remaining_areas order (weak gaps first). "
+            "You may revisit ONE weak_areas entry with a DIFFERENT question "
+            "(never a rephrase of asked_questions). Do not invent resume gaps."
         ),
         "diversity_instruction": diversity,
         "programming_track": is_programming_brief(brief_content),
@@ -980,6 +1459,7 @@ async def _decide(
             "allowed_types": profile["allowed_types"],
         }
         payload["allowed_types"] = profile["allowed_types"]
+        # Profile-first: domain profile overrides regex programming_track.
         payload["programming_track"] = profile["uses_code"]
     if turns:
         stored = turns[-1].evaluation_detail
@@ -999,11 +1479,45 @@ async def _decide(
         )
     vault_items: list[dict] = []
     weak_names: list[str] = []
-    if opts.get("use_resume") or opts.get("focus_weak"):
-        if opts.get("use_resume"):
-            vault_items = probe_service.sanitize_vault_items(await list_items(db, session.user_id))
+    vault_personalize = probe_service.personalize_from_vault(opts)
+    defense_on = bool(opts.get("defense_mode"))
+    if defense_on:
+        payload["defense_mode"] = True
+        payload["defense_instruction"] = probe_service.defense_system_rules()
+    if vault_personalize or opts.get("focus_weak"):
+        if vault_personalize:
+            raw_items = await list_items(db, session.user_id)
+            selected = list(opts.get("selected_projects") or [])
+            if selected:
+                from app.services.candidate_intelligence import (
+                    filter_vault_items_for_selected_projects,
+                )
+
+                raw_items = filter_vault_items_for_selected_projects(
+                    raw_items, selected, include_non_projects=not defense_on
+                )
+            elif defense_on:
+                # No explicit project selected — do not inject arbitrary projects.
+                raw_items = []
+            if defense_on:
+                vault_items = probe_service.sanitize_vault_items(
+                    raw_items, categories=("project",)
+                )
+            else:
+                vault_items = probe_service.sanitize_vault_items(raw_items)
             if vault_items:
                 payload["vault_prompt_block"] = probe_service.vault_prompt_block(vault_items)
+        ctx = opts.get("candidate_context")
+        if isinstance(ctx, dict) and ctx:
+            payload["candidate_prep_context"] = {
+                "selected_projects": list(ctx.get("selected_projects") or [])[:4],
+                "demonstrated_strengths": list(ctx.get("demonstrated_strengths") or [])[:6],
+                "demonstrated_weaknesses": list(ctx.get("demonstrated_weaknesses") or [])[:6],
+                "covered_concepts": list(ctx.get("covered_concepts") or [])[:8],
+                "not_assessed": list(ctx.get("not_assessed") or [])[:6],
+                "evidence_scope": ctx.get("evidence_scope"),
+                "policy": ctx.get("policy"),
+            }
         answered_turns, session_ids = await _track_answered_turns(
             db, session.user_id, session.track_id
         )
@@ -1022,7 +1536,7 @@ async def _decide(
 
     # Opt-in probes replace a plan slot; they never extend the session or
     # overwrite the evaluator's coverage of the answer just given.
-    if decision.decision != "complete" and (opts.get("use_resume") or opts.get("focus_weak")):
+    if decision.decision != "complete" and (vault_personalize or opts.get("focus_weak")):
         probe = probe_service.pick_probe(
             opts=opts,
             vault_items=vault_items,
@@ -1158,13 +1672,24 @@ async def _complete_if_needed(db: AsyncSession, session: InterviewSession) -> bo
     return won
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Normalize DB timestamps so naive/aware values compare safely as UTC."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _minutes_remaining(session: InterviewSession) -> float:
     duration = int(getattr(session, "duration_minutes", None) or 60)
     created = getattr(session, "created_at", None)
     if created is None:
         return float(duration)
-    elapsed = (datetime.now(UTC) - created).total_seconds() / 60
+    elapsed = (datetime.now(UTC) - _as_utc(created)).total_seconds() / 60
     return duration - elapsed
+
+
+def _session_timed_out(session: InterviewSession) -> bool:
+    return _minutes_remaining(session) <= 0
 
 
 async def _dispatch_feedback(session: InterviewSession, nc=None) -> None:
@@ -1180,7 +1705,12 @@ async def _dispatch_feedback(session: InterviewSession, nc=None) -> None:
     await publish_feedback_job(session_id, track_id, user_id, nc=nc)
 
 
-def _session_dict(s: InterviewSession, *, practice_label: str = "") -> dict:
+def _session_dict(
+    s: InterviewSession,
+    *,
+    practice_label: str = "",
+    domain_profile: dict | None = None,
+) -> dict:
     opts = probe_service.session_opts_from_plan(getattr(s, "question_plan", None))
     from app.agents.persona import get_persona
 
@@ -1192,12 +1722,29 @@ def _session_dict(s: InterviewSession, *, practice_label: str = "") -> dict:
         "status": s.status,
         "max_turns": get_settings().interview_max_turns,
         "duration_minutes": s.duration_minutes,
-        "created_at": s.created_at.isoformat(),
+        "created_at": _as_utc(s.created_at).isoformat() if s.created_at else None,
         "persona_id": persona.id,
         "persona_name": persona.name,
+        "defense_mode": bool(opts.get("defense_mode")),
+        "use_resume": bool(opts.get("use_resume") or opts.get("include_vault_topics")),
     }
     if practice_label:
         body["practice_label"] = practice_label
+    profile = opts.get("domain_profile") if isinstance(opts.get("domain_profile"), dict) else None
+    if not profile and isinstance(domain_profile, dict):
+        profile = {
+            "category": domain_profile.get("category"),
+            "uses_code": bool(domain_profile.get("uses_code")),
+            "uses_math": bool(domain_profile.get("uses_math")),
+            "allowed_types": list(domain_profile.get("allowed_types") or [])[:12],
+        }
+    if profile:
+        body["domain_profile"] = {
+            "category": profile.get("category"),
+            "uses_code": bool(profile.get("uses_code")),
+            "uses_math": bool(profile.get("uses_math")),
+            "allowed_types": list(profile.get("allowed_types") or [])[:12],
+        }
     return body
 
 

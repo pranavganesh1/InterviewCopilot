@@ -280,6 +280,41 @@ def is_duplicate_question(
     return any(is_near_duplicate(candidate, prev, threshold=threshold) for prev in asked if prev)
 
 
+def same_concept_asked(candidate: str, asked: list[str]) -> bool:
+    """True when learning-objective tags substantially overlap any prior ask.
+
+    Distinct from near-duplicate wording — used to detect concept revisits.
+    """
+    tags = concept_tags(candidate)
+    if not tags:
+        return False
+    for prev in asked:
+        if not prev:
+            continue
+        prev_tags = concept_tags(prev)
+        if _tag_overlap_duplicate(tags, prev_tags):
+            return True
+    return False
+
+
+def revisit_justified(
+    *,
+    is_follow_up: bool = False,
+    difficulty_changed: bool = False,
+    prior_coverage: str | None = None,
+    deeper_probe: bool = False,
+) -> bool:
+    """Whether revisiting a previously assessed concept is allowed.
+
+    Legitimate reasons: deeper follow-up, difficulty change, prior weakness,
+    or an explicit deeper practical/explanation probe.
+    """
+    if is_follow_up or deeper_probe or difficulty_changed:
+        return True
+    cov = (prior_coverage or "").strip().lower()
+    return cov in ("none", "partial")
+
+
 def duplicate_of(candidate: str, asked: list[str], *, threshold: float = 0.72) -> str | None:
     """Return the prior question that collides, if any."""
     for prev in asked:

@@ -46,8 +46,42 @@ function sessionSummary(row: OpenSession): string {
 }
 
 function friendly(err: unknown): string {
-  if (err instanceof ApiError && err.status === 503) {
-    return "The interview model is busy right now. Wait a moment and try again.";
+  if (err instanceof ApiError) {
+    const cause = (err.causeCode || "").toLowerCase();
+    const wait =
+      typeof err.retryAfterSeconds === "number" && err.retryAfterSeconds > 0
+        ? Math.min(90, Math.ceil(err.retryAfterSeconds))
+        : undefined;
+    if (cause === "rate_limited") {
+      return wait
+        ? `Temporary request limit reached. Retry in about ${wait}s.`
+        : "Temporary request limit reached. Wait a moment and try again.";
+    }
+    if (cause === "overloaded") {
+      return "Temporary service overload. Wait a moment and try again.";
+    }
+    if (cause === "schema_rejected") {
+      return "Interview preparation got an invalid AI response. Keep your settings and try again.";
+    }
+    if (cause === "timeout") {
+      return "Starting the interview took too long. Keep your settings and try again.";
+    }
+    if (cause === "auth_failed") {
+      return "AI provider authentication failed. Check server configuration.";
+    }
+    if (cause === "network") {
+      return "Could not reach the AI provider. Check your connection and retry.";
+    }
+    if (err.status === 503) {
+      if (/rate|quota|busy|overload/i.test(err.message || "")) {
+        return "The interview model is busy right now. Wait a moment and try again.";
+      }
+      return (
+        err.message ||
+        "Could not start the interview. Keep your settings and try again."
+      );
+    }
+    if (err.message) return err.message;
   }
   if (err instanceof Error && err.message?.includes("Brief yet")) {
     return "Your interview brief is still being generated. Please wait a moment and click Try again.";
@@ -104,12 +138,14 @@ export default function StartInterviewModal({
   onClose,
   initialFocusWeak = false,
   initialUseResume = false,
+  initialDefenseMode = false,
   claimSeeds = [],
 }: {
   track: StartTrack | null;
   onClose: () => void;
   initialFocusWeak?: boolean;
   initialUseResume?: boolean;
+  initialDefenseMode?: boolean;
   claimSeeds?: { vault_item_id?: string; claim: string; excerpt?: string; title?: string }[];
 }) {
   const navigate = useNavigate();
@@ -123,6 +159,7 @@ export default function StartInterviewModal({
   const [custom, setCustom] = useState("");
   const [useCustom, setUseCustom] = useState(false);
   const [useResume, setUseResume] = useState(false);
+  const [defenseMode, setDefenseMode] = useState(initialDefenseMode);
   const [focusWeak, setFocusWeak] = useState(initialFocusWeak);
   const [personaId, setPersonaId] = useState<PersonaId>(() => readStoredPersonaId());
   const [error, setError] = useState<string | null>(null);
@@ -170,14 +207,31 @@ export default function StartInterviewModal({
   const vaultReady = (vault.data ?? []).some((item) =>
     ["project", "skill", "internship"].includes((item.category || "").toLowerCase()),
   );
+  const projectReady = (vault.data ?? []).some(
+    (item) => (item.category || "").toLowerCase() === "project",
+  );
   const weakReady = Boolean(weaknesses.data?.has_data && (weaknesses.data.weak?.length ?? 0) > 0);
 
   useEffect(() => {
     if (!track) return;
     if (vault.isSuccess) {
-      setUseResume(initialUseResume || vaultReady || claimSeeds.length > 0);
+      setUseResume(
+        initialUseResume ||
+          initialDefenseMode ||
+          vaultReady ||
+          claimSeeds.length > 0,
+      );
+      if (initialDefenseMode && projectReady) setDefenseMode(true);
     }
-  }, [track, vault.isSuccess, vaultReady, initialUseResume, claimSeeds.length]);
+  }, [
+    track,
+    vault.isSuccess,
+    vaultReady,
+    projectReady,
+    initialUseResume,
+    initialDefenseMode,
+    claimSeeds.length,
+  ]);
 
   useEffect(() => {
     if (initialFocusWeak && weakReady) setFocusWeak(true);
@@ -188,11 +242,19 @@ export default function StartInterviewModal({
   }, [initialUseResume, claimSeeds.length]);
 
   useEffect(() => {
+    if (initialDefenseMode && projectReady) {
+      setDefenseMode(true);
+      setUseResume(true);
+    }
+  }, [initialDefenseMode, projectReady]);
+
+  useEffect(() => {
     setOlderOpen(false);
     setFinishId(null);
     startLock.current = false;
     setStarting(false);
-  }, [track?.id]);
+    setDefenseMode(initialDefenseMode);
+  }, [track?.id, initialDefenseMode]);
 
   const phase: Phase =
     choice && track && choice.trackId === track.id
@@ -210,18 +272,26 @@ export default function StartInterviewModal({
     mutationFn: async () => {
       if (!track || startMinutes == null) throw new Error("Choose a duration first.");
       if (unfinished) {
-        await api(`/sessions/${unfinished.id}/complete`, { method: "POST" });
+        // Empty sessions must not be "completed" (no scoring / report) — abort instead.
+        if ((unfinished.answered_count ?? 0) === 0) {
+          await api(`/sessions/${unfinished.id}/abort`, { method: "POST" });
+        } else {
+          await api(`/sessions/${unfinished.id}/complete`, { method: "POST" });
+        }
       }
       storePersonaId(personaId);
+      const defend = Boolean(defenseMode && projectReady);
       return api<{ session: { id: string } }>(`/tracks/${track.id}/sessions`, {
         method: "POST",
         body: JSON.stringify({
           mode,
           duration_minutes: startMinutes,
-          use_resume: useResume,
+          use_resume: useResume || defend,
+          include_vault_topics: useResume || defend,
           focus_weak: focusWeak,
+          defense_mode: defend,
           persona_id: personaId,
-          claim_seeds: useResume ? claimSeeds.slice(0, 24) : [],
+          claim_seeds: useResume || defend ? claimSeeds.slice(0, 24) : [],
         }),
       });
     },
@@ -750,7 +820,10 @@ export default function StartInterviewModal({
                   className="mt-0.5"
                   checked={useResume}
                   disabled={!vaultReady || requestBusy}
-                  onChange={(e) => setUseResume(e.target.checked)}
+                  onChange={(e) => {
+                    setUseResume(e.target.checked);
+                    if (!e.target.checked) setDefenseMode(false);
+                  }}
                 />
                 <span>
                   <span className="font-semibold">Use my resume and projects</span>
@@ -758,6 +831,27 @@ export default function StartInterviewModal({
                     {vaultReady
                       ? "Ask Socratic questions about your vault projects and skills."
                       : "Add a project or skill in onboarding to enable this."}
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2.5 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  data-testid="defend-projects"
+                  checked={defenseMode}
+                  disabled={!projectReady || requestBusy}
+                  onChange={(e) => {
+                    setDefenseMode(e.target.checked);
+                    if (e.target.checked) setUseResume(true);
+                  }}
+                />
+                <span>
+                  <span className="font-semibold">Defend my projects</span>
+                  <span className="mt-0.5 block text-xs text-ink-soft">
+                    {projectReady
+                      ? "Architecture, trade-offs, ownership, and results from your Profile Vault projects."
+                      : "Add a project in Profile Vault to enable project defense."}
                   </span>
                 </span>
               </label>

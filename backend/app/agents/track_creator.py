@@ -1,7 +1,6 @@
 import asyncio
 from typing import Literal, TypedDict
 
-import httpx
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
@@ -15,7 +14,6 @@ from app.agents.question_quality import (
     verification_agrees,
     verifier_view,
 )
-from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.gateway.structured import structured_completion
 
@@ -30,6 +28,12 @@ brief for a preparation track.
 Rules:
 - Ground everything in the objective (topic, role, or company+JD) and the candidate's
   actual vault. For company_jd tracks, derive requirements ONLY from the supplied JD text.
+- If candidate_intelligence is present, use it for goals, selected projects, previously
+  demonstrated strengths/weaknesses, and covered concepts. Treat vault/skills as claims,
+  not proven ability. Do NOT invent project details. Do NOT pick an arbitrary vault project
+  as the primary project — only use projects listed under selected_projects (if any).
+  Prefer assessing not_assessed / demonstrated_weaknesses over rehashing demonstrated_strengths,
+  unless a deeper follow-up is clearly justified.
 - competencies: what the interview should genuinely assess, with importance.
 - question_areas: 8-12 areas to draw questions from; guidance states what a good answer
   covers. Include areas probing the candidate's own claimed projects (candidate_angle_notes).
@@ -120,6 +124,8 @@ class TrackCreatorState(TypedDict, total=False):
     vault_summary: list[dict]
     brief: dict
     bank: list
+    meta: dict
+    candidate_intelligence: dict
 
 
 BANK_SYSTEM_PROMPT = (
@@ -188,20 +194,28 @@ class BankJudgeVerdict(BaseModel):
 
 
 async def run_track_creator_turn(
-    *, objective: dict, vault_summary: list[dict], meta: dict | None = None
+    *,
+    objective: dict,
+    vault_summary: list[dict],
+    meta: dict | None = None,
+    candidate_intelligence: dict | None = None,
 ) -> InterviewBriefContent:
     safe_objective = dict(objective)
     if safe_objective.get("subject"):
         safe_objective["subject"] = delimited_subject(str(safe_objective["subject"]))
-    payload = {"candidate_vault": vault_summary, "track_objective": safe_objective}
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        content = await structured_completion(
-            client,
-            system=SYSTEM_PROMPT,
-            user_payload=payload,
-            schema=InterviewBriefContent,
-            meta=meta,
-        )
+    payload: dict = {"candidate_vault": vault_summary, "track_objective": safe_objective}
+    if isinstance(candidate_intelligence, dict) and candidate_intelligence:
+        payload["candidate_intelligence"] = candidate_intelligence
+    content = await structured_completion(
+        system=SYSTEM_PROMPT,
+        user_payload=payload,
+        schema=InterviewBriefContent,
+        meta=meta,
+        max_tokens=1200,
+        timeout_s=35.0,
+        max_attempts=1,
+        repair_attempts=1,
+    )
     dumped = content.model_dump()
     raw_profile = dumped.get("domain_profile")
     if isinstance(raw_profile, dict):
@@ -244,10 +258,16 @@ async def run_bank_builder_turn(
     else:
         schema = _BankGeneration
 
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        result = await structured_completion(
-            client, system=system, user_payload=payload, schema=schema, meta=meta
-        )
+    result = await structured_completion(
+        system=system,
+        user_payload=payload,
+        schema=schema,
+        meta=meta,
+        max_tokens=1400,
+        timeout_s=40.0,
+        max_attempts=1,
+        repair_attempts=1,
+    )
     return result.questions
 
 
@@ -255,14 +275,16 @@ async def run_bank_judge_turn(
     *, objective: dict, questions: list[dict], meta: dict | None = None
 ) -> BankJudgeVerdict:
     payload = {"track_objective": objective, "questions": questions}
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        return await structured_completion(
-            client,
-            system=JUDGE_SYSTEM_PROMPT,
-            user_payload=payload,
-            schema=BankJudgeVerdict,
-            meta=meta,
-        )
+    return await structured_completion(
+        system=JUDGE_SYSTEM_PROMPT,
+        user_payload=payload,
+        schema=BankJudgeVerdict,
+        meta=meta,
+        max_tokens=800,
+        timeout_s=25.0,
+        max_attempts=1,
+        repair_attempts=1,
+    )
 
 
 class _BankQuestionIn(BaseModel):
@@ -321,14 +343,16 @@ async def run_bank_verify_turn(
     *, objective: dict, questions: list[dict], meta: dict | None = None
 ) -> BankVerification:
     payload = {"track_objective": objective, "questions": questions}
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        return await structured_completion(
-            client,
-            system=VERIFY_SYSTEM_PROMPT,
-            user_payload=payload,
-            schema=BankVerification,
-            meta=meta,
-        )
+    return await structured_completion(
+        system=VERIFY_SYSTEM_PROMPT,
+        user_payload=payload,
+        schema=BankVerification,
+        meta=meta,
+        max_tokens=900,
+        timeout_s=30.0,
+        max_attempts=1,
+        repair_attempts=1,
+    )
 
 
 async def _verified_indexes(verify_runner, objective, candidates, meta) -> set[int]:
@@ -413,11 +437,19 @@ def build_track_creator_graph(
     verify_runner=run_bank_verify_turn,
 ):
     async def author(state: TrackCreatorState) -> dict:
-        content = await turn_runner(
-            objective=state["objective"],
-            vault_summary=state.get("vault_summary", []),
-            meta=state.get("meta") or None,
-        )
+        kwargs = {
+            "objective": state["objective"],
+            "vault_summary": state.get("vault_summary", []),
+            "meta": state.get("meta") or None,
+        }
+        # Backward-compatible with older turn_runner signatures in tests.
+        intel = state.get("candidate_intelligence")
+        try:
+            content = await turn_runner(
+                **kwargs, candidate_intelligence=intel
+            )
+        except TypeError:
+            content = await turn_runner(**kwargs)
         return {"brief": content.model_dump()}
 
     async def build_bank(state: TrackCreatorState) -> dict:

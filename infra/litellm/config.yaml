@@ -1,6 +1,6 @@
 router_settings:
-  # NIM is primary (Groq key not set). Gemini as fallback.
-  # When Groq key is added it will be primary again — just reorder.
+  # Groq primary → Gemini fallback. NVIDIA NIM is intentionally unused
+  # (no key configured; not part of the intended provider set).
   fallbacks:
     - {"interview-chat": ["interview-chat-gemini"]}
     - {"structured-json": ["structured-json-gemini"]}
@@ -8,24 +8,26 @@ router_settings:
 model_list:
   - model_name: interview-chat
     litellm_params:
-      model: openai/nvidia/nemotron-3.5-super-vl-120b-a12b
-      api_base: https://integrate.api.nvidia.com/v1
-      api_key: os.environ/NVIDIA_NIM_API_KEY
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
   - model_name: interview-chat-gemini
     litellm_params:
       model: gemini/gemini-flash-latest
       api_key: os.environ/GEMINI_API_KEY
+  # response_format is owned by the app gateway (structured_completion) so a
+  # schema-reject retry can drop json_object mode. Do not bake it into the
+  # deployment here — that blocked plain-JSON recovery after Groq validate fails.
   - model_name: structured-json
     litellm_params:
-      model: openai/nvidia/nemotron-3.5-super-vl-120b-a12b
-      api_base: https://integrate.api.nvidia.com/v1
-      api_key: os.environ/NVIDIA_NIM_API_KEY
-      response_format: {"type": "json_object"}
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
   - model_name: structured-json-gemini
     litellm_params:
       model: gemini/gemini-flash-latest
       api_key: os.environ/GEMINI_API_KEY
 
 litellm_settings:
+  # Our gateway owns 429 backoff / fallback fan-out. LiteLLM-internal retries
+  # would multiply provider calls and worsen rate limits.
   num_retries: 0
   timeout: 120

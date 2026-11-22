@@ -5,9 +5,15 @@ from app.core.config import PROJECT_ROOT, get_settings
 
 
 def test_settings_load_from_root_env():
+    from app.core.config import Settings
+
     settings = get_settings()
     assert settings.database_url.startswith("postgresql+asyncpg://")
-    assert settings.mongo_db == "interviewcopilot"
+    # Under pytest, conftest forces MONGO_DB=interviewcopilot_test; the
+    # application default remains the shared DB name on Settings.
+    assert Settings.model_fields["mongo_db"].default == "interviewcopilot"
+    assert settings.mongo_db == "interviewcopilot_test"
+    assert settings.database_url.rstrip("/").endswith("interviewcopilot_test")
     assert settings.litellm_url == "http://localhost:4000"
     assert PROJECT_ROOT.name == "InterviewCopilot"
 

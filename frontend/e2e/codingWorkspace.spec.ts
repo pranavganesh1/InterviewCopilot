@@ -116,7 +116,9 @@ test("coding question shows workspace; text question keeps textarea", async ({
   );
   await page.goto("/tracks/t1/interview/text1");
   await expect(page.getByTestId("coding-workspace")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Submit Answer" })).toBeVisible();
+  // Text answers expose both an inline and sticky-dock Submit control; target
+  // the dock test id used by the rest of the interview e2e suite.
+  await expect(page.getByTestId("submit-answer")).toBeVisible();
   await expect(
     page.getByPlaceholder(/no hints in strict mode/i),
   ).toBeVisible();

@@ -2,10 +2,8 @@
 
 from typing import Literal
 
-import httpx
 from pydantic import BaseModel, Field
 
-from app.core.config import get_settings
 from app.gateway.structured import structured_completion
 
 MAX_CONCEPTUAL_LEVEL = 3
@@ -123,10 +121,14 @@ class AssistanceContent(BaseModel):
 async def generate_assistance(*, payload: dict) -> AssistanceContent:
     coding = bool(payload.get("coding"))
     system = CODING_PROMPT if coding else CONCEPTUAL_PROMPT
-    async with httpx.AsyncClient(timeout=get_settings().llm_client_timeout) as client:
-        return await structured_completion(
-            client,
-            system=system,
-            user_payload=payload,
-            schema=AssistanceContent,
-        )
+    level = int(payload.get("level") or 1)
+    max_tokens = 350 if level <= 2 else 700 if level <= 4 else 1200
+    return await structured_completion(
+        system=system,
+        user_payload=payload,
+        schema=AssistanceContent,
+        max_tokens=max_tokens,
+        max_attempts=1,
+        repair_attempts=1,
+        timeout_s=20.0,
+    )

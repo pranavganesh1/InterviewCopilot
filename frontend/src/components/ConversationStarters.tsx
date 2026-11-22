@@ -99,15 +99,15 @@ export default function ConversationStarters({
   return (
     <div className="space-y-3" data-testid="conversation-starters">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
           Where should we start?
         </p>
-        <p className="mt-0.5 text-xs text-stone-500">
+        <p className="mt-0.5 text-xs text-ink-faint">
           Pick a path — or type your own message anytime.
         </p>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-2.5 sm:grid-cols-2">
         {starters.map((starter) => {
           const active = activeMode === starter.id;
           return (
@@ -117,26 +117,26 @@ export default function ConversationStarters({
               disabled={pending}
               data-testid={`starter-${starter.id}`}
               onClick={() => onSelectStarter(starter.id)}
-              className={`group flex items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition ${
+              className={`group flex min-h-[4.75rem] items-start gap-3 rounded-2xl border px-3.5 py-3.5 text-left transition ${
                 active
                   ? "border-accent bg-accent-soft shadow-sm"
-                  : "border-stone-200 bg-white hover:border-accent/50 hover:bg-accent-soft/40"
+                  : "border-line bg-surface hover:border-accent/45 hover:bg-accent-soft/50"
               } disabled:opacity-50`}
             >
               <span
-                className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold tracking-wide ${
+                className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[10px] font-bold tracking-wide ${
                   active
                     ? "bg-accent text-white"
-                    : "bg-stone-100 text-stone-600 group-hover:bg-accent/15 group-hover:text-accent-strong"
+                    : "bg-accent-soft text-accent-strong group-hover:bg-accent/15"
                 }`}
               >
                 {STARTER_ICONS[starter.id] ?? "•"}
               </span>
               <span className="min-w-0">
-                <span className="block text-sm font-semibold text-stone-800">
+                <span className="block text-sm font-semibold text-ink">
                   {starter.label}
                 </span>
-                <span className="mt-0.5 block text-xs leading-snug text-stone-500">
+                <span className="mt-0.5 block text-xs leading-snug text-ink-soft">
                   {starter.description}
                 </span>
               </span>
@@ -146,12 +146,12 @@ export default function ConversationStarters({
       </div>
 
       {skillGroups.length > 0 && (
-        <div className="rounded-xl border border-stone-200 bg-stone-50/80 p-3">
-          <p className="text-xs font-semibold text-stone-700">Skills from your profile</p>
+        <div className="rounded-2xl border border-line bg-accent-soft/30 p-3">
+          <p className="text-xs font-semibold text-ink">Skills from your profile</p>
           <div className="mt-2 space-y-2">
             {skillGroups.map((group) => (
               <div key={group.label}>
-                <p className="text-[10px] font-medium uppercase tracking-wide text-stone-400">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-ink-faint">
                   {group.label}
                 </p>
                 <div className="mt-1 flex flex-wrap gap-1.5">
@@ -161,7 +161,7 @@ export default function ConversationStarters({
                       type="button"
                       disabled={pending}
                       onClick={() => onExploreSkill(skill)}
-                      className="rounded-md border border-stone-200 bg-white px-2.5 py-1 text-xs font-medium text-stone-700 transition hover:border-accent hover:bg-accent-soft hover:text-accent-strong disabled:opacity-50"
+                      className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink transition hover:border-accent hover:bg-accent-soft hover:text-accent-strong disabled:opacity-50"
                     >
                       {skill}
                     </button>
@@ -174,8 +174,8 @@ export default function ConversationStarters({
       )}
 
       {projectList.length > 0 && (
-        <div className="rounded-xl border border-stone-200 bg-stone-50/80 p-3">
-          <p className="text-xs font-semibold text-stone-700">Projects to explore</p>
+        <div className="rounded-2xl border border-line bg-accent-soft/30 p-3">
+          <p className="text-xs font-semibold text-ink">Projects to explore</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {projectList.map((project) => (
               <button
@@ -183,7 +183,7 @@ export default function ConversationStarters({
                 type="button"
                 disabled={pending}
                 onClick={() => onExploreProject(project)}
-                className="rounded-md border border-stone-200 bg-white px-2.5 py-1 text-xs font-medium text-stone-700 transition hover:border-accent hover:bg-accent-soft hover:text-accent-strong disabled:opacity-50"
+                className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink transition hover:border-accent hover:bg-accent-soft hover:text-accent-strong disabled:opacity-50"
               >
                 {project}
               </button>

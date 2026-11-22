@@ -197,6 +197,16 @@ async def process_session_feedback(db: AsyncSession, session_id) -> dict:
         # Include this session's answered turns (already in prior after commit path).
         summary = weakness_service.aggregate_turns(prior_turns, session_order=session_ids)
         content["diagnostics"] = weakness_service.build_diagnostics(summary)
+        from app.services import probe as probe_service
+
+        opts = probe_service.session_opts_from_plan(session.question_plan)
+        if opts.get("defense_mode"):
+            defense = probe_service.project_defense_findings(answered)
+            if defense.get("has_data"):
+                content["diagnostics"] = {
+                    **(content.get("diagnostics") or {}),
+                    "project_defense": defense,
+                }
     except Exception as exc:
         log.warning(
             "diagnostics_build_failed",

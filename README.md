@@ -223,6 +223,8 @@ cd frontend
 npm run lint
 ```
 
+**Ops note — `POST /api/v1/dev/llm-check`:** Local development smoke test only (`APP_ENV=local`; 404 otherwise). Intended for operators verifying the LLM gateway after compose/key changes. Do **not** expose a product UI control for this endpoint; keep it curl/ops-only.
+
 ---
 
 ## 📂 Repository Layout

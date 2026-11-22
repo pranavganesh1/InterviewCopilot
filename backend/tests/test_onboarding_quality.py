@@ -98,11 +98,13 @@ def test_profile_review_message_lists_sections():
     ]
     msg = build_profile_review_message(items)
     assert RESUME_WELCOME_MARKER in msg
-    assert "QCGNN" in msg
-    # Warm coach tone: highlight a couple of items, not a full resume dump.
+    # Verify-first: do not auto-claim a specific project.
+    assert "QCGNN" not in msg or "similar" in msg.lower()
+    assert "caught my eye" not in msg.lower()
+    assert "make sure everything looks right" in msg
+    assert "Profile Vault" not in msg
     assert "and 11 more" not in msg
     assert "I found your experience in" not in msg
-    assert "goals" in msg.lower() or "work on" in msg.lower()
     assert message_looks_like_resume_welcome(msg)
     assert not message_looks_like_resume_welcome("Just a normal coach reply")
 
@@ -144,7 +146,7 @@ async def test_upsert_merges_equivalent_titles(clean_users_table):
 @pytest.mark.asyncio
 async def test_state_prefills_review_when_vault_exists(clean_users_table):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
     email = f"pre-{uuid.uuid4()}@example.com"
     async with SessionFactory() as session:
@@ -182,7 +184,7 @@ async def test_state_prefills_review_when_vault_exists(clean_users_table):
         token = create_access_token(str(user.id))
         user_id = str(user.id)
 
-    mongo = get_mongo_client()[get_settings().mongo_db]
+    mongo = get_mongo_db()
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
 
     app = create_app()
@@ -194,8 +196,14 @@ async def test_state_prefills_review_when_vault_exists(clean_users_table):
         body = resp.json()
         assert body["vault_items"][0]["details"]
         assert any(m["role"] == "assistant" for m in body["messages"])
-        assert "QCGNN" in body["messages"][0]["content"]
+        welcome = body["messages"][0]["content"]
+        assert "caught my eye" not in welcome.lower()
+        assert "QCGNN" not in welcome or "similar" in welcome.lower()
+        assert "make sure everything looks right" in welcome
+        assert "Profile Vault" not in welcome
+        assert "Sync result" not in welcome
         assert body["has_resume_welcome"] is True
+        assert body.get("profile_verified") is False
         assert body["show_starters"] is True
         assert any(s["id"] == "ai_interview" for s in body["conversation_starters"])
         # Welcome must not mark onboarding finished.
@@ -207,7 +215,11 @@ async def test_state_prefills_review_when_vault_exists(clean_users_table):
         welcomes = [
             m
             for m in again.json()["messages"]
-            if m["role"] == "assistant" and "I've reviewed your resume" in m["content"]
+            if m["role"] == "assistant"
+            and (
+                "I've gone through your resume" in m["content"]
+                or "make sure everything looks right" in m["content"]
+            )
         ]
         assert len(welcomes) == 1
 
@@ -217,7 +229,7 @@ async def test_state_prefills_review_when_vault_exists(clean_users_table):
 @pytest.mark.asyncio
 async def test_seed_resume_welcome_is_idempotent(clean_users_table):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
     from app.services import conversation_store, onboarding_service
     from app.services.vault_service import list_items
 
@@ -248,17 +260,33 @@ async def test_seed_resume_welcome_is_idempotent(clean_users_table):
         user_id = str(user.id)
         vault_items = await list_items(session, user.id)
 
-    mongo = get_mongo_client()[get_settings().mongo_db]
+    mongo = get_mongo_db()
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
 
-    first = await onboarding_service.seed_resume_welcome(mongo, user_id, vault_items)
-    second = await onboarding_service.seed_resume_welcome(mongo, user_id, vault_items)
-    assert first is True
-    assert second is False
+    first = await onboarding_service.seed_resume_welcome(
+        mongo,
+        user_id,
+        vault_items,
+        sync_result={
+            "counts": {
+                "created": 2,
+                "skipped": 0,
+                "enrichment_candidates": 0,
+                "uncertain_matches": 0,
+                "failed": 0,
+            }
+        },
+    )
+    second = await onboarding_service.seed_resume_welcome(
+        mongo, user_id, vault_items, sync_result={"counts": {"created": 2}}
+    )
+    assert first.get("seeded") is True
+    assert second.get("seeded") is False
     messages = await conversation_store.get_messages(mongo, user_id, limit=40)
-    assert sum(1 for m in messages if "I've reviewed your resume" in m["content"]) == 1
-    assert "Portfolio" in messages[0]["content"]
-    # Warm welcome highlights a project — not a full skill dump.
+    assert len(messages) == 1
+    assert "I've gone through your resume" in messages[0]["content"]
+    assert "make sure everything looks right" in messages[0]["content"]
+    assert "Sync result" not in messages[0]["content"]
     assert "I found your experience in" not in messages[0]["content"]
 
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
@@ -267,7 +295,7 @@ async def test_seed_resume_welcome_is_idempotent(clean_users_table):
 @pytest.mark.asyncio
 async def test_conversation_starter_sets_mode_and_chats(monkeypatch, clean_users_table):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
     from app.services import conversation_store
 
     email = f"start-{uuid.uuid4()}@example.com"
@@ -307,7 +335,7 @@ async def test_conversation_starter_sets_mode_and_chats(monkeypatch, clean_users
 
     monkeypatch.setattr(svc, "run_onboarding_turn", fake_turn)
 
-    mongo = get_mongo_client()[get_settings().mongo_db]
+    mongo = get_mongo_db()
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
 
     app = create_app()
@@ -344,7 +372,7 @@ async def test_chat_upserts_instead_of_duplicating(monkeypatch, clean_users_tabl
     from sqlalchemy import select
 
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
     email = f"dup-{uuid.uuid4()}@example.com"
     async with SessionFactory() as session:
@@ -383,7 +411,7 @@ async def test_chat_upserts_instead_of_duplicating(monkeypatch, clean_users_tabl
     monkeypatch.setattr(svc, "run_onboarding_turn", fake_turn)
 
     app = create_app()
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
@@ -409,12 +437,11 @@ async def test_chat_upserts_instead_of_duplicating(monkeypatch, clean_users_tabl
     await app.state.mongo_db.onboarding_conversations.delete_many({"user_id": str(user_id)})
 
 def test_ensure_nonempty_and_ack_helpers():
-    assert ensure_nonempty_reply("") 
-    assert "What" in ensure_nonempty_reply("", vault_summary=[
-        {"category": "project", "title": "DBMS", "details": {}}
-    ]) or "How" in ensure_nonempty_reply("", vault_summary=[
-        {"category": "project", "title": "DBMS", "details": {}}
-    ])
+    assert ensure_nonempty_reply("")
+    empty_fallback = ensure_nonempty_reply(
+        "", vault_summary=[{"category": "project", "title": "DBMS", "details": {}}]
+    )
+    assert any(w in empty_fallback for w in ("What", "How", "Which"))
     assert classify_duplicate_answer("give both") == "keep_both"
     assert classify_duplicate_answer("keep both") == "keep_both"
     assert classify_duplicate_answer("same") == "merge"
@@ -431,11 +458,99 @@ def test_ensure_nonempty_and_ack_helpers():
     )
     assert practise and practise["subject"] == "Python"
 
+    from app.agents.onboarding import (
+        classify_topic_focus,
+        continue_topic_reply,
+        is_affirmative,
+        resolve_topic_confirmation,
+        topic_focus_reply,
+        wants_topic_switch,
+    )
+
+    vault = [
+        {
+            "category": "project",
+            "title": "Music Database Management",
+            "details": {"purpose": "store songs", "technologies": "MySQL, Flask"},
+        },
+        {
+            "category": "project",
+            "title": "QCGNN",
+            "details": {"purpose": "quantum graphs", "technologies": "PyTorch"},
+        },
+        {
+            "category": "skill",
+            "title": "Python",
+            "details": {"level": "intermediate"},
+        },
+    ]
+    focused = classify_topic_focus("I want in DBMS project", vault)
+    assert focused is not None
+    assert focused["title"] == "Music Database Management"
+    reply = topic_focus_reply(focused)
+    assert "Music Database Management" in reply
+    assert "Machine Learning" not in reply
+    assert "QCGNN" not in reply
+    assert classify_topic_focus("tell me a joke", vault) is None
+    assert classify_topic_focus("yes", vault) is None
+    assert is_affirmative("yes")
+
+    skill = classify_topic_focus("I want to discuss my Python skill", vault)
+    assert skill and skill["title"] == "Python" and skill["kind"] == "skill"
+
+    ml = classify_topic_focus("switch to my QCGNN project", vault)
+    assert ml and ml["title"] == "QCGNN"
+    assert wants_topic_switch("let's talk about something else")
+
+    locked_ctx = {
+        "current_topic": "Music Database Management",
+        "focus_kind": "project",
+        "focus_locked": True,
+        "last_question_intent": "explore",
+    }
+    cont = continue_topic_reply(locked_ctx, vault)
+    assert cont and "Music Database Management" in cont
+    assert "QCGNN" not in cont
+
+    confirm = resolve_topic_confirmation(
+        "yes",
+        vault,
+        {
+            "last_question_intent": "confirm_topic",
+            "pending_followup": "Music Database Management",
+        },
+    )
+    assert confirm and confirm["title"] == "Music Database Management"
+
+    # Already locked on that topic — do not restart the opening confirmation.
+    assert (
+        resolve_topic_confirmation(
+            "yes",
+            vault,
+            {
+                "last_question_intent": "confirm_topic",
+                "pending_followup": "Music Database Management",
+                "current_topic": "Music Database Management",
+                "focus_locked": True,
+            },
+        )
+        is None
+    )
+
+    from app.agents.onboarding import infer_question_intent
+
+    assert infer_question_intent(
+        "What did you focus on most in your Physics lab?"
+    ) == "explore"
+    assert infer_question_intent(
+        "Would you like to discuss your Accounting project next?"
+    ) == "confirm_topic"
+
 
 @pytest.mark.asyncio
 async def test_chat_never_returns_empty_reply(monkeypatch, clean_users_table):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
     email = f"empty-{uuid.uuid4()}@example.com"
     async with SessionFactory() as session:
@@ -454,7 +569,7 @@ async def test_chat_never_returns_empty_reply(monkeypatch, clean_users_table):
     monkeypatch.setattr(svc, "run_onboarding_turn", blank_turn)
 
     app = create_app()
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     await app.state.mongo_db.onboarding_conversations.delete_many({"user_id": user_id})
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -473,7 +588,7 @@ async def test_give_both_resolves_duplicate(monkeypatch, clean_users_table):
     from sqlalchemy import select
 
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
     from app.services import conversation_store
 
     email = f"both-{uuid.uuid4()}@example.com"
@@ -511,7 +626,7 @@ async def test_give_both_resolves_duplicate(monkeypatch, clean_users_table):
     monkeypatch.setattr(svc, "run_onboarding_turn", should_not_run)
 
     app = create_app()
-    mongo = get_mongo_client()[get_settings().mongo_db]
+    mongo = get_mongo_db()
     app.state.mongo_db = mongo
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
     await conversation_store.append_message(
@@ -551,7 +666,7 @@ async def test_give_both_resolves_duplicate(monkeypatch, clean_users_table):
 @pytest.mark.asyncio
 async def test_ack_only_gets_specific_question(monkeypatch, clean_users_table):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
     email = f"ack-{uuid.uuid4()}@example.com"
     async with SessionFactory() as session:
@@ -579,7 +694,7 @@ async def test_ack_only_gets_specific_question(monkeypatch, clean_users_table):
     monkeypatch.setattr(svc, "run_onboarding_turn", should_not_run)
 
     app = create_app()
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     await app.state.mongo_db.onboarding_conversations.delete_many({"user_id": user_id})
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -600,7 +715,7 @@ async def test_llm_quota_returns_503_and_keeps_user_message(
     monkeypatch, clean_users_table
 ):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
     from app.gateway.llm import LLMGatewayError
     from app.services import conversation_store
 
@@ -621,7 +736,7 @@ async def test_llm_quota_returns_503_and_keeps_user_message(
     monkeypatch.setattr(svc, "run_onboarding_turn", boom)
 
     app = create_app()
-    mongo = get_mongo_client()[get_settings().mongo_db]
+    mongo = get_mongo_db()
     app.state.mongo_db = mongo
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
     transport = httpx.ASGITransport(app=app)
@@ -646,7 +761,7 @@ async def test_llm_quota_returns_503_and_keeps_user_message(
 @pytest.mark.asyncio
 async def test_chat_rate_limit_returns_429(monkeypatch, clean_users_table):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
     email = f"rpm-{uuid.uuid4()}@example.com"
     async with SessionFactory() as session:
@@ -669,7 +784,7 @@ async def test_chat_rate_limit_returns_429(monkeypatch, clean_users_table):
     monkeypatch.setattr(svc, "run_onboarding_turn", fake_turn)
 
     app = create_app()
-    mongo = get_mongo_client()[get_settings().mongo_db]
+    mongo = get_mongo_db()
     app.state.mongo_db = mongo
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
     transport = httpx.ASGITransport(app=app)
@@ -698,7 +813,7 @@ async def test_practise_intent_skips_llm_and_offers_start(
     monkeypatch, clean_users_table
 ):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
     email = f"practise-{uuid.uuid4()}@example.com"
     async with SessionFactory() as session:
@@ -726,7 +841,7 @@ async def test_practise_intent_skips_llm_and_offers_start(
     monkeypatch.setattr(svc, "run_onboarding_turn", should_not_run)
 
     app = create_app()
-    mongo = get_mongo_client()[get_settings().mongo_db]
+    mongo = get_mongo_db()
     app.state.mongo_db = mongo
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
     transport = httpx.ASGITransport(app=app)
@@ -746,7 +861,7 @@ async def test_practise_intent_skips_llm_and_offers_start(
 @pytest.mark.asyncio
 async def test_chat_message_id_is_idempotent(monkeypatch, clean_users_table):
     from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
     from app.services import conversation_store
 
     email = f"idem-{uuid.uuid4()}@example.com"
@@ -769,7 +884,7 @@ async def test_chat_message_id_is_idempotent(monkeypatch, clean_users_table):
     monkeypatch.setattr(svc, "run_onboarding_turn", fake_turn)
 
     app = create_app()
-    mongo = get_mongo_client()[get_settings().mongo_db]
+    mongo = get_mongo_db()
     app.state.mongo_db = mongo
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
     transport = httpx.ASGITransport(app=app)

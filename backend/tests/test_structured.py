@@ -29,6 +29,27 @@ async def test_valid_json_parses_first_try():
 
 
 @pytest.mark.asyncio
+async def test_fenced_json_parses_without_repair():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '```json\n{"reply": "hi", "count": 3}\n```'
+                        }
+                    }
+                ]
+            },
+        )
+
+    async with _client(handler) as client:
+        out = await structured_completion(client, system="s", user_payload={}, schema=Out)
+    assert out.count == 3
+
+
+@pytest.mark.asyncio
 async def test_repairs_after_invalid_json():
     calls = {"n": 0}
 
@@ -45,9 +66,12 @@ async def test_repairs_after_invalid_json():
 
 @pytest.mark.asyncio
 async def test_raises_after_second_failure():
+    from app.gateway.llm import LLMCause
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"choices": [{"message": {"content": "still not json"}}]})
 
     async with _client(handler) as client:
-        with pytest.raises(LLMGatewayError):
+        with pytest.raises(LLMGatewayError) as ei:
             await structured_completion(client, system="s", user_payload={}, schema=Out)
+    assert ei.value.cause == LLMCause.schema_rejected

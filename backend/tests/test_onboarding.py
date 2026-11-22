@@ -14,7 +14,7 @@ async def test_chat_creates_vault_items_and_replies(monkeypatch, clean_users_tab
     from sqlalchemy import select
 
     from app.agents.onboarding import ExtractedItem, OnboardingTurn
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
     from app.models.vault import VaultItem
 
     email = f"o-{uuid.uuid4()}@example.com"
@@ -40,9 +40,8 @@ async def test_chat_creates_vault_items_and_replies(monkeypatch, clean_users_tab
     monkeypatch.setattr(svc, "run_onboarding_turn", fake_turn)
 
     app = create_app()
-    from app.core.config import get_settings
 
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
@@ -63,7 +62,7 @@ async def test_chat_creates_vault_items_and_replies(monkeypatch, clean_users_tab
         )
         assert len(items) == 1 and items[0].source == "onboarding_chat"
 
-    mongo_db = get_mongo_client()["interviewcopilot"]
+    mongo_db = get_mongo_db()
     await mongo_db.onboarding_conversations.delete_many({"user_id": str(user.id)})
 
 
@@ -78,7 +77,7 @@ async def test_onboarding_requires_auth():
 
 @pytest.mark.asyncio
 async def test_onboarding_state_reports_completion(clean_users_table):
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
     from app.models.vault import VaultItem
 
     email = f"oc-{uuid.uuid4()}@example.com"
@@ -105,14 +104,8 @@ async def test_onboarding_state_reports_completion(clean_users_table):
         user_id = str(user.id)
 
     app = create_app()
-    from app.core.config import get_settings
 
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
-    from app.services import conversation_store
-
-    await conversation_store.set_preparation_preferences(
-        app.state.mongo_db, user_id, {"interests": ["technical"], "confirmed": True}
-    )
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get(
@@ -121,12 +114,13 @@ async def test_onboarding_state_reports_completion(clean_users_table):
         )
     assert resp.status_code == 200
     body = resp.json()
+    # Vault sections are optional; completion requires confirmed preferences (or finish).
     assert body["vault_ready"] is True
-    assert body["onboarding_complete"] is True
+    assert body["onboarding_complete"] is False
     assert body["onboarding_finished"] is False
     assert body["missing_categories"] == []
 
-    mongo_db = get_mongo_client()[get_settings().mongo_db]
+    mongo_db = get_mongo_db()
     await mongo_db.onboarding_conversations.delete_many({"user_id": user_id})
 
 
@@ -134,7 +128,7 @@ async def test_onboarding_state_reports_completion(clean_users_table):
 async def test_complete_marks_finished_and_survives_state_reload(clean_users_table):
     from sqlalchemy import select
 
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
     from app.models.vault import VaultItem
     from app.services import conversation_store
 
@@ -162,9 +156,8 @@ async def test_complete_marks_finished_and_survives_state_reload(clean_users_tab
         user_id = user.id
 
     app = create_app()
-    from app.core.config import get_settings
 
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     await conversation_store.set_preparation_preferences(
         app.state.mongo_db,
         str(user_id),
@@ -216,10 +209,9 @@ async def test_complete_rejects_incomplete_vault(clean_users_table):
         token = create_access_token(str(user.id))
 
     app = create_app()
-    from app.core.config import get_settings
-    from app.db.mongo import get_mongo_client
+    from app.db.mongo import get_mongo_db
 
-    app.state.mongo_db = get_mongo_client()[get_settings().mongo_db]
+    app.state.mongo_db = get_mongo_db()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(

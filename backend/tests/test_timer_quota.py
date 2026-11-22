@@ -2,6 +2,7 @@
 
 import asyncio
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -13,6 +14,7 @@ from app.main import create_app
 from app.models.interview import InterviewSession, SessionTurn
 from app.models.track import InterviewBrief, Track
 from app.models.user import User
+from app.services.interview_service import _as_utc, _minutes_remaining, _session_timed_out
 
 
 async def _seed(monkeypatch):
@@ -287,3 +289,90 @@ async def test_report_drops_unanswered_questions(monkeypatch, clean_users_table)
     assessments = result["report"]["content"]["question_assessments"]
     assert [row["turn_index"] for row in assessments] == [1]
     assert result["report"]["questions_attempted"] == 1
+
+
+def test_minutes_remaining_handles_naive_and_aware_created_at():
+    aware = type(
+        "S",
+        (),
+        {
+            "duration_minutes": 30,
+            "created_at": datetime.now(UTC) - timedelta(minutes=5),
+        },
+    )()
+    naive = type(
+        "S",
+        (),
+        {
+            "duration_minutes": 30,
+            "created_at": datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=5),
+        },
+    )()
+    assert 24 <= _minutes_remaining(aware) <= 26
+    assert 24 <= _minutes_remaining(naive) <= 26
+    assert not _session_timed_out(aware)
+    fresh = type(
+        "S",
+        (),
+        {"duration_minutes": 60, "created_at": datetime.now(UTC)},
+    )()
+    assert _minutes_remaining(fresh) > 55
+    assert not _session_timed_out(fresh)
+    expired = type(
+        "S",
+        (),
+        {
+            "duration_minutes": 15,
+            "created_at": datetime.now(UTC) - timedelta(minutes=20),
+        },
+    )()
+    assert _session_timed_out(expired)
+    assert _as_utc(naive.created_at).tzinfo is not None
+
+
+@pytest.mark.asyncio
+async def test_start_does_not_reuse_expired_empty_session(monkeypatch, clean_users_table):
+    """Abandoned Q1 past the deadline must not be returned as a 'new' assessment."""
+    user, token, track_id, _calls = await _seed(monkeypatch)
+    _capture(monkeypatch)
+    old_id = await _start(token, track_id)
+
+    async with SessionFactory() as db:
+        session = await db.get(InterviewSession, uuid.UUID(old_id))
+        assert session is not None
+        session.created_at = datetime.now(UTC) - timedelta(hours=3)
+        session.duration_minutes = 30
+        await db.commit()
+        assert _session_timed_out(session)
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        again = await client.post(
+            f"/api/v1/tracks/{track_id}/sessions",
+            json={"mode": "strict", "duration_minutes": 30},
+            cookies={"ic_access": token},
+        )
+        assert again.status_code == 201
+        body = again.json()
+        new_id = body["session"]["id"]
+        assert new_id != old_id
+        created = datetime.fromisoformat(body["session"]["created_at"])
+        assert created.tzinfo is not None
+        # Fresh timer — not immediately expired.
+        assert (datetime.now(UTC) - created.astimezone(UTC)).total_seconds() < 120
+
+        answered = await client.post(
+            f"/api/v1/sessions/{new_id}/turns",
+            json={"answer": "A deadline is when the timer hits zero."},
+            cookies={"ic_access": token},
+        )
+        assert answered.status_code == 200
+        assert "deadline" not in str(answered.json()).lower()
+
+    async with SessionFactory() as db:
+        old = await db.get(InterviewSession, uuid.UUID(old_id))
+        new = await db.get(InterviewSession, uuid.UUID(new_id))
+        assert old is not None and old.status == "aborted"
+        assert new is not None and new.status == "in_progress"
+        assert not _session_timed_out(new)

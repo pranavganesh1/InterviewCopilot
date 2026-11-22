@@ -30,17 +30,30 @@ export function classifyQuestion(area: string, question: string): QuestionKind {
   return "text";
 }
 
+export type DomainKindHint = {
+  uses_code?: boolean | null;
+  allowed_types?: string[] | null;
+};
+
 /**
  * Authoritative resolution (M9): the backend persists question_type from the
- * interviewer/bank. The keyword heuristic is only a fallback for legacy
+ * interviewer/bank. Domain profile (uses_code / allowed_types) constrains
+ * heuristics. Keyword detection is only a last-resort fallback for legacy
  * turns created before question_type existed.
  */
-export function resolveKind(turn: {
-  question_type?: string | null;
-  question_area?: string | null;
-  question: string;
-}): QuestionKind {
-  if (turn.question_type === "coding") return "coding";
+export function resolveKind(
+  turn: {
+    question_type?: string | null;
+    question_area?: string | null;
+    question: string;
+  },
+  domain?: DomainKindHint | null,
+): QuestionKind {
+  if (turn.question_type === "coding") {
+    // Explicit coding type from the bank/agent wins unless the domain forbids code.
+    if (domain && domain.uses_code === false) return "text";
+    return "coding";
+  }
   if (
     turn.question_type === "conceptual" ||
     turn.question_type === "behavioral" ||
@@ -48,6 +61,16 @@ export function resolveKind(turn: {
     turn.question_type === "code_read" ||
     turn.question_type === "case_study" ||
     turn.question_type === "numeric"
+  ) {
+    return "text";
+  }
+  if (domain && domain.uses_code === false) return "text";
+  if (
+    domain &&
+    Array.isArray(domain.allowed_types) &&
+    domain.allowed_types.length > 0 &&
+    !domain.allowed_types.includes("coding") &&
+    !domain.allowed_types.includes("code_read")
   ) {
     return "text";
   }

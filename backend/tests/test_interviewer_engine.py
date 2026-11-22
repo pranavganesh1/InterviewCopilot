@@ -6,11 +6,28 @@ from pydantic import ValidationError
 from app.agents.interviewer import (
     AnswerEvaluation,
     TurnDecision,
+    _fallback_unique_question,
+    _should_use_array_concept_bank,
     apply_local_policy,
     decision_violation,
     evaluate_answer,
+    force_unique_decision,
     run_interviewer_turn,
     system_prompt_for_mode,
+)
+
+# Wording that belongs to _ARRAY_CONCEPT_BANK (DSA leak detector for Fix 1).
+_DSA_LEAK_MARKERS = (
+    "random access",
+    "dynamic array",
+    "two-pointer",
+    "sliding-window",
+    "prefix sums",
+    "kadane",
+    "dutch national flag",
+    "row-major order",
+    "subarray with sum",
+    "maximum subarray",
 )
 
 
@@ -54,6 +71,57 @@ def test_follow_up_hard_limit_coerced_by_local_policy():
     assert done.decision == "complete"
 
 
+def test_good_coverage_follow_up_advances_subject():
+    d = _decision(decision="follow_up")
+    d = d.model_copy(
+        update={
+            "evaluation": d.evaluation.model_copy(update={"coverage": "good", "strengths": ["ok"]})
+        }
+    )
+    fixed = apply_local_policy(
+        d,
+        {
+            "turns_in_current_area": 1,
+            "current_area": "Python",
+            "remaining_areas": ["Data Structures"],
+            "question_plan_slot": {"topic": "Data Structures", "objective": "lists"},
+        },
+    )
+    assert fixed.decision == "next_area"
+    assert fixed.question_area == "Data Structures"
+
+
+def test_topic_budget_forces_leave_current_area():
+    d = _decision(decision="next_area", question_area="Hashmaps")
+    fixed = apply_local_policy(
+        d,
+        {
+            "turns_in_current_area": 5,
+            "current_area": "Hashmaps",
+            "topic_budget": 5,
+            "remaining_areas": ["Big-O"],
+            "question_plan_slot": {"topic": "Big-O", "objective": "complexity"},
+        },
+    )
+    assert fixed.decision == "next_area"
+    assert fixed.question_area == "Big-O"
+
+
+def test_same_area_next_area_advances_when_plan_moved():
+    d = _decision(decision="next_area", question_area="Hashmaps")
+    fixed = apply_local_policy(
+        d,
+        {
+            "turns_in_current_area": 2,
+            "current_area": "Hashmaps",
+            "topic_budget": 4,
+            "remaining_areas": ["Trees"],
+            "question_plan_slot": {"topic": "Trees", "objective": "traversals"},
+        },
+    )
+    assert fixed.question_area == "Trees"
+
+
 def test_repeat_question_detected():
     d = _decision(next_question="Explain hashmaps and collisions.")
     violation = decision_violation(
@@ -88,7 +156,7 @@ async def test_run_interviewer_turn_repairs_then_forces_unique(monkeypatch):
 
     calls: list[dict] = []
 
-    async def fake_structured(client, *, system, user_payload, schema, **_k):
+    async def fake_structured(client=None, *, system, user_payload, schema, **_k):
         calls.append(user_payload)
         # Always return a duplicate question so repairs keep failing.
         return TurnDecision.model_validate(
@@ -112,8 +180,8 @@ async def test_run_interviewer_turn_repairs_then_forces_unique(monkeypatch):
             "questions_remaining": 10,
         }
     )
-    # No last_answer → evaluator skipped; initial + 2 repairs on QuestionMove.
-    assert len(calls) == 3
+    # No last_answer → evaluator skipped; initial + 1 repair, then force_unique.
+    assert len(calls) == 2
     assert all(c.get("mode") == "strict" for c in calls)
     assert not is_duplicate_question(decision.next_question, ["Same question"])
     assert decision.next_question.strip()
@@ -131,7 +199,7 @@ async def test_run_interviewer_turn_repairs_then_forces_unique(monkeypatch):
 async def test_evaluate_answer_labels(monkeypatch, stub_coverage, expected):
     from app.agents import interviewer as mod
 
-    async def fake_structured(client, *, system, user_payload, schema, **_k):
+    async def fake_structured(client=None, *, system, user_payload, schema, **_k):
         assert schema is AnswerEvaluation
         return AnswerEvaluation(
             coverage=stub_coverage,
@@ -159,7 +227,7 @@ async def test_empty_answer_skips_evaluator(monkeypatch):
     eval_calls = 0
     q_calls = 0
 
-    async def fake_structured(client, *, system, user_payload, schema, **_k):
+    async def fake_structured(client=None, *, system, user_payload, schema, **_k):
         nonlocal eval_calls, q_calls
         if schema is AnswerEvaluation:
             eval_calls += 1
@@ -190,3 +258,126 @@ async def test_empty_answer_skips_evaluator(monkeypatch):
     assert isinstance(decision, TurnDecision)
     assert decision.evaluation.coverage == "none"
     assert decision.next_question == "Explain hashmaps."
+
+
+def _assert_no_dsa_leak(question: str) -> None:
+    lowered = question.lower()
+    for marker in _DSA_LEAK_MARKERS:
+        assert marker not in lowered, (marker, question)
+
+
+@pytest.mark.parametrize(
+    ("subject", "profile"),
+    [
+        (
+            "Cell Biology",
+            {
+                "category": "science",
+                "uses_code": False,
+                "uses_math": False,
+                "risk_level": "standard",
+                "style_hint": "Ask one verifiable biology fact.",
+                "allowed_types": ["conceptual", "mcq"],
+            },
+        ),
+        (
+            "Corporate Finance",
+            {
+                "category": "other",
+                "uses_code": False,
+                "uses_math": True,
+                "risk_level": "standard",
+                "style_hint": "Ask one concrete finance question.",
+                "allowed_types": ["conceptual", "mcq", "numeric"],
+            },
+        ),
+        (
+            "Classical Mechanics",
+            {
+                "category": "science",
+                "uses_code": False,
+                "uses_math": True,
+                "risk_level": "standard",
+                "style_hint": "Ask one physics reasoning question.",
+                "allowed_types": ["conceptual", "mcq", "numeric"],
+            },
+        ),
+    ],
+)
+def test_empty_remaining_non_programming_skips_array_concept_bank(subject, profile):
+    """Fix 1: empty remaining_areas must not unlock DSA/Array fallbacks."""
+    payload = {
+        "programming_track": False,
+        "domain_profile": profile,
+        "asked_questions": [f"What is one foundational idea in {subject}?"],
+        "remaining_areas": [],
+        "covered_areas": [subject],
+        "current_area": subject,
+        "questions_remaining": 8,
+    }
+    assert _should_use_array_concept_bank(payload, subject) is False
+    question, area = _fallback_unique_question(payload)
+    assert area == subject
+    _assert_no_dsa_leak(question)
+    assert subject.lower() in question.lower() or "interview focus" in question.lower()
+
+    decision = force_unique_decision(
+        TurnDecision.model_validate(
+            {
+                "evaluation": {"coverage": "partial", "strengths": [], "gaps": []},
+                "decision": "next_area",
+                "next_question": "Please restate the same idea about arrays in memory.",
+                "question_area": subject,
+            }
+        ),
+        payload,
+    )
+    assert decision.decision != "complete"
+    _assert_no_dsa_leak(decision.next_question)
+
+
+def test_programming_arrays_topic_keeps_array_concept_bank():
+    payload = {
+        "programming_track": True,
+        "domain_profile": {
+            "category": "programming",
+            "uses_code": True,
+            "uses_math": True,
+            "risk_level": "standard",
+            "style_hint": "Ask about behavior or trade-offs.",
+            "allowed_types": ["conceptual", "mcq", "coding"],
+        },
+        "asked_questions": [
+            "Can you explain what an array is and how elements are stored?"
+        ],
+        "remaining_areas": [],
+        "covered_areas": ["Arrays"],
+        "current_area": "Arrays",
+        "questions_remaining": 10,
+    }
+    assert _should_use_array_concept_bank(payload, "Arrays") is True
+    question, area = _fallback_unique_question(payload)
+    assert area == "Arrays"
+    assert any(marker in question.lower() for marker in _DSA_LEAK_MARKERS)
+
+
+def test_antenna_arrays_without_programming_skips_dsa_bank():
+    """Substring 'array' alone must not open the DSA bank on engineering tracks."""
+    payload = {
+        "programming_track": False,
+        "domain_profile": {
+            "category": "engineering",
+            "uses_code": False,
+            "uses_math": True,
+            "risk_level": "standard",
+            "style_hint": "Ask one antenna fact.",
+            "allowed_types": ["conceptual", "mcq", "numeric"],
+        },
+        "asked_questions": ["What is a half-wave dipole?"],
+        "remaining_areas": [],
+        "covered_areas": ["Antenna arrays"],
+        "questions_remaining": 5,
+    }
+    assert _should_use_array_concept_bank(payload, "Antenna arrays") is False
+    question, _area = _fallback_unique_question(payload)
+    _assert_no_dsa_leak(question)

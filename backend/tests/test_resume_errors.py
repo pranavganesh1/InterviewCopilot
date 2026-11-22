@@ -11,10 +11,14 @@ from pypdf import PdfWriter
 
 from app.core.security import create_access_token
 from app.db.sqlalchemy import SessionFactory
-from app.gateway.llm import LLMGatewayError
+from app.gateway.llm import LLMCause, LLMGatewayError
 from app.main import create_app
 from app.models.user import User
-from app.services.resume_service import MAX_RESUME_BYTES, ResumeUploadError
+from app.services.resume_service import (
+    MAX_RESUME_BYTES,
+    ResumeExtraction,
+    ResumeUploadError,
+)
 
 
 def make_pdf(text: str) -> bytes:
@@ -254,7 +258,7 @@ async def test_model_quota_503(
     store_calls, llm_calls = stub_storage_and_llm
 
     async def quota(*_a, **_k):
-        raise LLMGatewayError("quota")
+        raise LLMGatewayError("quota", cause=LLMCause.overloaded)
 
     monkeypatch.setattr(resume_svc, "structured_completion", quota)
     _user, token = await _user_token()
@@ -269,6 +273,58 @@ async def test_model_quota_503(
     assert "retry" in _detail(resp)["message"].lower()
     assert store_calls  # storage happens before model
     assert llm_calls == []
+
+
+@pytest.mark.asyncio
+async def test_schema_rejected_returns_422_not_busy(
+    stub_storage_and_llm, readable_pdf_text, clean_users_table, monkeypatch
+):
+    import app.services.resume_service as resume_svc
+
+    async def bad_structure(*_a, **_k):
+        raise LLMGatewayError(
+            "structured output invalid after repair retry: ValidationError",
+            cause=LLMCause.schema_rejected,
+        )
+
+    monkeypatch.setattr(resume_svc, "structured_completion", bad_structure)
+    _user, token = await _user_token()
+    app = create_app()
+    async with _client(app) as client:
+        resp = await client.post(
+            "/api/v1/vault/resume",
+            files={"file": ("ok.pdf", make_pdf("ok"), "application/pdf")},
+            cookies={"ic_access": token},
+        )
+    assert resp.status_code == 422
+    detail = _detail(resp)
+    assert detail["code"] == "resume_structure_failed"
+    assert "busy" not in detail["message"].lower()
+    assert "structure" in detail["message"].lower()
+
+
+def test_resume_extraction_coerces_category_and_detail_types():
+    parsed = ResumeExtraction.model_validate(
+        {
+            "items": [
+                {
+                    "category": "experience",
+                    "title": "Backend Intern",
+                    "details": {"years": 2, "stack": ["Python", "FastAPI"]},
+                },
+                {
+                    "category": "technology",
+                    "title": "Python",
+                    "details": None,
+                },
+            ]
+        }
+    )
+    assert parsed.items[0].category == "other"
+    assert parsed.items[0].details["years"] == "2"
+    assert parsed.items[0].details["stack"] == '["Python","FastAPI"]'
+    assert parsed.items[1].category == "skill"
+    assert parsed.items[1].details == {}
 
 
 @pytest.mark.asyncio
@@ -323,7 +379,7 @@ async def test_unexpected_500_has_correlation_id_no_internals(
     async def boom(*_a, **_k):
         raise RuntimeError("secret db password=hunter2 stacktrace")
 
-    monkeypatch.setattr(resume_svc, "create_items", boom)
+    monkeypatch.setattr(resume_svc, "sync_resume_items", boom)
     _user, token = await _user_token()
     app = create_app()
     async with _client(app) as client:

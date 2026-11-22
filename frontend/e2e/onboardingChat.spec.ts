@@ -170,7 +170,7 @@ test("chat failure shows friendly retry and preserves typed message", async ({
   );
   await expect(page.getByTestId("onboarding-chat-retry")).toBeVisible();
   await expect(page.getByTestId("message-not-delivered")).toBeVisible();
-  await expect(page.getByTestId("toast-error")).toBeVisible();
+  await expect(page.getByTestId("toast-error")).toHaveCount(0);
   await expect(input).toHaveValue("I want to practice Python");
   expect(chatCalls).toBe(1);
 
@@ -641,10 +641,12 @@ test("slow reply shows still thinking then timeout Not delivered", async ({
   await expect(page.getByTestId("typing-indicator")).toBeVisible();
   await page.clock.fastForward(8000);
   await expect(page.getByTestId("still-thinking")).toBeVisible();
-  await page.clock.fastForward(22000);
+  // Client timeout is 55s; release before abort so a real 503 is observed.
+  await page.clock.fastForward(20000);
   release();
   await expect(page.getByTestId("message-not-delivered")).toBeVisible();
-  await expect(page.getByTestId("toast-error")).toBeVisible();
+  await expect(page.getByTestId("onboarding-chat-error")).toBeVisible();
+  await expect(page.getByTestId("toast-error")).toHaveCount(0);
 });
 
 test("empty reply shows fallback bubble", async ({ page }) => {
@@ -733,7 +735,7 @@ test("offline and online show connection toasts", async ({ page }) => {
   );
 });
 
-test("trailing unanswered user message shows recovery toast and Retry", async ({
+test("trailing unanswered user message shows inline recovery, not toast", async ({
   page,
 }) => {
   let chatCalls = 0;
@@ -771,11 +773,11 @@ test("trailing unanswered user message shows recovery toast and Retry", async ({
     });
   });
   await page.goto("/onboarding");
-  await expect(page.getByTestId("toast-error")).toContainText(
+  await expect(page.getByTestId("toast-error")).toHaveCount(0);
+  await expect(page.getByTestId("message-not-delivered")).toBeVisible();
+  await expect(page.getByTestId("onboarding-chat-error")).toContainText(
     "Last reply didn't arrive",
   );
-  await expect(page.getByTestId("message-not-delivered")).toBeVisible();
-  await expect(page.getByTestId("onboarding-chat-error")).toBeVisible();
   await page.getByTestId("onboarding-chat-retry").click();
   await expect.poll(() => chatCalls).toBe(1);
   await expect(page.getByTestId("onboarding-messages")).toContainText(
@@ -838,7 +840,7 @@ test("busy 503 shows countdown, disables Retry, auto-retries once", async ({
   await page.getByTestId("onboarding-chat-input").fill("Tell me about Python");
   await page.getByTestId("onboarding-chat-send").click();
   await expect(page.getByTestId("onboarding-chat-error")).toContainText(
-    "The AI is busy right now",
+    "Temporary request limit",
   );
   await expect(page.getByTestId("retry-countdown")).toBeVisible();
   await expect(page.getByTestId("onboarding-chat-retry")).toBeDisabled();

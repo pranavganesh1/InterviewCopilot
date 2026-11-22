@@ -36,8 +36,11 @@ type Props = {
   showGoalMenu: boolean;
   goalsReady: boolean;
   pending?: boolean;
+  confirmPending?: boolean;
+  confirmError?: string | null;
   onSaveInterests: (interests: string[]) => void;
   onSaveDetails: (patch: Partial<PreparationPreferences>) => void;
+  onConfirmGoals: () => void;
   onConfirmAndStart: () => void;
 };
 
@@ -159,8 +162,11 @@ export default function GoalDiscovery({
   showGoalMenu,
   goalsReady,
   pending,
+  confirmPending,
+  confirmError,
   onSaveInterests,
   onSaveDetails,
+  onConfirmGoals,
   onConfirmAndStart,
 }: Props) {
   const selected = preferences?.interests ?? [];
@@ -581,10 +587,30 @@ export default function GoalDiscovery({
               <li key={b}>{b}</li>
             ))}
           </ul>
+          {confirmError && (
+            <p
+              role="alert"
+              data-testid="confirm-goals-error"
+              className="mt-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800"
+            >
+              {confirmError}
+            </p>
+          )}
+          {!preferences?.confirmed && (
+            <button
+              type="button"
+              data-testid="confirm-goals"
+              disabled={pending || confirmPending}
+              onClick={onConfirmGoals}
+              className="mt-3 w-full rounded-md border border-emerald-600 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-40"
+            >
+              {confirmPending ? "Confirming…" : "Confirm goals"}
+            </button>
+          )}
           <button
             type="button"
             data-testid="start-preparing"
-            disabled={pending}
+            disabled={pending || confirmPending}
             onClick={onConfirmAndStart}
             className="mt-3 w-full rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-strong disabled:opacity-40"
           >
@@ -592,7 +618,7 @@ export default function GoalDiscovery({
           </button>
           <button
             type="button"
-            disabled={pending}
+            disabled={pending || confirmPending}
             onClick={() => {
               setDraft(selected);
               setEditingFocus(true);

@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 
-from app.db.mongo import get_mongo_client
+from app.db.mongo import get_mongo_db
 from app.db.sqlalchemy import SessionFactory
 from app.models.user import User
 from app.models.vault import VaultItem
@@ -36,7 +36,7 @@ async def test_vault_item_roundtrip(clean_users_table):
 
 @pytest.mark.asyncio
 async def test_conversation_append_and_read():
-    mongo_db = get_mongo_client()["interviewcopilot_test"]
+    mongo_db = get_mongo_db()
     user_id = str(uuid.uuid4())
     await mongo_db.onboarding_conversations.delete_many({"user_id": user_id})
     await append_message(mongo_db, user_id, "user", "I built a robot")

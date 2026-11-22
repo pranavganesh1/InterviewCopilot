@@ -10,11 +10,22 @@ _existing = os.environ.get("DATABASE_URL", "")
 if not _existing.rstrip("/").endswith("interviewcopilot_test"):
     os.environ["DATABASE_URL"] = _TEST_DB_URL
 
+# Mongo: force a dedicated test DB name. Never allow the application DB
+# ``interviewcopilot`` (same host may hold both DBs).
+_TEST_MONGO_DB = "interviewcopilot_test"
+_existing_mongo = os.environ.get("MONGO_DB", "")
+if _existing_mongo == "interviewcopilot" or not _existing_mongo.endswith("_test"):
+    os.environ["MONGO_DB"] = _TEST_MONGO_DB
+
 import pytest  # noqa: E402
 from sqlalchemy import delete  # noqa: E402
 
 from app.agents import question_plan  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
 from app.db.sqlalchemy import SessionFactory  # noqa: E402
+
+# Settings may have been imported elsewhere; re-read forced test env vars.
+get_settings.cache_clear()
 
 
 @pytest.fixture(autouse=True)
@@ -24,9 +35,12 @@ def _stub_question_plan_llm(monkeypatch):
     LLM path is covered by dedicated mocked tests in test_question_plan.py.
     """
 
-    async def _stub(brief_content, n):
+    async def _stub(brief_content, n, **kwargs):
         return question_plan.deterministic_question_plan(
-            brief_content, n, seed=(brief_content or {}).get("plan_seed")
+            brief_content,
+            n,
+            seed=(brief_content or {}).get("plan_seed"),
+            duration_minutes=kwargs.get("duration_minutes"),
         )
 
     monkeypatch.setattr(

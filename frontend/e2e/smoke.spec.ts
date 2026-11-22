@@ -181,7 +181,7 @@ test("interview page renders question and submits answer", async ({ page }) => {
   await expect(page.getByText("Explain hash collisions.")).toBeVisible();
 
   await page.fill("textarea", "Buckets store multiple entries...");
-  await page.getByRole("button", { name: "Submit Answer" }).click();
+  await page.getByTestId("submit-answer").click();
 
   await expect(page.getByTestId("evaluation-feedback")).toBeVisible();
   await expect(page.getByText("partial")).toBeVisible();

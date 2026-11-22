@@ -7,11 +7,45 @@ question. History from other sessions is excluded until the pool runs out.
 from __future__ import annotations
 
 import random
+import re
 
 from app.agents.question_dedupe import fingerprint_tuple, is_duplicate_question
 from app.agents.question_quality import prepare_served_question
 
 POOL_BUFFER = 5
+
+
+def normalize_area_key(raw: str | None) -> str:
+    """Casefold + collapse whitespace/punct for conservative topic matching."""
+    text = (raw or "").strip().lower()
+    text = re.sub(r"[-_/]+", " ", text)
+    text = re.sub(r"[^a-z0-9 +]", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def areas_soft_match(planned: str | None, area: str | None) -> bool:
+    """Exact → normalized equality → limited safe containment. Never invent topics."""
+    raw_a = (planned or "").strip()
+    raw_b = (area or "").strip()
+    if not raw_a or not raw_b:
+        return False
+    if raw_a.lower() == raw_b.lower():
+        return True
+    a = normalize_area_key(raw_a)
+    b = normalize_area_key(raw_b)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    short, long = (a, b) if len(a) <= len(b) else (b, a)
+    # Avoid tiny/broad tokens ("cell", "data") matching unrelated phrases.
+    if len(short) < 6:
+        return False
+    if " " in short:
+        return short in long
+    # Single token: whole-token match only (not "finance" ⊆ "financial…").
+    return short in long.split()
 
 
 def needs_pool_topup(unseen: int, session_questions: int, buffer: int = POOL_BUFFER) -> bool:
@@ -62,9 +96,17 @@ def pick_pool_question(
     known = {fp for fp in (fingerprints or []) if len(fp) >= 4}
     usable = [entry for entry in entries if not _matches(entry, asked, known)]
     fresh = [entry for entry in usable if not _matches(entry, history, known)]
-    avoided = {(area or "").strip() for area in (avoid_areas or []) if (area or "").strip()}
+    avoided = {
+        normalize_area_key(area)
+        for area in (avoid_areas or [])
+        if normalize_area_key(area)
+    }
     if avoided:
-        steered = [entry for entry in fresh if (entry.get("area") or "") not in avoided]
+        steered = [
+            entry
+            for entry in fresh
+            if normalize_area_key(entry.get("area")) not in avoided
+        ]
         if steered:
             fresh = steered
     chosen = _best(fresh, seed, slot, covered) if fresh else None
@@ -95,10 +137,36 @@ def _best(entries: list[dict], seed: str, slot: dict, covered: set[str]) -> dict
         return None
     difficulty = slot.get("difficulty")
     fmt = slot.get("format")
+    planned = slot.get("topic") or ""
     tier = [entry for entry in entries if not difficulty or entry.get("difficulty") == difficulty]
     typed = [entry for entry in tier if not fmt or entry.get("type") == fmt]
     pool = typed or tier or entries
-    uncovered = [entry for entry in pool if (entry.get("area") or "") not in covered]
+    if (planned or "").strip():
+        planned_key = normalize_area_key(planned)
+        exact = [
+            entry
+            for entry in pool
+            if (entry.get("area") or "").strip().lower() == planned.strip().lower()
+        ]
+        if exact:
+            pool = exact
+        else:
+            soft = [
+                entry
+                for entry in pool
+                if areas_soft_match(planned, entry.get("area"))
+            ]
+            if soft:
+                pool = soft
+            elif planned_key:
+                # No safe topic hit — keep full eligible pool (do not invent).
+                pass
+    covered_keys = {normalize_area_key(a) for a in covered if normalize_area_key(a)}
+    uncovered = [
+        entry
+        for entry in pool
+        if normalize_area_key(entry.get("area")) not in covered_keys
+    ]
     choices = list(uncovered or pool)
     random.Random(seed).shuffle(choices)
     return choices[0]

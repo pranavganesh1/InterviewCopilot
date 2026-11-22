@@ -227,7 +227,7 @@ def test_fifteen_array_questions_have_distinct_concepts():
 async def test_run_interviewer_turn_falls_back_instead_of_raising(monkeypatch):
     from app.agents import interviewer as mod
 
-    async def always_dup(client, *, system, user_payload, schema, **_k):
+    async def always_dup(client=None, *, system, user_payload, schema, **_k):
         return TurnDecision.model_validate(
             {
                 "evaluation": {"coverage": "none", "strengths": [], "gaps": []},
@@ -269,7 +269,7 @@ async def test_run_interviewer_rejects_semantic_paraphrase(monkeypatch):
         "and resizing behavior."
     )
 
-    async def always_paraphrase(client, *, system, user_payload, schema, **_k):
+    async def always_paraphrase(client=None, *, system, user_payload, schema, **_k):
         return TurnDecision.model_validate(
             {
                 "evaluation": {"coverage": "partial", "strengths": [], "gaps": []},

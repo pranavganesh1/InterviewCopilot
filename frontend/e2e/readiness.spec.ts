@@ -83,6 +83,88 @@ test.beforeEach(async ({ page }) => {
     }),
   );
   await page.route("**/api/v1/me/open-sessions", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/v1/me/career-intelligence", (route) =>
+    route.fulfill({
+      json: {
+        disclaimer: "Based on interview evidence — not a hiring prediction.",
+        career_readiness: {
+          level: "developing",
+          summary: "Building evidence across completed interviews.",
+          target_role: "Backend Intern",
+          evidence_index: 42,
+          evidence_method: "demonstrated concept coverage",
+        },
+        strengths: [{ concept: "SQL joins", last_coverage: "good", times_asked: 2 }],
+        improvement_areas: [
+          { concept: "Indexing", last_coverage: "none", times_asked: 1 },
+        ],
+        developing: [{ concept: "Transactions", last_coverage: "partial", times_asked: 1 }],
+        not_yet_assessed: ["Caching"],
+        progress: {
+          available: false,
+          reason: "Need at least two completed interviews for comparison.",
+        },
+        recommendations: [
+          {
+            topic: "Indexing",
+            why: "Weak coverage in the last interview.",
+            evidence: "last_coverage=none",
+            practice: "Explain B-tree indexes with an example.",
+            track_subject: "Systems",
+          },
+        ],
+        roadmap: [
+          {
+            order: 1,
+            topic: "Indexing",
+            reason: "Demonstrated gap",
+            activity: "Practice index selection",
+            priority: "high",
+          },
+        ],
+        next_actions: [
+          {
+            kind: "practice_weak",
+            title: "Practice indexing",
+            reason: "Recent weak coverage",
+            action_label: "Practice weak areas",
+            href: "/",
+          },
+        ],
+        knowledge_gaps: {
+          demonstrated_weaknesses: [
+            { concept: "Indexing", status: "demonstrated_weakness" },
+          ],
+          needs_improvement: [
+            { concept: "Transactions", status: "needs_improvement" },
+          ],
+          not_assessed: ["Caching"],
+          claimed_skills_without_interview: ["Kubernetes"],
+          unverified_claims: ["Kubernetes"],
+          policy: {
+            unknown_is_not_weak: true,
+            claims_are_not_proof: true,
+            note: "Not-assessed and unverified claims are not weaknesses.",
+          },
+        },
+        project_intelligence: {
+          projects: [
+            {
+              name: "Campus nav",
+              technologies: ["FastAPI", "Postgres"],
+              contribution: "Backend routing",
+              needs_clarification: ["Clarify ownership of the A/B tests"],
+              discussion_ready: false,
+              evidence_kind: "claim",
+            },
+          ],
+          internships: [],
+          note: "Project details are candidate claims until defended in an interview.",
+        },
+        project_defense: null,
+      },
+    }),
+  );
   await page.route("**/api/v1/tracks", (route) =>
     route.fulfill({
       json: [
@@ -226,6 +308,25 @@ test("Practice these claims opens start popup with resume on", async ({ page }) 
   const seeds = posted && posted.claim_seeds;
   expect(Array.isArray(seeds)).toBe(true);
   expect((seeds as unknown[]).length).toBeGreaterThan(0);
+});
+
+test("career intelligence shows distinct competency categories", async ({ page }) => {
+  await page.route("**/api/v1/vault/readiness", (route) =>
+    route.fulfill({ json: READY }),
+  );
+  await page.goto("/readiness");
+  await expect(page.getByTestId("career-intelligence")).toBeVisible();
+  await expect(page.getByTestId("competency-overview")).toBeVisible();
+  await expect(page.getByTestId("competency-strengths")).toContainText("SQL joins");
+  await expect(page.getByTestId("competency-improve")).toContainText("Indexing");
+  await expect(page.getByTestId("competency-partial")).toContainText("Transactions");
+  await expect(page.getByTestId("competency-not-assessed")).toContainText("Caching");
+  await expect(page.getByTestId("competency-claims")).toContainText("Kubernetes");
+  await expect(page.getByTestId("competency-policy")).toContainText(
+    "not weaknesses",
+  );
+  await expect(page.getByTestId("project-prep-panel")).toContainText("Campus nav");
+  await expect(page.getByTestId("career-preparation-loop")).toBeVisible();
 });
 
 test("empty state", async ({ page }) => {

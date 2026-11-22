@@ -227,3 +227,116 @@ def weak_concept_names(summary: dict, *, focus: bool) -> list[str]:
     if focus:
         return weak + improving
     return weak[:2]
+
+
+def prioritize_remaining_areas(
+    remaining: list[str],
+    *,
+    weak_names: list[str] | None = None,
+    session_weak_areas: list[str] | None = None,
+) -> list[str]:
+    """Stable reorder so adaptive practice hits weak subjects first.
+
+    Does not invent topics — only reorders the existing remaining pool.
+    Exact / casefold matches only; never cross-track injection.
+    """
+    if not remaining:
+        return []
+    weak_keys = {
+        normalize_concept(name)
+        for name in (weak_names or []) + (session_weak_areas or [])
+        if normalize_concept(name)
+    }
+    if not weak_keys:
+        return list(remaining)
+
+    preferred: list[str] = []
+    rest: list[str] = []
+    seen: set[str] = set()
+    for area in remaining:
+        text = (area or "").strip()
+        if not text:
+            continue
+        key = normalize_concept(text)
+        if key in seen:
+            continue
+        seen.add(key)
+        if key in weak_keys or any(
+            key and (key in wk or wk in key) for wk in weak_keys if len(wk) >= 4
+        ):
+            preferred.append(text)
+        else:
+            rest.append(text)
+    return preferred + rest
+
+
+_DIFFICULTY_ORDER = ("foundational", "intermediate", "advanced")
+
+
+def difficulty_nudge_for_coverage(coverage: str | None) -> str | None:
+    """Map last-answer coverage to a next-slot difficulty hint."""
+    cov = (coverage or "").strip().lower()
+    if cov == "none":
+        return "foundational"
+    if cov == "partial":
+        return "foundational"
+    if cov == "good":
+        return "intermediate"
+    if cov == "excellent":
+        return "advanced"
+    return None
+
+
+def gradual_difficulty(current: str | None, target: str | None) -> str | None:
+    """Move at most one difficulty step toward target (no large jumps)."""
+    if not target:
+        return None
+    want = target.strip().lower()
+    if want not in _DIFFICULTY_ORDER:
+        return want
+    cur = (current or "").strip().lower()
+    if cur not in _DIFFICULTY_ORDER:
+        # Unknown current: land on intermediate as a safe midpoint toward extremes.
+        if want == "intermediate":
+            return "intermediate"
+        return "intermediate"
+    ci = _DIFFICULTY_ORDER.index(cur)
+    ti = _DIFFICULTY_ORDER.index(want)
+    if ti == ci:
+        return None
+    if ti > ci:
+        return _DIFFICULTY_ORDER[ci + 1]
+    return _DIFFICULTY_ORDER[ci - 1]
+
+
+def apply_plan_difficulty_nudge(
+    plan: list | None,
+    *,
+    questions_asked: int,
+    coverage: str | None,
+) -> bool:
+    """Rewrite the next planned slot difficulty from demonstrated coverage.
+
+    Changes are gradual (one step). Returns True when a slot was mutated.
+    Never invents topics or extends the plan.
+    """
+    if not isinstance(plan, list):
+        return False
+    nudge = difficulty_nudge_for_coverage(coverage)
+    if not nudge:
+        return False
+    # Next open slot index is questions_asked (current answered count after persist).
+    idx = int(questions_asked)
+    if idx < 0 or idx >= len(plan):
+        return False
+    slot = plan[idx]
+    if not isinstance(slot, dict):
+        return False
+    current = (slot.get("difficulty") or "").strip().lower()
+    applied = gradual_difficulty(current, nudge)
+    if not applied or current == applied:
+        return False
+    slot = dict(slot)
+    slot["difficulty"] = applied
+    plan[idx] = slot
+    return True

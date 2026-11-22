@@ -11,13 +11,24 @@ from app.agents.onboarding import (
     build_onboarding_graph,
     classify_duplicate_answer,
     classify_practise_intent,
+    classify_topic_focus,
+    coach_action_requires_deterministic_reply,
     compute_profile_gaps,
+    continue_topic_reply,
+    decide_conversational_action,
     derive_phase,
     ensure_nonempty_reply,
+    extract_pending_topic,
+    infer_question_intent,
     is_ack_only,
     practise_followup_reply,
     recent_duplicate_prompt,
+    render_coach_action_reply,
+    resolve_topic_confirmation,
+    suggested_next_topics,
+    topic_focus_reply,
     vault_is_ready,
+    wants_topic_switch,
 )
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -108,28 +119,12 @@ def _project_titles(summary: list[dict]) -> list[str]:
     return project_titles(summary)
 
 
-def _message_signals_skip(message: str) -> bool:
-    text = (message or "").lower()
-    return any(
-        p in text
-        for p in (
-            "skip",
-            "not sure",
-            "don't know",
-            "dont know",
-            "i'm not sure",
-            "im not sure",
-            "move on",
-            "later",
-            "doesn't apply",
-            "does not apply",
-            "not applicable",
-            "n/a",
-            "no degree",
-            "no project",
-            "no experience",
-        )
-    )
+def _message_signals_skip(message: str, coach_context: dict | None = None) -> bool:
+    """True only when context says the candidate is leaving the topic (not bare IDK)."""
+    action = decide_conversational_action(
+        message, coach_context=coach_context or {}, mode="guided"
+    )["action"]
+    return action in {"change_topic", "pause"}
 
 
 async def _apply_duplicate_decision(
@@ -251,7 +246,7 @@ async def chat(
             elapsed_ms=int((time.monotonic() - t0) * 1000),
         )
         bg = infer_candidate_background(summary)
-        if _message_signals_skip(message):
+        if _message_signals_skip(message, coach_ctx):
             coach_ctx = await conversation_store.merge_coach_context(
                 mongo_db,
                 uid,
@@ -282,6 +277,7 @@ async def chat(
         dup_decision = (
             classify_duplicate_answer(message) if recent_duplicate_prompt(history) else None
         )
+        focus_patch: dict = {}
         if dup_decision:
             path = "duplicate_resolve"
             if duplicates:
@@ -297,6 +293,7 @@ async def chat(
                     f"{confirm} {follow}",
                     vault_summary=summary,
                     duplicates_resolved=dup_decision,
+                    coach_context=coach_ctx,
                 ),
                 phase="goals" if vault_is_ready(summary, coach_ctx) else "profile",
                 show_goal_menu=False,
@@ -307,17 +304,157 @@ async def chat(
                 cause=dup_decision,
             )
 
-        # 2) Acknowledgement-only → one concrete next question (no LLM).
+        # 2) Confirm a previously offered topic ("yes" after "Would you like…").
+        elif confirmed := resolve_topic_confirmation(message, summary, coach_ctx, history):
+            path = "topic_confirm"
+            title = confirmed["title"]
+            turn = OnboardingTurn(
+                reply=topic_focus_reply(confirmed, coach_context=coach_ctx),
+                phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                show_goal_menu=False,
+            ).model_dump()
+            turn["_focus_topic"] = title
+            turn["_focus_kind"] = confirmed.get("kind") or confirmed.get("category")
+            turn["_focus_locked"] = True
+            focus_patch = {"pending_followup": ""}
+            log.info(
+                "onboarding_chat_stage",
+                stage="topic_confirm",
+                cause="affirmative",
+                topic=title[:80],
+            )
+
+        # 3) Explicit topic selection / switch (any vault category) — no LLM.
+        elif (focused := classify_topic_focus(message, summary, coach_context=coach_ctx)) and (
+            wants_topic_switch(message)
+            or not coach_ctx.get("focus_locked")
+            or (focused.get("title") or "").lower()
+            != (coach_ctx.get("current_topic") or "").lower()
+        ):
+            path = "topic_focus"
+            title = focused["title"]
+            turn = OnboardingTurn(
+                reply=topic_focus_reply(focused, coach_context=coach_ctx),
+                phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                show_goal_menu=False,
+            ).model_dump()
+            turn["_focus_topic"] = title
+            turn["_focus_kind"] = focused.get("kind") or focused.get("category")
+            turn["_focus_locked"] = True
+            focus_patch = {"pending_followup": ""}
+            log.info(
+                "onboarding_chat_stage",
+                stage="topic_focus",
+                cause="deterministic",
+                topic=title[:80],
+                kind=turn.get("_focus_kind"),
+            )
+
+        # 4) Contextual turn decision for uncertainty / move-on / pause / hints.
+        #    Bare "I don't know" simplifies on the same topic; explicit move-on changes it.
+        #    advance / rich follow_up fall through to the LLM stages below.
+        elif coach_action_requires_deterministic_reply(
+            (
+                _coach_decision := decide_conversational_action(
+                    message, coach_context=coach_ctx, mode="guided"
+                )
+            )["action"]
+        ):
+            prev = str(coach_ctx.get("current_topic") or "")
+            action = _coach_decision["action"]
+            path = f"coach_{action}"
+            soft_reply = render_coach_action_reply(
+                action,
+                coach_context=coach_ctx,
+                vault_summary=summary,
+                mode="guided",
+            )
+            turn = OnboardingTurn(
+                reply=soft_reply,
+                phase=phase if phase in ("profile", "goals", "ready") else "profile",
+                show_goal_menu=False,
+            ).model_dump()
+            try:
+                streak = int(coach_ctx.get("uncertainty_streak") or 0)
+            except (TypeError, ValueError):
+                streak = 0
+            if action == "pause":
+                turn["_clear_focus"] = True
+                focus_patch = {"pending_followup": "", "uncertainty_streak": 0}
+            elif action == "change_topic":
+                turn["_clear_focus"] = True
+                skipped_cats = list(coach_ctx.get("skipped_categories") or [])
+                if prev:
+                    marker = f"topic:{prev}"[:120]
+                    if marker not in skipped_cats:
+                        skipped_cats.append(marker)
+                focus_patch = {
+                    "pending_followup": "",
+                    "skipped_categories": skipped_cats[-20:],
+                    "uncertainty_streak": 0,
+                }
+                skipped_titles = [
+                    str(x).split(":", 1)[-1]
+                    for x in skipped_cats
+                    if isinstance(x, str) and x.startswith("topic:")
+                ]
+                opts = suggested_next_topics(summary, prev, exclude_titles=skipped_titles, limit=1)
+                if opts:
+                    nxt = opts[0]
+                    turn["_focus_topic"] = nxt["title"]
+                    turn["_focus_kind"] = nxt["kind"]
+                    turn["_focus_locked"] = True
+                    turn["_clear_focus"] = False
+            else:
+                # simplify / guide / clarify — stay on topic; never skill-menu.
+                bump = 1 if action in ("simplify", "guide") else 0
+                focus_patch = {
+                    "pending_followup": "",
+                    "uncertainty_streak": streak + bump,
+                }
+                if prev:
+                    turn["_focus_topic"] = prev
+                    turn["_focus_kind"] = coach_ctx.get("focus_kind") or "subject"
+                    turn["_focus_locked"] = True
+            log.info(
+                "onboarding_chat_stage",
+                stage=path,
+                cause=_coach_decision.get("reason"),
+                action=action,
+                topic=prev[:80] if prev else None,
+            )
+
+        # 5) Acknowledgement-only → continue current topic (never random vault[0]
+        #    and never re-ask the same confirmation).
         elif is_ack_only(message):
             path = "ack_followup"
+            reply = continue_topic_reply(coach_ctx, summary) or ack_followup_question(
+                summary, coach_ctx
+            )
             turn = OnboardingTurn(
-                reply=ack_followup_question(summary),
+                reply=reply,
                 phase=phase if phase in ("profile", "goals", "ready") else "profile",
                 show_goal_menu=phase == "goals" and not prefs.get("interests"),
             ).model_dump()
-            log.info("onboarding_chat_stage", stage="ack_followup", cause="ack_only")
+            # Affirmative after a topic offer: lock the pending topic if not yet locked.
+            pending = (coach_ctx.get("pending_followup") or "").strip()
+            if (
+                (coach_ctx.get("last_question_intent") or "") == "confirm_topic"
+                and pending
+                and not coach_ctx.get("focus_locked")
+            ):
+                turn["_focus_topic"] = pending
+                turn["_focus_kind"] = "subject"
+                turn["_focus_locked"] = True
+                focus_patch = {"pending_followup": ""}
+            log.info(
+                "onboarding_chat_stage",
+                stage="ack_followup",
+                cause="ack_only",
+                topic=(coach_ctx.get("current_topic") or pending or "")[:80] or None,
+            )
 
-        # 3) Practise / interview intent → no LLM; offer start popup.
+        # 6) Practise / interview intent → no LLM; offer start popup.
         elif practise := classify_practise_intent(message, summary):
             path = "practise_intent"
             subject = practise["subject"]
@@ -326,6 +463,9 @@ async def chat(
                 phase=phase if phase in ("profile", "goals", "ready") else "profile",
                 show_goal_menu=False,
             ).model_dump()
+            turn["_focus_topic"] = subject
+            turn["_focus_kind"] = "subject"
+            turn["_focus_locked"] = True
             if not offer_already:
                 offer = {
                     "subject": subject,
@@ -338,7 +478,7 @@ async def chat(
                 cause="deterministic",
             )
 
-        # 4) Normal LLM turn (single structured call).
+        # 7) Normal LLM turn (single structured call).
         else:
             resume_options = build_resume_goal_options(summary)
             graph = build_onboarding_graph(turn_runner=run_onboarding_turn)
@@ -407,6 +547,7 @@ async def chat(
         turn["reply"] = ensure_nonempty_reply(
             turn.get("reply") or "",
             vault_summary=summary,
+            coach_context=coach_ctx,
         )
         await conversation_store.append_message(mongo_db, uid, "assistant", turn["reply"])
 
@@ -427,19 +568,52 @@ async def chat(
         answers = list(coach_ctx.get("answers_received") or [])
         if message.strip():
             answers.append(message.strip()[:180])
-        await conversation_store.merge_coach_context(
-            mongo_db,
-            uid,
-            {
-                "background": bg,
-                "asked_questions": asked[-40:],
-                "confirmed_facts": confirmed[-40:],
-                "answers_received": answers[-40:],
-                "current_topic": turn.get("phase"),
-                "proceed_to_goals": bool(coach_ctx.get("proceed_to_goals"))
-                or turn.get("phase") in ("goals", "ready"),
-            },
-        )
+
+        clear_focus = bool(turn.pop("_clear_focus", False))
+        new_focus = turn.pop("_focus_topic", None)
+        new_kind = turn.pop("_focus_kind", None)
+        locked_flag = turn.pop("_focus_locked", None)
+        if clear_focus:
+            topic_out: str | None = None
+            kind_out: str | None = None
+            locked_out = False
+        elif new_focus:
+            topic_out = str(new_focus).strip()[:120]
+            kind_out = new_kind or coach_ctx.get("focus_kind") or "subject"
+            locked_out = True if locked_flag is None else bool(locked_flag)
+        elif coach_ctx.get("focus_locked") and coach_ctx.get("current_topic"):
+            # Preserve explicit selection across turns (including LLM path).
+            topic_out = coach_ctx.get("current_topic")
+            kind_out = coach_ctx.get("focus_kind")
+            locked_out = True
+        else:
+            topic_out = coach_ctx.get("current_topic")
+            kind_out = coach_ctx.get("focus_kind")
+            locked_out = bool(coach_ctx.get("focus_locked"))
+
+        reply_text = turn["reply"]
+        intent = infer_question_intent(reply_text)
+        pending = extract_pending_topic(reply_text) if intent == "confirm_topic" else None
+        ctx_update = {
+            "background": bg,
+            "asked_questions": asked[-40:],
+            "confirmed_facts": confirmed[-40:],
+            "answers_received": answers[-40:],
+            "current_topic": topic_out if topic_out is not None else "",
+            "focus_kind": kind_out if kind_out is not None else "",
+            "focus_locked": locked_out,
+            "last_assistant_question": reply_text[:320],
+            "last_question_intent": intent,
+            "pending_followup": pending or focus_patch.get("pending_followup") or "",
+            "proceed_to_goals": bool(coach_ctx.get("proceed_to_goals"))
+            or turn.get("phase") in ("goals", "ready"),
+        }
+        if focus_patch:
+            ctx_update.update(focus_patch)
+        elif len(message.strip()) > 40:
+            # Substantive turns clear uncertainty streak unless stage-4 already set it.
+            ctx_update["uncertainty_streak"] = 0
+        await conversation_store.merge_coach_context(mongo_db, uid, ctx_update)
 
         refreshed = await vault_summary(db, user.id)
         coach_ctx = await conversation_store.get_coach_context(mongo_db, uid)
@@ -651,16 +825,29 @@ async def seed_resume_welcome(
     mongo_db: AsyncIOMotorDatabase,
     user_id: str,
     items: list,
-) -> bool:
-    """After successful resume extraction — one personalized welcome, never duplicated."""
-    if not items:
-        return False
+    sync_result: dict | None = None,
+) -> dict:
+    """After successful resume processing — start a fresh conversation with a sync-aware welcome.
+
+    Archives the prior active thread (never deletes). Skips only when the active thread is
+    already a fresh resume-upload welcome with no user turns (idempotent double-call guard).
+    """
+    from app.services.vault_service import build_resume_sync_welcome
+
+    meta = await conversation_store.get_active_conversation_meta(mongo_db, user_id)
     messages = await conversation_store.get_messages(mongo_db, user_id, limit=40)
-    if any(message_looks_like_resume_welcome(m.get("content") or "") for m in messages):
-        return False
-    await conversation_store.append_message(
-        mongo_db, user_id, "assistant", build_profile_review_message(items)
-    )
+    if (
+        meta.get("reason") == "resume_upload"
+        and len(messages) == 1
+        and (messages[0] or {}).get("role") == "assistant"
+        and message_looks_like_resume_welcome((messages[0] or {}).get("content") or "")
+    ):
+        return {
+            "seeded": False,
+            "conversation_id": meta.get("conversation_id"),
+            "reason": "already_fresh_resume_conversation",
+        }
+
     summary = [
         {
             "category": getattr(i, "category", ""),
@@ -669,15 +856,22 @@ async def seed_resume_welcome(
         }
         for i in items
     ]
-    await conversation_store.merge_coach_context(
+    welcome = build_resume_sync_welcome(sync_result, items)
+    started = await conversation_store.start_new_conversation(
         mongo_db,
         user_id,
-        {
-            "background": infer_candidate_background(summary),
-            "proceed_to_goals": True,
+        title="Resume upload",
+        reason="resume_upload",
+        welcome=welcome,
+        reset_coach=True,
+        coach_patch={
+            "background": infer_candidate_background(summary) if summary else {},
+            # Verify-first: do not jump to goals/personalization yet.
+            "proceed_to_goals": False,
+            "profile_verified": False,
         },
     )
-    return True
+    return {"seeded": True, **started}
 
 
 async def ensure_goals_intro(
@@ -685,19 +879,26 @@ async def ensure_goals_intro(
     mongo_db: AsyncIOMotorDatabase,
     user: User,
 ) -> bool:
-    """When vault is ready and goals are unset, seed the goals transition once."""
+    """When vault is ready and goals are unset, seed the goals transition once.
+
+    Gated on profile_verified so New Chat / resume upload cannot auto-personalize
+    before the candidate confirms extraction.
+    """
+    uid = str(user.id)
     summary = await vault_summary(db, user.id)
-    coach_ctx = await conversation_store.get_coach_context(mongo_db, str(user.id))
+    coach_ctx = await conversation_store.get_coach_context(mongo_db, uid)
+    if not coach_ctx.get("profile_verified"):
+        return False
     if not vault_is_ready(summary, coach_ctx):
         return False
-    prefs = await conversation_store.get_preparation_preferences(mongo_db, str(user.id))
+    prefs = await conversation_store.get_preparation_preferences(mongo_db, uid)
     if prefs.get("interests") or prefs.get("confirmed"):
         return False
-    messages = await conversation_store.get_messages(mongo_db, str(user.id), limit=30)
+    messages = await conversation_store.get_messages(mongo_db, uid, limit=30)
     if any(GOALS_INTRO_MARKER in (m.get("content") or "") for m in messages):
         return False
     intro = goals_intro_message(summary)
-    await conversation_store.append_message(mongo_db, str(user.id), "assistant", intro)
+    await conversation_store.append_message(mongo_db, uid, "assistant", intro)
     return True
 
 
@@ -779,7 +980,12 @@ async def ensure_profile_review(
     *,
     force: bool = False,
 ) -> dict:
-    """Build or refresh the post-onboarding review; persist without clobbering edits."""
+    """Build or refresh the post-onboarding review; persist without clobbering edits.
+
+    Uses the Shared Candidate Intelligence Snapshot when available so vault claims,
+    goals, and interview-demonstrated evidence stay separated in the review.
+    Falls back to legacy assessed/improvement helpers if the snapshot load fails.
+    """
     from app.services import interview_service
 
     items = await list_items(db, user.id)
@@ -787,15 +993,51 @@ async def ensure_profile_review(
     previous = await conversation_store.get_profile_review(mongo_db, str(user.id)) or {}
     tracks = await _existing_tracks(db, user.id)
     open_sessions = await interview_service.list_open_sessions_for_user(db, user, limit=5)
+
+    snapshot = None
+    try:
+        from app.services.candidate_intelligence import get_candidate_intelligence_for_user
+
+        snapshot = await get_candidate_intelligence_for_user(
+            db, user.id, mongo_db=mongo_db, user=user
+        )
+    except Exception:  # noqa: BLE001 — review must still work without intelligence
+        snapshot = None
+
+    assessed = await _assessed_subjects(db, user.id)
+    improvements = await _improvement_topics(db, user.id)
+    if snapshot is not None:
+        from app.services.preparation_review import (
+            assessed_concepts_from_snapshot,
+            improvement_topics_from_snapshot,
+        )
+
+        assessed = assessed | assessed_concepts_from_snapshot(snapshot)
+        snap_improvements = improvement_topics_from_snapshot(snapshot)
+        if snap_improvements:
+            # Prefer snapshot list (already deduped); keep legacy only as filler.
+            merged: list[str] = []
+            seen: set[str] = set()
+            for topic in [*snap_improvements, *improvements]:
+                key = str(topic).strip().lower()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                merged.append(str(topic).strip())
+                if len(merged) >= 5:
+                    break
+            improvements = merged
+
     review = build_review(
         items,
         prefs,
         previous=previous,
-        assessed_subjects=await _assessed_subjects(db, user.id),
+        assessed_subjects=assessed,
         existing_tracks=tracks,
         existing_track_subjects={t["subject"] for t in tracks},
         open_sessions=open_sessions,
-        improvement_topics=await _improvement_topics(db, user.id),
+        improvement_topics=improvements,
+        candidate_intelligence=snapshot,
         force_summary=force,
     )
     # Refuse to persist an empty wipe over a previously useful review.
@@ -929,6 +1171,7 @@ async def state_extras(
         "goals_ready": preferences_ready(prefs) or finished,
         "conversation_mode": mode,
         "coach_context": coach_ctx,
+        "profile_verified": bool(coach_ctx.get("profile_verified")),
         "profile_gaps": gaps,
         "optional_categories": True,
         "show_starters": _should_show_starters(history, phase, finished),
