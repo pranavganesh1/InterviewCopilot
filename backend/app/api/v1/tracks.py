@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.sqlalchemy import get_db
-from app.gateway.llm import LLMGatewayError
+from app.gateway.llm import LLMGatewayError, gateway_error_detail, gateway_http_status
 from app.models.user import User
 from app.services import track_service
 
@@ -59,10 +59,9 @@ async def create_track(
             )
         )
     except LLMGatewayError as exc:
-        # Free-tier rate limits surface as 503 with a retry hint, not a raw 500.
         raise HTTPException(
-            status_code=503,
-            detail="The LLM provider is rate-limited right now — please retry in a minute.",
+            status_code=gateway_http_status(exc),
+            detail=gateway_error_detail(exc),
         ) from exc
 
 
