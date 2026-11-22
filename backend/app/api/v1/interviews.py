@@ -15,7 +15,7 @@ from app.api.v1.schemas.interviews import (
     TurnResult,
 )
 from app.db.sqlalchemy import get_db
-from app.gateway.llm import LLMGatewayError, gateway_error_detail
+from app.gateway.llm import LLMGatewayError, gateway_error_detail, gateway_http_status
 from app.models.user import User
 from app.services import interview_service
 
@@ -108,7 +108,7 @@ async def start_session(
         )
     except LLMGatewayError as exc:
         raise HTTPException(
-            status_code=503,
+            status_code=gateway_http_status(exc),
             detail=gateway_error_detail(exc),
         ) from exc
     except LookupError as exc:
@@ -191,8 +191,8 @@ async def submit_turn(
         )
     except LLMGatewayError as exc:
         raise HTTPException(
-            status_code=503,
-            detail="The LLM provider is rate-limited right now — please retry in a minute.",
+            status_code=gateway_http_status(exc),
+            detail=gateway_error_detail(exc),
         ) from exc
     except LookupError as exc:
         if str(exc) == "deadline_passed":
@@ -219,8 +219,8 @@ async def request_assistance(
         return await interview_service.request_assistance(db, user, session_id)
     except LLMGatewayError as exc:
         raise HTTPException(
-            status_code=503,
-            detail="The LLM provider is rate-limited right now — please retry in a minute.",
+            status_code=gateway_http_status(exc),
+            detail=gateway_error_detail(exc),
         ) from exc
     except LookupError as exc:
         detail = {

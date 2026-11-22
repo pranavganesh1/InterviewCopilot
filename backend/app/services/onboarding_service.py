@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.onboarding import (
     ExtractedItem,
     OnboardingTurn,
+    _last_ask_awaits_selection,
     ack_followup_question,
     build_onboarding_graph,
     classify_duplicate_answer,
@@ -18,6 +19,7 @@ from app.agents.onboarding import (
     decide_conversational_action,
     derive_phase,
     ensure_nonempty_reply,
+    extract_focus_shift_from_reply,
     extract_pending_topic,
     infer_question_intent,
     is_ack_only,
@@ -408,10 +410,16 @@ async def chat(
             else:
                 # simplify / guide / clarify — stay on topic; never skill-menu.
                 bump = 1 if action in ("simplify", "guide") else 0
+                try:
+                    clarify_n = int(coach_ctx.get("clarify_count") or 0)
+                except (TypeError, ValueError):
+                    clarify_n = 0
                 focus_patch = {
                     "pending_followup": "",
                     "uncertainty_streak": streak + bump,
                 }
+                if action == "clarify":
+                    focus_patch["clarify_count"] = clarify_n + 1
                 if prev:
                     turn["_focus_topic"] = prev
                     turn["_focus_kind"] = coach_ctx.get("focus_kind") or "subject"
@@ -592,6 +600,49 @@ async def chat(
             locked_out = bool(coach_ctx.get("focus_locked"))
 
         reply_text = turn["reply"]
+        # If the assistant pivoted to a new subject while state still held the old
+        # lock, adopt the new focus so the next short answer cannot revive the old topic.
+        if locked_out and topic_out and reply_text:
+            prior_topic = str(coach_ctx.get("current_topic") or topic_out).strip()
+            shifted = extract_focus_shift_from_reply(reply_text, prior_topic)
+            reply_low = reply_text.lower()
+            prior_low = prior_topic.lower()
+            left_prior = bool(prior_low) and prior_low not in reply_low
+            pivot_language = any(
+                p in reply_low
+                for p in (
+                    "move the focus",
+                    "would you prefer",
+                    "switch",
+                    "another area",
+                    "different topic",
+                    "instead",
+                )
+            ) or _last_ask_awaits_selection(reply_text)
+
+            def _mark_prior_skipped() -> None:
+                skipped_cats = list(
+                    focus_patch.get("skipped_categories")
+                    or coach_ctx.get("skipped_categories")
+                    or []
+                )
+                prev_marker = f"topic:{prior_topic}"[:120]
+                if prev_marker not in skipped_cats and prior_topic:
+                    skipped_cats.append(prev_marker)
+                    focus_patch["skipped_categories"] = skipped_cats[-20:]
+                    focus_patch["uncertainty_streak"] = 0
+                    focus_patch["clarify_count"] = 0
+
+            if shifted and shifted.lower() != prior_low:
+                topic_out = shifted
+                kind_out = kind_out or coach_ctx.get("focus_kind") or "subject"
+                locked_out = True
+                _mark_prior_skipped()
+            elif left_prior and pivot_language:
+                # Pivot detected but label extraction failed — unlock so stale
+                # clarify cannot revive the abandoned topic on the next turn.
+                locked_out = False
+                _mark_prior_skipped()
         intent = infer_question_intent(reply_text)
         pending = extract_pending_topic(reply_text) if intent == "confirm_topic" else None
         ctx_update = {

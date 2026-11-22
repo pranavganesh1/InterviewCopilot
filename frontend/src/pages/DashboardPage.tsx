@@ -1468,19 +1468,19 @@ export default function DashboardPage() {
               <div className="mt-2 space-y-2 border-t border-line/70 pt-2">
                 <ul className="space-y-0.5">
                   {weaknesses.data!.top_weak.slice(0, 3).map((row) => (
-                    <li
-                      key={row.concept}
+                  <li
+                    key={row.concept}
                       className="flex min-w-0 items-center justify-between gap-2 text-[10px] text-ink-soft"
-                    >
-                      <span className="truncate" title={row.concept}>
-                        {row.concept}
-                      </span>
+                  >
+                    <span className="truncate" title={row.concept}>
+                      {row.concept}
+                    </span>
                       <span className="shrink-0 font-medium uppercase tracking-wide text-ink-faint">
-                        {row.status}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                      {row.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
                 {focusTrackId && (
                   <button
                     type="button"
@@ -1670,20 +1670,20 @@ export default function DashboardPage() {
                     ...(a.improvement_areas ?? []).slice(0, 1),
                   ];
                   return (
-                    <li key={a.report_id} className="flex gap-2.5">
-                      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600">
-                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
-                        </svg>
-                      </span>
+                  <li key={a.report_id} className="flex gap-2.5">
+                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-emerald-50 text-emerald-600">
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
+                      </svg>
+                    </span>
                       <div className="min-w-0 flex-1">
-                        <Link
-                          to={`/tracks/${a.track_id}/report/${a.session_id}`}
-                          className="block truncate text-sm font-medium text-ink hover:text-accent-strong"
-                        >
+                      <Link
+                        to={`/tracks/${a.track_id}/report/${a.session_id}`}
+                        className="block truncate text-sm font-medium text-ink hover:text-accent-strong"
+                      >
                           {a.track_subject}
-                        </Link>
-                        <p className="text-xs text-ink-soft">
+                      </Link>
+                      <p className="text-xs text-ink-soft">
                           {formatDate(a.created_at)} · {a.session_mode}
                           {a.overall_score != null ? ` · ${a.overall_score}%` : ""}
                           {a.coverage_status ? ` · ${a.coverage_status}` : ""}
@@ -1704,8 +1704,8 @@ export default function DashboardPage() {
                         >
                           View feedback report
                         </Link>
-                      </div>
-                    </li>
+                    </div>
+                  </li>
                   );
                 })}
               </ul>

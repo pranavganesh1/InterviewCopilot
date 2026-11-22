@@ -72,7 +72,12 @@ def enrich_assessments_with_turns(content: dict, answered_turns: list[SessionTur
         t = by_index.get(int(row.get("turn_index") or 0))
         if t is not None:
             detail = t.evaluation_detail if isinstance(t.evaluation_detail, dict) else {}
-            coverage = (row.get("coverage") or t.evaluation_coverage or "none").lower()
+            # Prefer saved turn coverage — LLM rows must not inflate scores.
+            saved_cov = (t.evaluation_coverage or "").strip().lower()
+            row_cov = (row.get("coverage") or "").strip().lower()
+            coverage = (saved_cov or row_cov or "none").lower()
+            if saved_cov:
+                row["coverage"] = saved_cov
             row.setdefault("question", t.question or "")
             row.setdefault("answer", t.answer or "")
             if not row.get("strengths"):
