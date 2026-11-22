@@ -96,17 +96,9 @@ def pick_pool_question(
     known = {fp for fp in (fingerprints or []) if len(fp) >= 4}
     usable = [entry for entry in entries if not _matches(entry, asked, known)]
     fresh = [entry for entry in usable if not _matches(entry, history, known)]
-    avoided = {
-        normalize_area_key(area)
-        for area in (avoid_areas or [])
-        if normalize_area_key(area)
-    }
+    avoided = {normalize_area_key(area) for area in (avoid_areas or []) if normalize_area_key(area)}
     if avoided:
-        steered = [
-            entry
-            for entry in fresh
-            if normalize_area_key(entry.get("area")) not in avoided
-        ]
+        steered = [entry for entry in fresh if normalize_area_key(entry.get("area")) not in avoided]
         if steered:
             fresh = steered
     chosen = _best(fresh, seed, slot, covered) if fresh else None
@@ -151,11 +143,7 @@ def _best(entries: list[dict], seed: str, slot: dict, covered: set[str]) -> dict
         if exact:
             pool = exact
         else:
-            soft = [
-                entry
-                for entry in pool
-                if areas_soft_match(planned, entry.get("area"))
-            ]
+            soft = [entry for entry in pool if areas_soft_match(planned, entry.get("area"))]
             if soft:
                 pool = soft
             elif planned_key:
@@ -163,9 +151,7 @@ def _best(entries: list[dict], seed: str, slot: dict, covered: set[str]) -> dict
                 pass
     covered_keys = {normalize_area_key(a) for a in covered if normalize_area_key(a)}
     uncovered = [
-        entry
-        for entry in pool
-        if normalize_area_key(entry.get("area")) not in covered_keys
+        entry for entry in pool if normalize_area_key(entry.get("area")) not in covered_keys
     ]
     choices = list(uncovered or pool)
     random.Random(seed).shuffle(choices)

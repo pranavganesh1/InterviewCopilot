@@ -379,20 +379,14 @@ def _opening_from_question_bank(
         covered_areas=[],
         mode=mode,
         fingerprints=[
-            tuple(fp)
-            for row in history
-            if (fp := row.get("fingerprint")) and len(fp) >= 4
+            tuple(fp) for row in history if (fp := row.get("fingerprint")) and len(fp) >= 4
         ],
         avoid_areas=avoid,
         reuse=False,
     )
     if not chosen:
         return None
-    area = (
-        (chosen.get("area") or "").strip()
-        or (slot or {}).get("topic")
-        or "Core concepts"
-    )
+    area = (chosen.get("area") or "").strip() or (slot or {}).get("topic") or "Core concepts"
     qtype = (chosen.get("type") or chosen.get("question_type") or "conceptual").strip()
     if qtype not in (
         "coding",
@@ -522,9 +516,7 @@ async def start_session(
             if turn is None:
                 # Rare orphan (in_progress, no turns): mint Q1 instead of creating a twin.
                 try:
-                    hist = await _track_history(
-                        db, user.id, track_id, exclude_session_id=chosen.id
-                    )
+                    hist = await _track_history(db, user.id, track_id, exclude_session_id=chosen.id)
                     decision = _opening_from_question_bank(
                         brief_content,
                         plan=getattr(chosen, "question_plan", None),
@@ -617,9 +609,7 @@ async def start_session(
         }
         # Prefer opening areas that are not already demonstrated strengths on this track.
         covered = {
-            str(c).strip().lower()
-            for c in (prep_context.get("covered_concepts") or [])
-            if c
+            str(c).strip().lower() for c in (prep_context.get("covered_concepts") or []) if c
         }
         if covered:
             avoid = list(plan_brief.get("avoid_areas") or [])
@@ -667,9 +657,7 @@ async def start_session(
                     )
                 ]
                 project_titles = [
-                    str(a.get("topic") or "").strip()
-                    for a in vault_for_plan
-                    if a.get("topic")
+                    str(a.get("topic") or "").strip() for a in vault_for_plan if a.get("topic")
                 ]
                 if vault_for_plan:
                     existing = [
@@ -677,10 +665,8 @@ async def start_session(
                         for qa in (plan_brief.get("question_areas") or [])
                         if isinstance(qa, dict) and qa.get("topic")
                     ]
-                    plan_brief["question_areas"] = (
-                        probe_service.merge_defense_question_areas(
-                            existing, vault_for_plan, cap=12, track_keep=4
-                        )
+                    plan_brief["question_areas"] = probe_service.merge_defense_question_areas(
+                        existing, vault_for_plan, cap=12, track_keep=4
                     )
                 else:
                     defense_mode = False
@@ -724,11 +710,7 @@ async def start_session(
     weak_names = weakness_service.weak_concept_names(weak_summary, focus=focus_weak)
     # Prefer track-scoped snapshot weaknesses when present (still track-local).
     if prep_context and prep_context.get("evidence_scope") == "track":
-        snap_weak = [
-            str(w)
-            for w in (prep_context.get("demonstrated_weaknesses") or [])
-            if w
-        ]
+        snap_weak = [str(w) for w in (prep_context.get("demonstrated_weaknesses") or []) if w]
         if snap_weak:
             # Dedupe while preferring snapshot order, then turn aggregate.
             merged_weak: list[str] = []
@@ -1500,9 +1482,7 @@ async def _decide(
                 # No explicit project selected — do not inject arbitrary projects.
                 raw_items = []
             if defense_on:
-                vault_items = probe_service.sanitize_vault_items(
-                    raw_items, categories=("project",)
-                )
+                vault_items = probe_service.sanitize_vault_items(raw_items, categories=("project",))
             else:
                 vault_items = probe_service.sanitize_vault_items(raw_items)
             if vault_items:

@@ -20,12 +20,12 @@ def _title_from_messages(messages: list[dict], fallback: str | None = None) -> s
         if (msg or {}).get("role") == "user":
             text = str((msg or {}).get("content") or "").strip()
             if text:
-                return (text[:72] + ("…" if len(text) > 72 else ""))
+                return text[:72] + ("…" if len(text) > 72 else "")
     for msg in messages:
         if (msg or {}).get("role") == "assistant":
             text = str((msg or {}).get("content") or "").strip().split("\n", 1)[0]
             if text:
-                return (text[:72] + ("…" if len(text) > 72 else ""))
+                return text[:72] + ("…" if len(text) > 72 else "")
     return "Conversation"
 
 
@@ -47,9 +47,7 @@ def _snapshot_active(doc: dict | None, *, archived_at: str) -> dict | None:
     }
 
 
-async def ensure_active_conversation_id(
-    mongo_db: AsyncIOMotorDatabase, user_id: str
-) -> str:
+async def ensure_active_conversation_id(mongo_db: AsyncIOMotorDatabase, user_id: str) -> str:
     """Guarantee the user doc has an active_conversation_id (lazy for legacy docs)."""
     doc = await mongo_db[CONVERSATIONS].find_one(
         {"user_id": user_id}, {"active_conversation_id": 1}
@@ -102,9 +100,7 @@ async def get_messages(mongo_db: AsyncIOMotorDatabase, user_id: str, limit: int 
     return doc.get("messages", [])[-limit:]
 
 
-async def get_preparation_preferences(
-    mongo_db: AsyncIOMotorDatabase, user_id: str
-) -> dict:
+async def get_preparation_preferences(mongo_db: AsyncIOMotorDatabase, user_id: str) -> dict:
     doc = await mongo_db[CONVERSATIONS].find_one(
         {"user_id": user_id}, {"preparation_preferences": 1}
     )
@@ -151,16 +147,12 @@ async def set_conversation_mode(
 
 
 async def get_profile_review(mongo_db: AsyncIOMotorDatabase, user_id: str) -> dict | None:
-    doc = await mongo_db[CONVERSATIONS].find_one(
-        {"user_id": user_id}, {"profile_review": 1}
-    )
+    doc = await mongo_db[CONVERSATIONS].find_one({"user_id": user_id}, {"profile_review": 1})
     review = (doc or {}).get("profile_review")
     return review if isinstance(review, dict) else None
 
 
-async def set_profile_review(
-    mongo_db: AsyncIOMotorDatabase, user_id: str, review: dict
-) -> dict:
+async def set_profile_review(mongo_db: AsyncIOMotorDatabase, user_id: str, review: dict) -> dict:
     now = datetime.now(UTC).isoformat()
     payload = dict(review or {})
     payload["updated_at"] = now
@@ -260,15 +252,11 @@ def normalize_coach_context(raw: dict | None) -> dict:
 
 
 async def get_coach_context(mongo_db: AsyncIOMotorDatabase, user_id: str) -> dict:
-    doc = await mongo_db[CONVERSATIONS].find_one(
-        {"user_id": user_id}, {"coach_context": 1}
-    )
+    doc = await mongo_db[CONVERSATIONS].find_one({"user_id": user_id}, {"coach_context": 1})
     return normalize_coach_context((doc or {}).get("coach_context"))
 
 
-async def set_coach_context(
-    mongo_db: AsyncIOMotorDatabase, user_id: str, context: dict
-) -> dict:
+async def set_coach_context(mongo_db: AsyncIOMotorDatabase, user_id: str, context: dict) -> dict:
     payload = normalize_coach_context(context)
     now = datetime.now(UTC).isoformat()
     payload["updated_at"] = now
@@ -283,9 +271,7 @@ async def set_coach_context(
     return payload
 
 
-async def merge_coach_context(
-    mongo_db: AsyncIOMotorDatabase, user_id: str, patch: dict
-) -> dict:
+async def merge_coach_context(mongo_db: AsyncIOMotorDatabase, user_id: str, patch: dict) -> dict:
     current = await get_coach_context(mongo_db, user_id)
     # Allow clearing nullable string fields with "" ; booleans may be False.
     clearable = {
@@ -324,9 +310,7 @@ async def get_idempotent_chat_reply(
     mid = (message_id or "").strip()[:80]
     if not mid:
         return None
-    doc = await mongo_db[CONVERSATIONS].find_one(
-        {"user_id": user_id}, {"chat_idempotency": 1}
-    )
+    doc = await mongo_db[CONVERSATIONS].find_one({"user_id": user_id}, {"chat_idempotency": 1})
     bucket = (doc or {}).get("chat_idempotency") or {}
     cached = bucket.get(mid)
     return cached if isinstance(cached, dict) else None
@@ -435,9 +419,7 @@ async def check_chat_rate_limit(
         },
         upsert=True,
     )
-    doc = await mongo_db[CONVERSATIONS].find_one(
-        {"user_id": user_id}, {"chat_rate_hits": 1}
-    )
+    doc = await mongo_db[CONVERSATIONS].find_one({"user_id": user_id}, {"chat_rate_hits": 1})
     hits = [
         h
         for h in ((doc or {}).get("chat_rate_hits") or [])
@@ -458,9 +440,7 @@ async def check_chat_rate_limit(
     return None
 
 
-async def list_conversation_summaries(
-    mongo_db: AsyncIOMotorDatabase, user_id: str
-) -> list[dict]:
+async def list_conversation_summaries(mongo_db: AsyncIOMotorDatabase, user_id: str) -> list[dict]:
     """Active + archived conversation summaries for this user only."""
     doc = await mongo_db[CONVERSATIONS].find_one({"user_id": user_id})
     if not doc:
@@ -587,9 +567,7 @@ async def activate_conversation(
     if active_id == cid:
         return {
             "conversation_id": active_id,
-            "title": _title_from_messages(
-                list(doc.get("messages") or []), doc.get("active_title")
-            ),
+            "title": _title_from_messages(list(doc.get("messages") or []), doc.get("active_title")),
             "switched": False,
         }
 
@@ -616,9 +594,7 @@ async def activate_conversation(
             "$set": {
                 "messages": restored_messages,
                 "active_conversation_id": cid,
-                "active_title": _title_from_messages(
-                    restored_messages, target.get("title")
-                ),
+                "active_title": _title_from_messages(restored_messages, target.get("title")),
                 "active_reason": str(target.get("reason") or "restored"),
                 "active_created_at": target.get("created_at") or now,
                 "archived_conversations": archived,
@@ -636,9 +612,7 @@ async def activate_conversation(
     }
 
 
-async def get_active_conversation_meta(
-    mongo_db: AsyncIOMotorDatabase, user_id: str
-) -> dict:
+async def get_active_conversation_meta(mongo_db: AsyncIOMotorDatabase, user_id: str) -> dict:
     doc = await mongo_db[CONVERSATIONS].find_one(
         {"user_id": user_id},
         {
@@ -747,9 +721,7 @@ async def delete_conversation(
             "remaining_conversations": len(remaining),
         }
 
-    target_idx = next(
-        (i for i, row in enumerate(archived) if str(row.get("id")) == cid), None
-    )
+    target_idx = next((i for i, row in enumerate(archived) if str(row.get("id")) == cid), None)
     if target_idx is None:
         return None
     removed = archived.pop(target_idx)

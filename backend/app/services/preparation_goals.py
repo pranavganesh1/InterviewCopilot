@@ -55,11 +55,7 @@ def normalize_preferences(raw: dict | None) -> dict:
     base = dict(EMPTY_PREFERENCES)
     if not isinstance(raw, dict):
         return base
-    interests = [
-        str(i)
-        for i in (raw.get("interests") or [])
-        if str(i) in GOAL_INTEREST_IDS
-    ]
+    interests = [str(i) for i in (raw.get("interests") or []) if str(i) in GOAL_INTEREST_IDS]
     # de-dupe preserve order
     seen: set[str] = set()
     clean_interests: list[str] = []
@@ -154,17 +150,13 @@ def next_goal_followup(prefs: dict | None) -> str | None:
         return "placement_target"
     if "placement" in interests and not p["target_role"]:
         return "placement_role"
-    if "behavioral" in interests and not (
-        p["experience_level"] or p["behavioral_goals"]
-    ):
+    if "behavioral" in interests and not (p["experience_level"] or p["behavioral_goals"]):
         return "behavioral"
     return None
 
 
 def followups_complete(prefs: dict | None) -> bool:
-    return next_goal_followup(prefs) is None and bool(
-        normalize_preferences(prefs)["interests"]
-    )
+    return next_goal_followup(prefs) is None and bool(normalize_preferences(prefs)["interests"])
 
 
 def summarize_preferences(prefs: dict | None) -> str:
@@ -172,8 +164,7 @@ def summarize_preferences(prefs: dict | None) -> str:
     if not p["interests"]:
         return "No preparation goals selected yet."
     lines = [
-        "Preparation focus: "
-        + ", ".join(GOAL_INTEREST_LABELS.get(i, i) for i in p["interests"])
+        "Preparation focus: " + ", ".join(GOAL_INTEREST_LABELS.get(i, i) for i in p["interests"])
     ]
     if p["target_role"]:
         lines.append(f"Target role: {p['target_role']}")
@@ -186,8 +177,7 @@ def summarize_preferences(prefs: dict | None) -> str:
     if p["project_aspects"]:
         label_map = dict(PROJECT_ASPECT_OPTIONS)
         lines.append(
-            "Project focus: "
-            + ", ".join(label_map.get(a, a) for a in p["project_aspects"])
+            "Project focus: " + ", ".join(label_map.get(a, a) for a in p["project_aspects"])
         )
     if p["placement_target"]:
         lines.append(f"Placement target: {p['placement_target']}")
@@ -709,9 +699,7 @@ def build_resume_goal_options(vault_summary: list[dict]) -> dict:
     projects = project_titles(vault_summary)
     bg = infer_candidate_background(vault_summary)
     return {
-        "goal_interest_options": [
-            {"id": i, "label": label} for i, label in GOAL_INTERESTS
-        ],
+        "goal_interest_options": [{"id": i, "label": label} for i, label in GOAL_INTERESTS],
         "suggested_skills": skills,
         "suggested_projects": projects,
         "suggested_roles": suggest_roles(vault_summary),
@@ -791,11 +779,7 @@ def goals_followup_reply(
                 "in interviews? Pick one from the list, or type the name."
             )
         return "Which experience would you like to deep-dive for interviews?"
-    if (
-        "project" in p["interests"]
-        and p.get("focus_projects")
-        and not p.get("project_aspects")
-    ):
+    if "project" in p["interests"] and p.get("focus_projects") and not p.get("project_aspects"):
         chosen = p["focus_projects"][0]
         card = next(
             (c for c in project_option_cards(summary) if c["label"] == chosen),
@@ -816,8 +800,7 @@ def goals_followup_reply(
     if "placement" in p["interests"] and not p.get("target_role"):
         if roles:
             return (
-                f"Got it. Which role are you targeting — "
-                f"{', '.join(roles[:2])}, or type your own?"
+                f"Got it. Which role are you targeting — {', '.join(roles[:2])}, or type your own?"
             )
         return "Which role are you targeting? You can also type a custom one."
     if "behavioral" in p["interests"] and not (

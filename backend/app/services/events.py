@@ -34,7 +34,6 @@ async def _open_nats():
 
 async def publish_track_authoring_job(track_id, user_id) -> None:
     """Queue async brief authoring for a freshly created track (M11)."""
-    settings = get_settings()
     event = {
         "event_id": str(uuid.uuid4()),
         "event_type": "track.brief.authoring_requested",

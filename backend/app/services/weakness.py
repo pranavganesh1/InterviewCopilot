@@ -142,9 +142,7 @@ def aggregate_turns(turns: list[Any], *, session_order: list[Any] | None = None)
     for sid in order[-6:]:
         areas = session_area_scores.get(str(sid)) or {}
         area_scores = {
-            area: int(round(sum(vals) / len(vals)))
-            for area, vals in areas.items()
-            if vals
+            area: int(round(sum(vals) / len(vals))) for area, vals in areas.items() if vals
         }
         if area_scores:
             history.append({"session_id": str(sid), "areas": area_scores})

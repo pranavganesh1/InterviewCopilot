@@ -41,8 +41,6 @@ async def _setup_completed_session_with_report():
 
 @pytest.mark.asyncio
 async def test_report_route(clean_users_table):
-    from app.core.config import get_settings
-
     user_id, session_id, _ = await _setup_completed_session_with_report()
     app = create_app()
     from app.db.mongo import get_mongo_db
@@ -60,8 +58,6 @@ async def test_report_route(clean_users_table):
 
 @pytest.mark.asyncio
 async def test_report_404_when_missing(clean_users_table):
-    from app.core.config import get_settings
-
     user_id, session_id, _ = await _setup_completed_session_with_report()
     async with SessionFactory() as session:
         # delete the report to simulate the worker not having run yet
@@ -85,8 +81,6 @@ async def test_report_404_when_missing(clean_users_table):
 
 @pytest.mark.asyncio
 async def test_progression_route(clean_users_table):
-    from app.core.config import get_settings
-
     user_id, _, track_id = await _setup_completed_session_with_report()
     app = create_app()
     from app.db.mongo import get_mongo_db

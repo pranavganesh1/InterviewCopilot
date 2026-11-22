@@ -7,8 +7,6 @@ preferences. Never invents role requirements or guarantees outcomes.
 
 from __future__ import annotations
 
-from typing import Any
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -168,9 +166,14 @@ def build_progress(
         if not isinstance(c, dict):
             continue
         trend = [str(x).lower() for x in (c.get("trend") or [])]
-        if len(trend) >= 2 and trend[-1] in ("none", "partial") and trend[0] in (
-            "good",
-            "excellent",
+        if (
+            len(trend) >= 2
+            and trend[-1] in ("none", "partial")
+            and trend[0]
+            in (
+                "good",
+                "excellent",
+            )
         ):
             declining.append(str(c.get("concept") or ""))
     declining = _dedupe_preserve(declining, limit=6)
@@ -276,10 +279,7 @@ def assess_career_readiness(
 
     evidence_index = None
     evidence_method = None
-    if (
-        completed_interviews >= 2
-        and questions_assessed >= _MIN_QUESTIONS_FOR_EVIDENCE_INDEX
-    ):
+    if completed_interviews >= 2 and questions_assessed >= _MIN_QUESTIONS_FOR_EVIDENCE_INDEX:
         points: list[int] = []
         for bucket in (
             "demonstrated_strengths",
@@ -704,9 +704,7 @@ def _knowledge_gaps_from_snapshot(
             for s in (claims.get("skills") or [])
             if isinstance(s, dict) and s.get("title")
         ][:12]
-        claimed_without = list(
-            not_assessed.get("claimed_skills_without_interview") or []
-        )[:12]
+        claimed_without = list(not_assessed.get("claimed_skills_without_interview") or [])[:12]
         for track in knowledge.get("by_track") or []:
             if not isinstance(track, dict):
                 continue
@@ -891,7 +889,7 @@ def compose_career_intelligence(
     discipline = _discipline_key(domain_profile, prefs)
     target_role = None
     if isinstance(prefs, dict):
-        target_role = (prefs.get("target_role") or prefs.get("placement_target") or None)
+        target_role = prefs.get("target_role") or prefs.get("placement_target") or None
         if isinstance(target_role, str):
             target_role = target_role.strip() or None
 
@@ -911,13 +909,9 @@ def compose_career_intelligence(
         progress=progress,
         candidate_intelligence=snap,
     )
-    roadmap = build_roadmap(
-        recommendations, not_yet_assessed=not_yet, target_role=target_role
-    )
+    roadmap = build_roadmap(recommendations, not_yet_assessed=not_yet, target_role=target_role)
     # Attach supporting evidence / track hints onto roadmap when present on recs.
-    rec_by_topic = {
-        str(r.get("topic") or "").lower(): r for r in recommendations if r.get("topic")
-    }
+    rec_by_topic = {str(r.get("topic") or "").lower(): r for r in recommendations if r.get("topic")}
     enriched_roadmap = []
     for step in roadmap:
         topic_key = str(step.get("topic") or "").lower()
@@ -1102,9 +1096,7 @@ async def get_career_intelligence_for_user(
     try:
         from app.services.candidate_intelligence import get_candidate_intelligence_for_user
 
-        snapshot = await get_candidate_intelligence_for_user(
-            db, user_id, mongo_db=mongo_db
-        )
+        snapshot = await get_candidate_intelligence_for_user(db, user_id, mongo_db=mongo_db)
     except Exception:  # noqa: BLE001 — career intel must still work without snapshot
         snapshot = None
 
@@ -1120,7 +1112,7 @@ async def get_career_intelligence_for_user(
 
     assessment_rows: list[dict] = []
     report_contents: list[dict] = []
-    for report, track, session in report_rows:
+    for report, track, _session in report_rows:
         content = report.content if isinstance(report.content, dict) else {}
         report_contents.append(content)
         assessment_rows.append(
@@ -1145,10 +1137,14 @@ async def get_career_intelligence_for_user(
 
     # Planned topics from active track briefs (for not-yet-assessed).
     tracks = (
-        await db.execute(
-            select(Track).where(Track.user_id == user_id, Track.archived_at.is_(None))
+        (
+            await db.execute(
+                select(Track).where(Track.user_id == user_id, Track.archived_at.is_(None))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     focus_track_id = str(tracks[0].id) if tracks else None
     planned: list[str] = []
     domain_profile = None
@@ -1197,9 +1193,7 @@ async def get_career_intelligence_for_user(
         try:
             from app.services import conversation_store
 
-            prefs = await conversation_store.get_preparation_preferences(
-                mongo_db, str(user_id)
-            )
+            prefs = await conversation_store.get_preparation_preferences(mongo_db, str(user_id))
         except Exception:
             prefs = None
 

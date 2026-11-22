@@ -12,7 +12,6 @@ from app.agents.onboarding import (
     wants_topic_switch,
 )
 
-
 VAULT = [
     {"category": "skill", "title": "DBMS", "details": {}},
     {"category": "skill", "title": "Java", "details": {}},
@@ -66,9 +65,9 @@ def test_skip_phrases_recognized():
 
 def test_stop_intent():
     assert wants_stop_session("Let's stop here for now.") is True
-    assert decide_conversational_action(
-        "I want to stop.", coach_context=LOCKED
-    )["action"] == "pause"
+    assert (
+        decide_conversational_action("I want to stop.", coach_context=LOCKED)["action"] == "pause"
+    )
     assert wants_stop_session("Tell me more about DBMS") is False
 
 
@@ -88,17 +87,13 @@ def test_skip_reply_prefers_internship_not_skill_menu():
 
 
 def test_change_topic_render_has_no_skill_menu():
-    reply = render_coach_action_reply(
-        "change_topic", coach_context=LOCKED, vault_summary=VAULT
-    )
+    reply = render_coach_action_reply("change_topic", coach_context=LOCKED, vault_summary=VAULT)
     assert "Which skill" not in reply
     assert "SQL or React" not in reply
 
 
 def test_suggested_next_excludes_skipped_and_prefers_experience():
-    rows = suggested_next_topics(
-        VAULT, "DBMS", exclude_titles=["DBMS"], limit=3
-    )
+    rows = suggested_next_topics(VAULT, "DBMS", exclude_titles=["DBMS"], limit=3)
     assert rows
     assert rows[0]["kind"] in {"internship", "project", "education", "achievement"}
     assert all(r["title"] != "DBMS" for r in rows)

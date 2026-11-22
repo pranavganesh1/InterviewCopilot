@@ -445,9 +445,7 @@ def build_track_creator_graph(
         # Backward-compatible with older turn_runner signatures in tests.
         intel = state.get("candidate_intelligence")
         try:
-            content = await turn_runner(
-                **kwargs, candidate_intelligence=intel
-            )
+            content = await turn_runner(**kwargs, candidate_intelligence=intel)
         except TypeError:
             content = await turn_runner(**kwargs)
         return {"brief": content.model_dump()}

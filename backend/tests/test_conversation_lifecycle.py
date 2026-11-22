@@ -265,17 +265,13 @@ async def test_delete_conversation_removes_messages_persistently(mongo_user):
 
     # Other user cannot delete this user's conversation.
     assert (
-        await conversation_store.delete_conversation(
-            mongo, f"other-{uuid.uuid4()}", active_id
-        )
+        await conversation_store.delete_conversation(mongo, f"other-{uuid.uuid4()}", active_id)
         is None
     )
 
 
 @pytest.mark.asyncio
-async def test_delete_active_promotes_archive_and_preserves_vault(
-    mongo_user, clean_users_table
-):
+async def test_delete_active_promotes_archive_and_preserves_vault(mongo_user, clean_users_table):
     from httpx import ASGITransport, AsyncClient
 
     from app.core.security import create_access_token
@@ -325,8 +321,7 @@ async def test_delete_active_promotes_archive_and_preserves_vault(
         assert body["conversation_deleted"]["deleted_id"] == active_id
         # Active chat messages gone; archived old thread may be promoted.
         assert all(
-            "Active welcome" not in (m.get("content") or "")
-            for m in body.get("messages") or []
+            "Active welcome" not in (m.get("content") or "") for m in body.get("messages") or []
         )
         listed = await client.get(
             "/api/v1/onboarding/conversations",

@@ -139,7 +139,10 @@ async def test_sync_uncertain_similar_not_inserted(user_row, clean_users_table):
             VaultItem(
                 user_id=user_row.id,
                 category="internship",
-                title="Software Engineer Intern – Velcontech Solutions (Client: BAMUL), Bangalore, India",
+                title=(
+                    "Software Engineer Intern – Velcontech Solutions"
+                    " (Client: BAMUL), Bangalore, India"
+                ),
                 details={},
                 source="resume",
             )
@@ -270,9 +273,7 @@ async def test_resume_reset_api_requires_confirmation(user_row, clean_users_tabl
             cookies=cookies,
         )
         assert denied.status_code == 422
-        preview = await client.get(
-            "/api/v1/vault/resume-data/reset-preview", cookies=cookies
-        )
+        preview = await client.get("/api/v1/vault/resume-data/reset-preview", cookies=cookies)
         assert preview.status_code == 200
         assert preview.json()["count"] == 1
         ok = await client.post(

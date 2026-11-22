@@ -12,7 +12,6 @@ from app.agents.onboarding import (
 )
 from app.gateway.llm import LLMCause, LLMGatewayError, gateway_http_status
 
-
 SQL_LOCK = {
     "current_topic": "SQL",
     "focus_kind": "skill",
@@ -25,9 +24,7 @@ SQL_LOCK = {
     "uncertainty_streak": 0,
     "clarify_count": 1,
     "skipped_categories": [],
-    "asked_questions": [
-        "could you add one concrete detail about sql a tool a task or an outcome"
-    ],
+    "asked_questions": ["could you add one concrete detail about sql a tool a task or an outcome"],
 }
 
 API_CHOICE_Q = (
@@ -96,12 +93,7 @@ def test_brief_on_same_topic_clarifies_only_when_not_yet_asked():
 
 
 def test_gateway_http_status_maps_causes():
-    assert (
-        gateway_http_status(LLMGatewayError("x", cause=LLMCause.rate_limited)) == 429
-    )
-    assert (
-        gateway_http_status(LLMGatewayError("x", cause=LLMCause.schema_rejected))
-        == 422
-    )
+    assert gateway_http_status(LLMGatewayError("x", cause=LLMCause.rate_limited)) == 429
+    assert gateway_http_status(LLMGatewayError("x", cause=LLMCause.schema_rejected)) == 422
     assert gateway_http_status(LLMGatewayError("x", cause=LLMCause.timeout)) == 504
     assert gateway_http_status(LLMGatewayError("x", cause=LLMCause.overloaded)) == 503

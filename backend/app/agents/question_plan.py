@@ -113,9 +113,7 @@ def target_subject_count(n: int, duration_minutes: int | None = None) -> int:
     return max(1, min(soft_cap, max(2, n // 3) if n >= 4 else n, n))
 
 
-def _enrich_topics(
-    brief_content: dict, topics: list[str], *, need: int
-) -> list[str]:
+def _enrich_topics(brief_content: dict, topics: list[str], *, need: int) -> list[str]:
     """Grow a thin topic list with brief-derived / field-agnostic subjects."""
     out = list(topics)
     seen = {t.lower() for t in out}
@@ -214,9 +212,7 @@ def _steer_topics(topics: list[str], avoid: set[str]) -> list[str]:
 DEFAULT_QUESTIONS_PER_TOPIC = 3
 
 
-def _questions_per_topic(
-    n: int, n_topics: int, *, duration_minutes: int | None = None
-) -> int:
+def _questions_per_topic(n: int, n_topics: int, *, duration_minutes: int | None = None) -> int:
     """Consecutive questions per subject; shorter sessions use smaller blocks.
 
     Prefer about DEFAULT_QUESTIONS_PER_TOPIC when the duration and total plan
@@ -232,7 +228,7 @@ def _questions_per_topic(
         mins >= 40
         and n >= n_topics * DEFAULT_QUESTIONS_PER_TOPIC
         and computed < DEFAULT_QUESTIONS_PER_TOPIC
-        and DEFAULT_QUESTIONS_PER_TOPIC <= hi
+        and hi >= DEFAULT_QUESTIONS_PER_TOPIC
     ):
         return DEFAULT_QUESTIONS_PER_TOPIC
     return computed
@@ -434,16 +430,12 @@ async def build_question_plan(
             user_payload={
                 "n": n,
                 "duration_minutes": mins if mins is not None else 60,
-                "target_subjects": target_subject_count(
-                    n, int(mins) if mins is not None else 60
-                ),
+                "target_subjects": target_subject_count(n, int(mins) if mins is not None else 60),
                 "brief": {
                     "summary": (brief.get("summary") or "")[:400],
                     "question_areas": brief.get("question_areas", []),
                     "competencies": brief.get("competencies", []),
-                    "candidate_angle_notes": (brief.get("candidate_angle_notes") or "")[
-                        :300
-                    ],
+                    "candidate_angle_notes": (brief.get("candidate_angle_notes") or "")[:300],
                     "prior_areas": brief.get("prior_areas") or [],
                     "prior_questions": (brief.get("prior_questions") or [])[-24:],
                     "avoid_areas": brief.get("avoid_areas") or [],

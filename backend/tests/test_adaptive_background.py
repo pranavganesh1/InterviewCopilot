@@ -6,7 +6,6 @@ import httpx
 import pytest
 
 from app.agents.onboarding import compute_profile_gaps, derive_phase, vault_is_ready
-from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.db.mongo import get_mongo_db
 from app.db.sqlalchemy import SessionFactory
@@ -66,9 +65,7 @@ def test_welcome_personalized_by_field():
             details={},
             source="resume",
         ),
-        VaultItem(
-            user_id=uid, category="skill", title="Excel", details={}, source="resume"
-        ),
+        VaultItem(user_id=uid, category="skill", title="Excel", details={}, source="resume"),
     ]
     msg = build_profile_review_message(commerce_items)
     assert RESUME_WELCOME_MARKER in msg

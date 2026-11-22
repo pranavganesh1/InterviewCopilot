@@ -174,9 +174,7 @@ async def test_empty_vault_and_owner_only(clean_users_table, monkeypatch):
     app = create_app()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        emptyish = await client.post(
-            "/api/v1/vault/readiness", cookies={"ic_access": owner_token}
-        )
+        emptyish = await client.post("/api/v1/vault/readiness", cookies={"ic_access": owner_token})
         assert emptyish.status_code == 200
         body = emptyish.json()
         assert body["empty"] is True
@@ -223,11 +221,7 @@ async def test_readiness_with_project_and_claim_seeds(clean_users_table, monkeyp
     body = resp.json()
     assert body["empty"] is False
     assert body["disclaimer"] == readiness_service.DISCLAIMER
-    total = (
-        body["summary"]["clear"]
-        + body["summary"]["add_detail"]
-        + body["summary"]["be_ready"]
-    )
+    total = body["summary"]["clear"] + body["summary"]["add_detail"] + body["summary"]["be_ready"]
     assert total > 0
     assert body["claim_seeds"]
     assert all("claim" in s for s in body["claim_seeds"])

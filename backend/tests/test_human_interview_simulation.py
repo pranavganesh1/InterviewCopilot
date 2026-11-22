@@ -44,6 +44,7 @@ def _td(**kwargs) -> TurnDecision:
 
 # --- Scenario A: multi-turn formal policy progression ---
 
+
 def test_scenario_a_five_turn_policy_progression():
     """Detailed answer advances; partial gets one follow-up; second weak moves on."""
     area = "Music Database"
@@ -91,9 +92,7 @@ def test_scenario_a_five_turn_policy_progression():
                 "for example album_id as a foreign key, and we built indexes on title."
             ),
             "questions_remaining": 9,
-            "covered_so_far": {
-                "knowledge_state": {"recent_coverage": ["good", "excellent"]}
-            },
+            "covered_so_far": {"knowledge_state": {"recent_coverage": ["good", "excellent"]}},
         },
     )
     assert t2.decision == "next_area"
@@ -116,6 +115,7 @@ def test_scenario_a_five_turn_policy_progression():
 
 # --- Scenario B: topic change (coach) ---
 
+
 def test_scenario_b_topic_change_and_short_replies():
     sql_lock = {
         "current_topic": "SQL",
@@ -132,9 +132,7 @@ def test_scenario_b_topic_change_and_short_replies():
         "skipped_categories": [],
     }
 
-    d_switch = decide_conversational_action(
-        "Let's discuss APIs instead.", coach_context=sql_lock
-    )
+    d_switch = decide_conversational_action("Let's discuss APIs instead.", coach_context=sql_lock)
     assert d_switch["action"] in {"advance", "change_topic"}
 
     api_q = (
@@ -152,22 +150,27 @@ def test_scenario_b_topic_change_and_short_replies():
     for msg in ("API", "External API", "Let's move on.", "Skip this.", "I don't know."):
         d = decide_conversational_action(msg, coach_context=after_pivot)
         assert d["action"] != "clarify", msg
-        if d["action"] in {"simplify", "guide", "clarify", "change_topic", "pause", "follow_up", "advance"}:
+        if d["action"] in {
+            "simplify",
+            "guide",
+            "clarify",
+            "change_topic",
+            "pause",
+            "follow_up",
+            "advance",
+        }:
             out = render_coach_action_reply(d["action"], coach_context=after_pivot)
             assert "concrete detail about SQL" not in out, msg
 
     # Natural discuss phrasing must pivot (RC-B2 fix).
-    d_hr = decide_conversational_action(
-        "I want to discuss HR.", coach_context=after_pivot
-    )
+    d_hr = decide_conversational_action("I want to discuss HR.", coach_context=after_pivot)
     assert d_hr["action"] in {"advance", "change_topic"}
-    d_switch_hr = decide_conversational_action(
-        "switch to HR", coach_context=after_pivot
-    )
+    d_switch_hr = decide_conversational_action("switch to HR", coach_context=after_pivot)
     assert d_switch_hr["action"] in {"advance", "change_topic"}
 
 
 # --- Scenario C: IDK ---
+
 
 @pytest.mark.asyncio
 async def test_scenario_c_live_path_skips_llm_on_idk(monkeypatch):
@@ -211,9 +214,7 @@ def test_scenario_c_idk_policy_strict_and_guided():
                 decision="next_area",
                 evaluation={"coverage": "none", "strengths": [], "gaps": []},
                 evaluator_checks=["idk_answer"],
-                next_question=(
-                    "Would you like to switch to another skill like SQL or React?"
-                ),
+                next_question=("Would you like to switch to another skill like SQL or React?"),
             ),
             {
                 "mode": mode,
@@ -227,9 +228,10 @@ def test_scenario_c_idk_policy_strict_and_guided():
         assert fixed.decision == "follow_up"
         assert fixed.question_area == "DBMS"
         assert "switch to another skill" not in (fixed.next_question or "").lower()
-        assert classify_answer_outcome(
-            "none", answer_text="idk", checks=["idk_answer"]
-        ) == "Unclear or insufficient information"
+        assert (
+            classify_answer_outcome("none", answer_text="idk", checks=["idk_answer"])
+            == "Unclear or insufficient information"
+        )
 
     # Second weak → move on
     capped = apply_local_policy(
@@ -252,6 +254,7 @@ def test_scenario_c_idk_policy_strict_and_guided():
 
 
 # --- Scenarios D–F: partial / detailed / ambiguous ---
+
 
 def test_scenario_d_partial_triggers_one_focused_follow_up():
     fixed = apply_local_policy(
@@ -294,9 +297,7 @@ def test_scenario_e_detailed_excellent_advances():
             "remaining_areas": ["APIs"],
             "last_answer": "A" * 200,
             "questions_remaining": 8,
-            "covered_so_far": {
-                "knowledge_state": {"recent_coverage": ["good", "excellent"]}
-            },
+            "covered_so_far": {"knowledge_state": {"recent_coverage": ["good", "excellent"]}},
         },
     )
     assert fixed.decision == "next_area"
@@ -327,6 +328,7 @@ def test_scenario_f_ambiguous_brief_is_partial_not_incorrect():
 
 # --- Scenario G: candidate asks for explanation ---
 
+
 def test_scenario_g_strict_strips_spoilers_guided_allows_assistance_ladder():
     strict = system_prompt_for_mode("strict").lower()
     guided = system_prompt_for_mode("guided").lower()
@@ -343,6 +345,7 @@ def test_scenario_g_strict_strips_spoilers_guided_allows_assistance_ladder():
 
 
 # --- Scenario H: behavioral ---
+
 
 def test_scenario_h_behavioral_preferred_format_honored():
     fixed = apply_local_policy(
@@ -368,6 +371,7 @@ def test_scenario_h_behavioral_preferred_format_honored():
 
 
 # --- Scenario I: project defense ---
+
 
 def test_scenario_i_defense_uses_selected_projects_only():
     rules = defense_system_rules().lower()
@@ -397,6 +401,7 @@ def test_scenario_i_defense_uses_selected_projects_only():
 
 
 # --- Scenario J: completion ---
+
 
 def test_scenario_j_completion_and_report_enrichment():
     fixed = apply_local_policy(

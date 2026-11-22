@@ -3,7 +3,6 @@ import uuid
 import httpx
 import pytest
 
-from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.db.mongo import get_mongo_db
 from app.db.sqlalchemy import SessionFactory
@@ -18,8 +17,8 @@ from app.services.preparation_goals import (
     goals_intro_message,
     merge_preferences,
     next_goal_followup,
-    recommend_track_seeds,
     preferences_ready,
+    recommend_track_seeds,
 )
 
 
@@ -82,9 +81,7 @@ def test_resume_goal_options_and_followups():
     assert next_goal_followup(prefs) == "projects"
     assert followups_complete(prefs) is False
 
-    prefs = merge_preferences(
-        prefs, {"focus_projects": ["QCGNN"], "project_aspects": []}
-    )
+    prefs = merge_preferences(prefs, {"focus_projects": ["QCGNN"], "project_aspects": []})
     reply2 = goals_followup_reply(prefs, summary)
     assert "architecture" in reply2.lower() or "challenges" in reply2.lower()
     assert next_goal_followup(prefs) == "project_aspects"
@@ -157,9 +154,10 @@ async def test_goals_endpoint_and_complete(monkeypatch, clean_users_table):
 
         state = await client.get("/api/v1/onboarding/state", cookies={"ic_access": token})
         assert state.status_code == 200
-        assert state.json()["show_goal_menu"] is False or state.json()["preparation_preferences"][
-            "interests"
-        ]
+        assert (
+            state.json()["show_goal_menu"] is False
+            or state.json()["preparation_preferences"]["interests"]
+        )
 
         done = await client.post(
             "/api/v1/onboarding/complete",

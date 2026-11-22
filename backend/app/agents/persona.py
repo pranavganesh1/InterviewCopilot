@@ -160,9 +160,7 @@ def persona_prompt_block(persona_id: str | None, *, mode: str = "strict") -> str
             "never evaluate the previous answer, and never hint at correctness."
         )
     else:
-        lines.append(
-            "- Guided mode: you may use a slightly warmer tone that matches this persona."
-        )
+        lines.append("- Guided mode: you may use a slightly warmer tone that matches this persona.")
     return "\n".join(lines)
 
 

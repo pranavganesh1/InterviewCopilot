@@ -6,28 +6,11 @@ import {
   type ResumeSyncResult,
   type VaultDuplicatePair,
 } from "../lib/api";
+import { syncSummary } from "../lib/resumeSync";
 
 type Props = {
   onRequestUpload?: () => void;
 };
-
-function syncSummary(data: ResumeSyncResult): string {
-  const c = data.counts;
-  if (!c) {
-    const created = data.items_created?.length ?? 0;
-    return created
-      ? `Added ${created} vault item${created === 1 ? "" : "s"}.`
-      : "No new vault items.";
-  }
-  const parts = [
-    `${c.created} created`,
-    `${c.skipped} skipped`,
-    `${c.enrichment_candidates} enrichment`,
-    `${c.uncertain_matches} need review`,
-  ];
-  if (c.failed) parts.push(`${c.failed} failed`);
-  return parts.join(" · ");
-}
 
 export default function ResumeVaultManager({ onRequestUpload }: Props) {
   const qc = useQueryClient();
@@ -131,8 +114,7 @@ export default function ResumeVaultManager({ onRequestUpload }: Props) {
       setPanel("idle");
       setConfirmPhrase("");
       setMessage(
-        `Removed ${data.removed_count ?? 0} resume-derived vault item${
-          (data.removed_count ?? 0) === 1 ? "" : "s"
+        `Removed ${data.removed_count ?? 0} resume-derived vault item${(data.removed_count ?? 0) === 1 ? "" : "s"
         }. Manual and chat items were kept.`,
       );
       qc.invalidateQueries({ queryKey: ["onboarding-state"] });
@@ -389,5 +371,3 @@ export default function ResumeVaultManager({ onRequestUpload }: Props) {
     </section>
   );
 }
-
-export { syncSummary };

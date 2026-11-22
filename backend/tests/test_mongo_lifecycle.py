@@ -176,8 +176,9 @@ async def test_lifespan_closes_shared_mongo_client_exactly_once(monkeypatch):
     async def _noop_close():
         return None
 
-    with patch("app.gateway.llm.get_http_client", _noop_http), patch(
-        "app.gateway.llm.close_http_client", _noop_close
+    with (
+        patch("app.gateway.llm.get_http_client", _noop_http),
+        patch("app.gateway.llm.close_http_client", _noop_close),
     ):
         app = FastAPI()
         async with lifespan(app):

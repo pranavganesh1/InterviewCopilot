@@ -21,9 +21,7 @@ from app.gateway.structured import structured_completion
 
 log = get_logger(__name__)
 
-DISCLAIMER = (
-    "Based only on what your resume says. We cannot verify claims. This helps you prepare."
-)
+DISCLAIMER = "Based only on what your resume says. We cannot verify claims. This helps you prepare."
 
 READINESS_CATEGORIES = frozenset({"project", "internship", "experience", "skill", "education"})
 ClaimStatus = Literal["clear", "add_detail", "be_ready"]
@@ -297,9 +295,7 @@ def draft_claims_for_item(item: Any) -> list[ClaimOut]:
             "add_detail": (
                 "Interviewers often ask for method, scope, or your role — add those if accurate."
             ),
-            "be_ready": (
-                "Interviewers often ask about this; prepare a concrete explanation."
-            ),
+            "be_ready": ("Interviewers often ask about this; prepare a concrete explanation."),
         }[status]
         drafts.append(
             ClaimOut(
@@ -368,9 +364,7 @@ def _template_tips(category: ClaimCategory, status: ClaimStatus) -> list[str]:
             "use [your metric] if you still need to confirm it."
         )
     if category == "ownership":
-        tips[0] = (
-            "Clarify what you owned versus what the team owned; keep it factual and specific."
-        )
+        tips[0] = "Clarify what you owned versus what the team owned; keep it factual and specific."
     return tips[:2]
 
 
@@ -573,8 +567,7 @@ def empty_result(content_hash: str = "") -> ReadinessResult:
     return ReadinessResult(
         empty=True,
         empty_hint=(
-            "Add a project or internship in onboarding or your vault "
-            "to run a readiness check."
+            "Add a project or internship in onboarding or your vault to run a readiness check."
         ),
         content_hash=content_hash,
         summary={"clear": 0, "add_detail": 0, "be_ready": 0},
@@ -728,8 +721,7 @@ def relevant_items(items: list[Any]) -> list[Any]:
 
 def has_project_or_experience(items: list[Any]) -> bool:
     return any(
-        (getattr(i, "category", None) or "").lower()
-        in ("project", "internship", "experience")
+        (getattr(i, "category", None) or "").lower() in ("project", "internship", "experience")
         for i in items
     )
 

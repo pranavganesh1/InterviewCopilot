@@ -39,9 +39,7 @@ def test_correct_answer_advances_instead_of_follow_up():
             "current_area": "Genetics",
             "remaining_areas": ["Cell biology"],
             "last_answer": "Mendelian inheritance with examples",
-            "covered_so_far": {
-                "knowledge_state": {"recent_coverage": ["good", "excellent"]}
-            },
+            "covered_so_far": {"knowledge_state": {"recent_coverage": ["good", "excellent"]}},
         },
     )
     assert fixed.decision == "next_area"

@@ -177,9 +177,7 @@ def intelligence_digest_from_snapshot(snapshot: dict | None) -> dict | None:
         "claimed_skills_without_interview": list(
             not_assessed.get("claimed_skills_without_interview") or []
         )[:12],
-        "not_assessed_from_briefs": list(
-            not_assessed.get("from_briefs_cross_track") or []
-        )[:12],
+        "not_assessed_from_briefs": list(not_assessed.get("from_briefs_cross_track") or [])[:12],
         "projects": projects,
         "by_track": track_scopes,
         "policy": {
@@ -286,7 +284,9 @@ def classify_item(
             "category": category,
             "title": title,
             "status": "not_assessed",
-            "reason": "Details are on file, but technical depth has not been interview-assessed yet.",
+            "reason": (
+                "Details are on file, but technical depth has not been interview-assessed yet."
+            ),
             "user_set": False,
         }
 
@@ -485,7 +485,9 @@ def build_roadmap(
             topics=list(topics),
             practise="Role-aligned technical questions, one area at a time.",
             track_type="role" if p.get("target_role") else "topic",
-            subject=role if p.get("target_role") else (areas[0] if areas else "Technical Interview"),
+            subject=role
+            if p.get("target_role")
+            else (areas[0] if areas else "Technical Interview"),
         )
 
     focus_projects = p.get("focus_projects") or []
@@ -504,9 +506,7 @@ def build_roadmap(
         }
         for proj in targets[:2]:
             missing = clarify_by_name.get(str(proj).lower()) or []
-            why = (
-                "Project-based interviews help you explain architecture and your contribution."
-            )
+            why = "Project-based interviews help you explain architecture and your contribution."
             topics = [proj, "architecture", "trade-offs", "personal contribution"]
             if missing:
                 why = (
@@ -585,14 +585,11 @@ def annotate_roadmap_completion(
         subject = str(step.get("subject") or "").lower()
         if subject and any(subject in a or a in subject for a in assessed if a):
             completion = "completed"
-        elif subject and (
-            subject in open_subs
-            or any(subject in o or o in subject for o in open_subs if o)
-        ):
-            completion = "in_progress"
-        elif subject and (
-            subject in existing
-            or any(subject in e or e in subject for e in existing if e)
+        elif (
+            subject
+            and (subject in open_subs or any(subject in o or o in subject for o in open_subs if o))
+            or subject
+            and (subject in existing or any(subject in e or e in subject for e in existing if e))
         ):
             completion = "in_progress"
         else:
@@ -658,8 +655,7 @@ def resolve_next_action(
         return {
             "kind": "clarify_profile",
             "title": f"Clarify “{title}” before your next interview.",
-            "reason": first.get("reason")
-            or "Some profile details are incomplete or conflicting.",
+            "reason": first.get("reason") or "Some profile details are incomplete or conflicting.",
             "action_label": "Fix in vault",
             "item_id": first.get("item_id"),
             "subject": title,
@@ -676,8 +672,7 @@ def resolve_next_action(
             return {
                 "kind": "create_track",
                 "title": (
-                    f"Based on your profile and goals, I recommend starting with"
-                    f" {step['subject']}."
+                    f"Based on your profile and goals, I recommend starting with {step['subject']}."
                 ),
                 "reason": step.get("why") or "Create your first preparation track.",
                 "action_label": "Start Recommended Interview",
@@ -729,9 +724,7 @@ def resolve_next_action(
         if existing is None:
             return {
                 "kind": "recommend_track",
-                "title": (
-                    f"Based on your profile and goals, I recommend starting with {subject}."
-                ),
+                "title": (f"Based on your profile and goals, I recommend starting with {subject}."),
                 "reason": step.get("why") or "Next step on your preparation roadmap.",
                 "action_label": "Start Recommended Interview",
                 "track_type": step.get("track_type") or "topic",
@@ -770,7 +763,9 @@ def resolve_next_action(
     return None
 
 
-def pick_next_action(roadmap: list[dict], existing_track_subjects: set[str] | None = None) -> dict | None:
+def pick_next_action(
+    roadmap: list[dict], existing_track_subjects: set[str] | None = None
+) -> dict | None:
     """Backward-compatible wrapper around resolve_next_action."""
     tracks = [{"subject": s} for s in (existing_track_subjects or set()) if s]
     return resolve_next_action(roadmap=roadmap, existing_tracks=tracks)
@@ -825,13 +820,11 @@ def build_review(
     tracks = list(existing_tracks or [])
     if not tracks and existing_track_subjects:
         tracks = [{"subject": s} for s in existing_track_subjects if s]
-    track_subjects = {
-        str(t.get("subject") or "") for t in tracks if t.get("subject")
-    } | {str(s) for s in (existing_track_subjects or set()) if s}
-    open_rows = list(open_sessions or [])
-    open_subjects = {
-        str(r.get("track_subject") or "") for r in open_rows if r.get("track_subject")
+    track_subjects = {str(t.get("subject") or "") for t in tracks if t.get("subject")} | {
+        str(s) for s in (existing_track_subjects or set()) if s
     }
+    open_rows = list(open_sessions or [])
+    open_subjects = {str(r.get("track_subject") or "") for r in open_rows if r.get("track_subject")}
 
     duplicate_ids: set[str] = set()
     for pair in find_near_duplicates(items):
@@ -853,9 +846,7 @@ def build_review(
         )
         for item in items
     ]
-    needs_clarification = [
-        s for s in item_statuses if s["status"] == "needs_clarification"
-    ]
+    needs_clarification = [s for s in item_statuses if s["status"] == "needs_clarification"]
 
     user_summary = (previous.get("summary_user_edit") or "").strip() or None
     if user_summary and not force_summary:
@@ -909,9 +900,7 @@ def build_review(
         "next_action": next_action,
         "selected_next_track_id": previous.get("selected_next_track_id"),
         "preparation_summary": summarize_preferences(prefs_n),
-        "goal_labels": [
-            GOAL_INTEREST_LABELS.get(i, i) for i in prefs_n.get("interests") or []
-        ],
+        "goal_labels": [GOAL_INTEREST_LABELS.get(i, i) for i in prefs_n.get("interests") or []],
         "vault_fingerprint": fp,
         "generated_at": datetime.now(UTC).isoformat(),
         # Optional evidence digest — ignored by older clients.
@@ -954,9 +943,7 @@ def merge_review_patch(current: dict, patch: dict) -> dict:
         out["needs_clarification"] = [
             s for s in out["item_statuses"] if s["status"] == "needs_clarification"
         ]
-        out["not_assessed"] = [
-            s for s in out["item_statuses"] if s["status"] == "not_assessed"
-        ]
+        out["not_assessed"] = [s for s in out["item_statuses"] if s["status"] == "not_assessed"]
         out["confirmed"] = [s for s in out["item_statuses"] if s["status"] == "confirmed"]
     out["updated_at"] = datetime.now(UTC).isoformat()
     return out

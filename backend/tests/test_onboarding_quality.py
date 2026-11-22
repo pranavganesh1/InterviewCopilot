@@ -145,7 +145,6 @@ async def test_upsert_merges_equivalent_titles(clean_users_table):
 
 @pytest.mark.asyncio
 async def test_state_prefills_review_when_vault_exists(clean_users_table):
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
 
     email = f"pre-{uuid.uuid4()}@example.com"
@@ -228,7 +227,6 @@ async def test_state_prefills_review_when_vault_exists(clean_users_table):
 
 @pytest.mark.asyncio
 async def test_seed_resume_welcome_is_idempotent(clean_users_table):
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
     from app.services import conversation_store, onboarding_service
     from app.services.vault_service import list_items
@@ -294,7 +292,6 @@ async def test_seed_resume_welcome_is_idempotent(clean_users_table):
 
 @pytest.mark.asyncio
 async def test_conversation_starter_sets_mode_and_chats(monkeypatch, clean_users_table):
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
     from app.services import conversation_store
 
@@ -371,7 +368,6 @@ async def test_conversation_starter_sets_mode_and_chats(monkeypatch, clean_users
 async def test_chat_upserts_instead_of_duplicating(monkeypatch, clean_users_table):
     from sqlalchemy import select
 
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
 
     email = f"dup-{uuid.uuid4()}@example.com"
@@ -435,6 +431,7 @@ async def test_chat_upserts_instead_of_duplicating(monkeypatch, clean_users_tabl
         assert items[0].details.get("technologies") == "Arduino IR"
 
     await app.state.mongo_db.onboarding_conversations.delete_many({"user_id": str(user_id)})
+
 
 def test_ensure_nonempty_and_ack_helpers():
     assert ensure_nonempty_reply("")
@@ -539,17 +536,15 @@ def test_ensure_nonempty_and_ack_helpers():
 
     from app.agents.onboarding import infer_question_intent
 
-    assert infer_question_intent(
-        "What did you focus on most in your Physics lab?"
-    ) == "explore"
-    assert infer_question_intent(
-        "Would you like to discuss your Accounting project next?"
-    ) == "confirm_topic"
+    assert infer_question_intent("What did you focus on most in your Physics lab?") == "explore"
+    assert (
+        infer_question_intent("Would you like to discuss your Accounting project next?")
+        == "confirm_topic"
+    )
 
 
 @pytest.mark.asyncio
 async def test_chat_never_returns_empty_reply(monkeypatch, clean_users_table):
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
 
     email = f"empty-{uuid.uuid4()}@example.com"
@@ -587,7 +582,6 @@ async def test_chat_never_returns_empty_reply(monkeypatch, clean_users_table):
 async def test_give_both_resolves_duplicate(monkeypatch, clean_users_table):
     from sqlalchemy import select
 
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
     from app.services import conversation_store
 
@@ -665,7 +659,6 @@ async def test_give_both_resolves_duplicate(monkeypatch, clean_users_table):
 
 @pytest.mark.asyncio
 async def test_ack_only_gets_specific_question(monkeypatch, clean_users_table):
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
 
     email = f"ack-{uuid.uuid4()}@example.com"
@@ -711,10 +704,7 @@ async def test_ack_only_gets_specific_question(monkeypatch, clean_users_table):
 
 
 @pytest.mark.asyncio
-async def test_llm_quota_returns_503_and_keeps_user_message(
-    monkeypatch, clean_users_table
-):
-    from app.core.config import get_settings
+async def test_llm_quota_returns_503_and_keeps_user_message(monkeypatch, clean_users_table):
     from app.db.mongo import get_mongo_db
     from app.gateway.llm import LLMGatewayError
     from app.services import conversation_store
@@ -752,8 +742,7 @@ async def test_llm_quota_returns_503_and_keeps_user_message(
     assert "retry" in detail_text.lower()
     msgs = await conversation_store.get_messages(mongo, user_id, limit=10)
     assert any(
-        m.get("role") == "user" and "Tell me about interviews" in m.get("content", "")
-        for m in msgs
+        m.get("role") == "user" and "Tell me about interviews" in m.get("content", "") for m in msgs
     )
     await mongo.onboarding_conversations.delete_many({"user_id": user_id})
 
@@ -809,10 +798,7 @@ async def test_chat_rate_limit_returns_429(monkeypatch, clean_users_table):
 
 
 @pytest.mark.asyncio
-async def test_practise_intent_skips_llm_and_offers_start(
-    monkeypatch, clean_users_table
-):
-    from app.core.config import get_settings
+async def test_practise_intent_skips_llm_and_offers_start(monkeypatch, clean_users_table):
     from app.db.mongo import get_mongo_db
 
     email = f"practise-{uuid.uuid4()}@example.com"
@@ -860,7 +846,6 @@ async def test_practise_intent_skips_llm_and_offers_start(
 
 @pytest.mark.asyncio
 async def test_chat_message_id_is_idempotent(monkeypatch, clean_users_table):
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
     from app.services import conversation_store
 

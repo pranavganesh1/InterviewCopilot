@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+from app.services import probe as probe_service
 from app.services.candidate_intelligence import (
     build_interview_prep_context,
     compact_brief_authoring_context,
@@ -9,7 +10,6 @@ from app.services.candidate_intelligence import (
     filter_vault_items_for_selected_projects,
     resolve_selected_project_titles,
 )
-from app.services import probe as probe_service
 
 
 def _snap(*, focus_projects=None, turns=True):
@@ -165,7 +165,9 @@ def test_track_scoped_weaknesses_not_cross_imported():
     ml = build_interview_prep_context(snap, track_id="t-ml", track_subject="ML")
     assert backend["evidence_scope"] == "track"
     assert ml["evidence_scope"] == "track"
-    assert any("sql" in w.lower() or "join" in w.lower() for w in backend["demonstrated_weaknesses"])
+    assert any(
+        "sql" in w.lower() or "join" in w.lower() for w in backend["demonstrated_weaknesses"]
+    )
     assert not any("gradient" in w.lower() for w in backend["demonstrated_weaknesses"])
     assert any("gradient" in w.lower() for w in ml["demonstrated_weaknesses"])
 
@@ -190,7 +192,9 @@ def test_filter_vault_items_keeps_skills_strips_unselected_projects():
 
 def test_first_interview_without_history_still_builds_context():
     snap = _snap(focus_projects=[], turns=False)
-    prep = build_interview_prep_context(snap, track_id="t-backend", mode="strict", duration_minutes=45)
+    prep = build_interview_prep_context(
+        snap, track_id="t-backend", mode="strict", duration_minutes=45
+    )
     assert prep["demonstrated_strengths"] == []
     assert prep["demonstrated_weaknesses"] == []
     assert prep["session_preferences"]["mode"] == "strict"
@@ -203,7 +207,9 @@ def test_first_interview_without_history_still_builds_context():
 def test_attach_session_opts_persists_candidate_context():
     snap = _snap(focus_projects=["QCGNN"])
     prep = build_interview_prep_context(snap, track_id="t-backend")
-    plan = [{"topic": "Python", "objective": "x", "difficulty": "foundational", "format": "conceptual"}]
+    plan = [
+        {"topic": "Python", "objective": "x", "difficulty": "foundational", "format": "conceptual"}
+    ]
     out = probe_service.attach_session_opts(
         plan,
         use_resume=True,

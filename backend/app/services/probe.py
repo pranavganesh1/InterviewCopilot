@@ -82,7 +82,8 @@ _DEFENSE_TEMPLATES = (
     ),
     (
         "technology",
-        "In {title}, why did you select those technologies, and what alternatives did you consider?",
+        "In {title}, why did you select those technologies, and what alternatives did"
+        " you consider?",
     ),
     (
         "implementation",
@@ -181,9 +182,7 @@ def session_opts_from_plan(plan: list | None) -> dict:
                 "domain_profile": profile if isinstance(profile, dict) else None,
                 "candidate_context": ctx if isinstance(ctx, dict) else None,
                 "selected_projects": (
-                    [str(t) for t in selected if t][:6]
-                    if isinstance(selected, list)
-                    else []
+                    [str(t) for t in selected if t][:6] if isinstance(selected, list) else []
                 ),
             }
     return {
@@ -247,11 +246,7 @@ def attach_session_opts(
             "allowed_types": list(domain_profile.get("allowed_types") or [])[:12],
         }
     defense = bool(defense_mode)
-    selected = [
-        str(t).strip()[:120]
-        for t in (selected_projects or [])
-        if str(t or "").strip()
-    ][:6]
+    selected = [str(t).strip()[:120] for t in (selected_projects or []) if str(t or "").strip()][:6]
     # Persist a trimmed prep context for later turns (no full snapshot).
     compact_ctx = None
     if isinstance(candidate_context, dict) and candidate_context:
@@ -260,15 +255,13 @@ def attach_session_opts(
             "track_id": candidate_context.get("track_id"),
             "track_subject": candidate_context.get("track_subject"),
             "evidence_scope": candidate_context.get("evidence_scope"),
-            "selected_projects": list(
-                candidate_context.get("selected_projects") or selected
-            )[:6],
-            "demonstrated_strengths": list(
-                candidate_context.get("demonstrated_strengths") or []
-            )[:8],
-            "demonstrated_weaknesses": list(
-                candidate_context.get("demonstrated_weaknesses") or []
-            )[:8],
+            "selected_projects": list(candidate_context.get("selected_projects") or selected)[:6],
+            "demonstrated_strengths": list(candidate_context.get("demonstrated_strengths") or [])[
+                :8
+            ],
+            "demonstrated_weaknesses": list(candidate_context.get("demonstrated_weaknesses") or [])[
+                :8
+            ],
             "covered_concepts": list(candidate_context.get("covered_concepts") or [])[:12],
             "not_assessed": list(candidate_context.get("not_assessed") or [])[:8],
             "career_goals": candidate_context.get("career_goals"),
@@ -882,11 +875,7 @@ def pick_probe(
             return probe
 
     # ~30% of slots when focus is on: every third attempt prefers weak retest.
-    if (
-        opts.get("focus_weak")
-        and weak_concepts
-        and (questions_asked % 3 == 0 or not vault_on)
-    ):
+    if opts.get("focus_weak") and weak_concepts and (questions_asked % 3 == 0 or not vault_on):
         probe = craft_weakness_retest(
             weak_concepts=weak_concepts, asked=asked, mode=mode, seed=seed
         )
@@ -897,9 +886,7 @@ def pick_probe(
         # Defense mode: prefer project items and dimension probes.
         items_for_probe = vault_items
         if opts.get("defense_mode"):
-            projects = [
-                i for i in vault_items if (i.get("category") or "").lower() == "project"
-            ]
+            projects = [i for i in vault_items if (i.get("category") or "").lower() == "project"]
             items_for_probe = projects or vault_items
         probe = craft_resume_probe(
             items=items_for_probe,
@@ -969,9 +956,10 @@ def project_defense_findings(turns: list[Any]) -> dict:
                 text = str(gap or "").strip()
                 if text and text not in gaps:
                     gaps.append(text[:120])
-            if dim == "ownership" or "personally" in (getattr(turn, "question", "") or "").lower():
-                if project and project not in ownership_unclear:
-                    ownership_unclear.append(project[:80])
+            if (
+                dim == "ownership" or "personally" in (getattr(turn, "question", "") or "").lower()
+            ) and (project and project not in ownership_unclear):
+                ownership_unclear.append(project[:80])
     return {
         "projects_assessed": projects[:8],
         "demonstrated": demonstrated[:8],

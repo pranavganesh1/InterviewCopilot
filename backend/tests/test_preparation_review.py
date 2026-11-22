@@ -11,6 +11,7 @@ from app.models.user import User
 from app.models.vault import VaultItem
 from app.services.candidate_intelligence import compose_candidate_intelligence
 from app.services.preparation_review import (
+    _preserve_if_incomplete,
     annotate_roadmap_completion,
     assessed_concepts_from_snapshot,
     build_profile_summary,
@@ -21,7 +22,6 @@ from app.services.preparation_review import (
     intelligence_digest_from_snapshot,
     merge_review_patch,
     resolve_next_action,
-    _preserve_if_incomplete,
 )
 from app.services.vault_service import upsert_extracted_items
 
@@ -117,9 +117,7 @@ def test_merge_preserves_user_summary_edit():
 
 def test_skill_confirmed_only_with_interview_evidence():
     skill = _item(category="skill", title="Python")
-    assessed = classify_item(
-        skill, duplicate_ids=set(), assessed_subjects={"python fundamentals"}
-    )
+    assessed = classify_item(skill, duplicate_ids=set(), assessed_subjects={"python fundamentals"})
     assert assessed["status"] == "confirmed"
 
 
@@ -130,7 +128,10 @@ def test_roadmap_prioritizes_persisted_improvement_topics():
         improvement_topics=["Recursion", "System design trade-offs"],
     )
     assert roadmap[0]["subject"] == "Recursion"
-    assert "prior feedback" in roadmap[0]["practise"].lower() or "improvement" in roadmap[0]["why"].lower()
+    assert (
+        "prior feedback" in roadmap[0]["practise"].lower()
+        or "improvement" in roadmap[0]["why"].lower()
+    )
     assert any(s["subject"] == "Java" for s in roadmap)
 
 
@@ -143,9 +144,7 @@ def test_resolve_next_action_priority_order():
         "max_turns": 15,
         "answered_count": 1,
     }
-    assert (
-        resolve_next_action(open_sessions=[open_session])["kind"] == "resume_session"
-    )
+    assert resolve_next_action(open_sessions=[open_session])["kind"] == "resume_session"
 
     clarify = resolve_next_action(
         needs_clarification=[
@@ -408,12 +407,15 @@ def test_review_consumes_shared_snapshot_for_evidence():
     assert "Python" in intel["demonstrated_strengths"] or any(
         "python" in s.lower() for s in intel["demonstrated_strengths"]
     )
-    assert any("sql" in s.lower() or "join" in s.lower() for s in intel["areas_requiring_improvement"])
+    assert any(
+        "sql" in s.lower() or "join" in s.lower() for s in intel["areas_requiring_improvement"]
+    )
     # Redis claimed but not interview-answered → not listed as a weakness.
     assert not any("redis" in s.lower() for s in intel["areas_requiring_improvement"])
-    assert "Redis" in intel["claimed_skills_without_interview"] or "Redis" in intel[
-        "unverified_claims"
-    ]
+    assert (
+        "Redis" in intel["claimed_skills_without_interview"]
+        or "Redis" in intel["unverified_claims"]
+    )
     assert intel["policy"]["unknown_is_not_weak"] is True
     # Vault project details come through (claims only).
     project = next(p for p in intel["projects"] if p["name"] == "Campus Cart")
@@ -422,9 +424,10 @@ def test_review_consumes_shared_snapshot_for_evidence():
     assert "architecture" in project["needs_clarification"]
     # Roadmap prioritizes interview improvement evidence.
     assert review["roadmap"][0]["subject"]
-    assert "sql" in review["roadmap"][0]["subject"].lower() or "join" in review["roadmap"][0][
-        "subject"
-    ].lower()
+    assert (
+        "sql" in review["roadmap"][0]["subject"].lower()
+        or "join" in review["roadmap"][0]["subject"].lower()
+    )
     assert review["roadmap"][0].get("evidence_basis", {}).get("kind") == "interview_or_feedback"
     # Python skill can be confirmed from demonstrated interview evidence.
     python_status = next(s for s in review["item_statuses"] if s["title"] == "Python")
@@ -440,12 +443,13 @@ def test_snapshot_helpers_do_not_treat_claims_as_weak():
     assert any("sql" in a or "join" in a for a in assessed)
     improvements = improvement_topics_from_snapshot(snap)
     assert improvements
-    assert not any("redis" == t.lower() for t in improvements)
+    assert not any(t.lower() == "redis" for t in improvements)
     digest = intelligence_digest_from_snapshot(snap)
     assert digest["policy"]["claims_are_not_proof"] is True
-    assert "Caching" in digest["not_assessed_from_briefs"] or "caching" in " ".join(
-        digest["not_assessed_from_briefs"]
-    ).lower()
+    assert (
+        "Caching" in digest["not_assessed_from_briefs"]
+        or "caching" in " ".join(digest["not_assessed_from_briefs"]).lower()
+    )
 
 
 def test_missing_snapshot_sections_do_not_break_review():
@@ -475,15 +479,17 @@ def test_build_roadmap_uses_snapshot_project_clarification():
         candidate_intelligence=snap,
     )
     project_step = next(s for s in roadmap if "Campus Cart" in s["subject"])
-    assert "clarification" in project_step["why"].lower() or "missing" in " ".join(
-        project_step.get("evidence_basis", {}).get("needs_clarification") or []
-    ).lower() or project_step.get("evidence_basis", {}).get("needs_clarification")
+    assert (
+        "clarification" in project_step["why"].lower()
+        or "missing"
+        in " ".join(project_step.get("evidence_basis", {}).get("needs_clarification") or []).lower()
+        or project_step.get("evidence_basis", {}).get("needs_clarification")
+    )
     assert project_step["evidence_basis"]["kind"] == "vault_project_claim"
 
 
 @pytest.mark.asyncio
 async def test_complete_generates_persisted_review(monkeypatch, clean_users_table):
-    from app.core.config import get_settings
     from app.db.mongo import get_mongo_db
     from app.services import conversation_store
 
@@ -530,9 +536,7 @@ async def test_complete_generates_persisted_review(monkeypatch, clean_users_tabl
     app.state.mongo_db = mongo
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        complete = await client.post(
-            "/api/v1/onboarding/complete", cookies={"ic_access": token}
-        )
+        complete = await client.post("/api/v1/onboarding/complete", cookies={"ic_access": token})
         assert complete.status_code == 200
         body = complete.json()
         assert body["onboarding_finished"] is True

@@ -105,9 +105,7 @@ def _item_summary(item: VaultItem) -> dict:
         "title": item.title,
         "details": details,
         "source": item.source,
-        "missing_details": (
-            missing_project_details(details) if item.category == "project" else []
-        ),
+        "missing_details": (missing_project_details(details) if item.category == "project" else []),
     }
 
 
@@ -129,7 +127,10 @@ def find_near_duplicates(items: list[VaultItem]) -> list[dict]:
             reason = (
                 "Normalized titles match after ignoring punctuation and filler words."
                 if equivalent
-                else "Titles overlap strongly; they may be the same experience with different wording."
+                else (
+                    "Titles overlap strongly; they may be the same experience"
+                    " with different wording."
+                )
             )
             pairs.append(
                 {
@@ -165,9 +166,7 @@ def suggest_keep_side(pair: dict) -> str:
     return "a"
 
 
-async def sync_resume_items(
-    db: AsyncSession, user_id, items: list[ExtractedItem]
-) -> dict:
+async def sync_resume_items(db: AsyncSession, user_id, items: list[ExtractedItem]) -> dict:
     """Incremental resume sync against the Profile Vault (source of truth).
 
     - Equivalent titles → skip (or flag enrichment; never silent overwrite)
@@ -188,9 +187,7 @@ async def sync_resume_items(
             title = (item.title or "").strip()
             category = (item.category or "").strip().lower()
             if not title or not category:
-                failed.append(
-                    {"title": title or "(empty)", "reason": "missing_title_or_category"}
-                )
+                failed.append({"title": title or "(empty)", "reason": "missing_title_or_category"})
                 continue
             batch_key = (category, normalize_title(title))
             if not batch_key[1]:
@@ -358,12 +355,7 @@ async def resolve_duplicate_pair(
         return None
     keep = await db.get(VaultItem, keep_id)
     discard = await db.get(VaultItem, discard_id)
-    if (
-        keep is None
-        or discard is None
-        or keep.user_id != user_id
-        or discard.user_id != user_id
-    ):
+    if keep is None or discard is None or keep.user_id != user_id or discard.user_id != user_id:
         return None
     if keep.category != discard.category:
         return None
@@ -602,8 +594,7 @@ def build_verify_first_welcome(
 
     if failed and created > 0:
         body += (
-            "\n\nA few pieces didn't come through cleanly; we can fix those together "
-            "as we review."
+            "\n\nA few pieces didn't come through cleanly; we can fix those together as we review."
         )
 
     return "\n".join(
@@ -641,7 +632,7 @@ def build_profile_review_message(items: list[VaultItem]) -> str:
         )
 
     lines = [
-        f"Hey! Welcome back.",
+        "Hey! Welcome back.",
         "",
         f"{RESUME_WELCOME_MARKER} and I have a profile ready for us to work from.",
         "",

@@ -66,10 +66,16 @@ def test_one_completed_interview_no_overtime_progress():
         domain_profile={"category": "programming"},
     )
     assert out["progress"]["available"] is False
-    assert "two interviews" in out["progress"]["reason"].lower() or "at least two" in out[
-        "progress"
-    ]["reason"].lower()
-    assert out["career_readiness"]["level"] in ("early", "developing", "building", "needs_focused_practice")
+    assert (
+        "two interviews" in out["progress"]["reason"].lower()
+        or "at least two" in out["progress"]["reason"].lower()
+    )
+    assert out["career_readiness"]["level"] in (
+        "early",
+        "developing",
+        "building",
+        "needs_focused_practice",
+    )
 
 
 def test_multiple_interviews_improving_and_persistent():
@@ -77,17 +83,40 @@ def test_multiple_interviews_improving_and_persistent():
         "has_data": True,
         "history": [{"session_id": "s1", "areas": {"sql": 50}}],
         "concepts": [
-            _concept("sql joins", "improving", times=3, last="good", trend=["none", "partial", "good"]),
-            _concept("hashmaps", "weak", times=3, last="none", trend=["none", "partial", "none"], gaps=["collisions"]),
-            _concept("recursion", "mastered", times=2, last="excellent", trend=["good", "excellent"]),
-            _concept("graphs", "weak", times=1, last="partial"),  # not persistent (times < 2 for persistent filter uses >=2)
+            _concept(
+                "sql joins", "improving", times=3, last="good", trend=["none", "partial", "good"]
+            ),
+            _concept(
+                "hashmaps",
+                "weak",
+                times=3,
+                last="none",
+                trend=["none", "partial", "none"],
+                gaps=["collisions"],
+            ),
+            _concept(
+                "recursion", "mastered", times=2, last="excellent", trend=["good", "excellent"]
+            ),
+            _concept(
+                "graphs", "weak", times=1, last="partial"
+            ),  # not persistent (times < 2 for persistent filter uses >=2)
         ],
     }
     out = ci.compose_career_intelligence(
         concept_summary=summary,
         assessment_rows=[
-            {"session_id": "s1", "overall_score": 40, "questions_attempted": 4, "created_at": "2026-01-01"},
-            {"session_id": "s2", "overall_score": 70, "questions_attempted": 5, "created_at": "2026-02-01"},
+            {
+                "session_id": "s1",
+                "overall_score": 40,
+                "questions_attempted": 4,
+                "created_at": "2026-01-01",
+            },
+            {
+                "session_id": "s2",
+                "overall_score": 70,
+                "questions_attempted": 5,
+                "created_at": "2026-02-01",
+            },
         ],
         planned_topics=["SQL", "Networking"],
         project_defense_aggregate=None,
@@ -135,7 +164,9 @@ def test_not_yet_assessed_not_treated_as_failure():
     out = ci.compose_career_intelligence(
         concept_summary={
             "has_data": True,
-            "concepts": [_concept("sql", "mastered", last="excellent", trend=["excellent", "excellent"])],
+            "concepts": [
+                _concept("sql", "mastered", last="excellent", trend=["excellent", "excellent"])
+            ],
             "history": [],
         },
         assessment_rows=[
@@ -199,7 +230,10 @@ def test_commerce_discipline_practice_wording():
         domain_profile={"category": "business", "uses_code": False},
     )
     assert out["career_readiness"]["discipline"] == "business"
-    assert any("numeric" in r["practice"].lower() or "case" in r["practice"].lower() for r in out["recommendations"])
+    assert any(
+        "numeric" in r["practice"].lower() or "case" in r["practice"].lower()
+        for r in out["recommendations"]
+    )
 
 
 def test_physics_discipline_and_target_role():
@@ -220,7 +254,10 @@ def test_physics_discipline_and_target_role():
     )
     assert out["career_readiness"]["discipline"] == "science"
     assert out["career_readiness"]["target_role"] == "Research Intern"
-    assert any("assumptions" in r["practice"].lower() or "paper" in r["practice"].lower() for r in out["recommendations"])
+    assert any(
+        "assumptions" in r["practice"].lower() or "paper" in r["practice"].lower()
+        for r in out["recommendations"]
+    )
 
 
 def test_evidence_index_only_with_enough_data():
@@ -439,16 +476,18 @@ def test_compose_consumes_shared_snapshot_without_breaking_contract():
     assert "architecture" in out["project_intelligence"]["projects"][0]["needs_clarification"]
     gaps = out["knowledge_gaps"]
     assert gaps["policy"]["unknown_is_not_weak"] is True
-    assert "Redis" in gaps["claimed_skills_without_interview"] or "Redis" in gaps[
-        "unverified_claims"
-    ]
+    assert (
+        "Redis" in gaps["claimed_skills_without_interview"] or "Redis" in gaps["unverified_claims"]
+    )
     # Redis claim must not appear as a demonstrated weakness.
     assert not any("redis" in str(r.get("concept") or "").lower() for r in out["improvement_areas"])
     # Demonstrated Python strength should not be re-recommended.
     assert not any(r["topic"].lower() == "python" for r in out["recommendations"])
     # SQL weakness / project clarification should be recommended with evidence.
     assert any(
-        "sql" in r["topic"].lower() or "join" in r["topic"].lower() or "clarify" in r["topic"].lower()
+        "sql" in r["topic"].lower()
+        or "join" in r["topic"].lower()
+        or "clarify" in r["topic"].lower()
         for r in out["recommendations"]
     )
     assert any(r.get("evidence_basis") for r in out["recommendations"])
@@ -493,9 +532,10 @@ def test_insufficient_evidence_readiness_with_snapshot_claims_only():
     assert out["career_readiness"]["level"] == "insufficient_evidence"
     assert out["progress"]["available"] is False
     assert out["knowledge_gaps"]["demonstrated_weaknesses"] == []
-    assert "Kubernetes" in out["not_yet_assessed"] or "Kubernetes" in out["knowledge_gaps"][
-        "claimed_skills_without_interview"
-    ]
+    assert (
+        "Kubernetes" in out["not_yet_assessed"]
+        or "Kubernetes" in out["knowledge_gaps"]["claimed_skills_without_interview"]
+    )
     assert out["integrations"]["candidate_intelligence"] is True
 
 

@@ -11,7 +11,7 @@ Also exposes ``build_interview_prep_context`` for start_session / brief authorin
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -92,8 +92,8 @@ def compose_candidate_intelligence(
     Inputs are already-normalized plain dicts (never ORM objects).
     """
     notes = list(composition_notes or [])
-    prefs = normalize_preferences(preferences) if preferences is not None else dict(
-        EMPTY_PREFERENCES
+    prefs = (
+        normalize_preferences(preferences) if preferences is not None else dict(EMPTY_PREFERENCES)
     )
     if not prefs.get("target_role"):
         notes.append(
@@ -184,7 +184,7 @@ async def get_candidate_intelligence_for_user(
 
     vault_items: list[dict] = []
     try:
-        from app.services.vault_service import list_items, _item_summary
+        from app.services.vault_service import _item_summary, list_items
 
         rows = await list_items(db, user_id)
         vault_items = [_item_summary(i) for i in rows]
@@ -200,9 +200,7 @@ async def get_candidate_intelligence_for_user(
             from app.services import conversation_store
 
             uid = str(user_id)
-            preferences = await conversation_store.get_preparation_preferences(
-                mongo_db, uid
-            )
+            preferences = await conversation_store.get_preparation_preferences(mongo_db, uid)
             profile_review = await conversation_store.get_profile_review(mongo_db, uid)
             coach_context = await conversation_store.get_coach_context(mongo_db, uid)
             available["onboarding"] = True
@@ -333,8 +331,7 @@ def _compose_projects(vault_items: list[dict]) -> list[dict]:
         known = probe_service.project_known_fields(details)
         # Also surface alias groups for the snapshot contract.
         fields = {
-            label: _first_detail(details, keys)
-            for label, keys in _PROJECT_DETAIL_ALIASES.items()
+            label: _first_detail(details, keys) for label, keys in _PROJECT_DETAIL_ALIASES.items()
         }
         missing = probe_service.project_missing_fields(details)
         # Keep vault_service completeness keys too (never invent).
@@ -355,7 +352,7 @@ def _compose_projects(vault_items: list[dict]) -> list[dict]:
                 "outcomes": fields.get("outcomes"),
                 "known_fields": known,
                 "needs_clarification": missing,
-                "raw_details_keys": sorted(str(k) for k in details.keys()),
+                "raw_details_keys": sorted(str(k) for k in details),
             }
         )
         if len(out) >= _MAX_PROJECTS:
@@ -375,9 +372,7 @@ def _compose_knowledge_evidence(
     # Global demonstrated evidence from turns (cross-track digest — labeled).
     global_turns = [_turn_ns(row) for row in turn_rows]
     global_order = _session_order(turn_rows)
-    global_summary = weakness_service.aggregate_turns(
-        global_turns, session_order=global_order
-    )
+    global_summary = weakness_service.aggregate_turns(global_turns, session_order=global_order)
     global_intel = career_intel.build_concept_intelligence(global_summary)
 
     # Per-track demonstrated evidence — never silently fold into other tracks.
@@ -480,7 +475,9 @@ def _compose_knowledge_evidence(
         },
         "not_assessed": {
             "evidence_kind": "not_assessed",
-            "note": "Unknown is not weak — topics planned or claimed but not answered in interviews.",
+            "note": (
+                "Unknown is not weak — topics planned or claimed but not answered in interviews."
+            ),
             "from_briefs_cross_track": cross_not_assessed,
             "claimed_skills_without_interview": _claims_without_demo(
                 claims["skills"], assessed_global
@@ -573,16 +570,12 @@ def _compose_interview_history(
                 for r in (cross.get("weaknesses") or [])
                 if r.get("concept") and int(r.get("times_asked") or 0) >= 2
             ][:10],
-            "note": (
-                "Overview only — do not treat a weakness here as applying to every track."
-            ),
+            "note": ("Overview only — do not treat a weakness here as applying to every track."),
         },
     }
 
 
-def _compose_preparation_preferences(
-    preferences: dict, profile_review: dict | None
-) -> dict:
+def _compose_preparation_preferences(preferences: dict, profile_review: dict | None) -> dict:
     review = profile_review if isinstance(profile_review, dict) else {}
     next_action = review.get("next_action") if isinstance(review.get("next_action"), dict) else None
     return {
@@ -654,7 +647,7 @@ def _compose_feedback_history(report_rows: list[dict]) -> dict:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _dedupe_notes(notes: list[str]) -> list[str]:
@@ -722,18 +715,17 @@ def _profile_conflicts(
         for i in vault_by_cat.get("education", [])
         if i.get("title")
     ]
-    if user_edu and vault_edu:
-        if user_edu.lower() not in {v.lower() for v in vault_edu}:
-            conflicts.append(
-                {
-                    "field": "education",
-                    "resolution": "retain_both",
-                    "user_profile": user_edu[:200],
-                    "vault": vault_edu[:6],
-                    "note": "Education strings differ; both retained.",
-                }
-            )
-            notes.append("education conflict between users table and vault — both retained")
+    if user_edu and vault_edu and user_edu.lower() not in {v.lower() for v in vault_edu}:
+        conflicts.append(
+            {
+                "field": "education",
+                "resolution": "retain_both",
+                "user_profile": user_edu[:200],
+                "vault": vault_edu[:6],
+                "note": "Education strings differ; both retained.",
+            }
+        )
+        notes.append("education conflict between users table and vault — both retained")
     return conflicts
 
 
@@ -769,9 +761,7 @@ def _claims_without_demo(claim_skills: list[dict], assessed: set[str]) -> list[s
         key = weakness_service.normalize_concept(title)
         if not key:
             continue
-        if key in assessed_norm or any(
-            key in a or a in key for a in assessed_norm if len(a) >= 4
-        ):
+        if key in assessed_norm or any(key in a or a in key for a in assessed_norm if len(a) >= 4):
             continue
         out.append(title[:80])
         if len(out) >= 12:
@@ -808,12 +798,8 @@ def _report_digest(rep: dict) -> dict:
     content = rep.get("content") if isinstance(rep.get("content"), dict) else {}
     created = rep.get("created_at")
     strengths = [str(x)[:160] for x in (content.get("strengths") or []) if x][:6]
-    improvements = [
-        str(x)[:160] for x in (content.get("improvement_areas") or []) if x
-    ][:6]
-    recommendations = [
-        str(x)[:160] for x in (content.get("recommendations") or []) if x
-    ][:6]
+    improvements = [str(x)[:160] for x in (content.get("improvement_areas") or []) if x][:6]
+    recommendations = [str(x)[:160] for x in (content.get("recommendations") or []) if x][:6]
     comps = []
     for row in content.get("competency_assessments") or []:
         if not isinstance(row, dict):
@@ -840,9 +826,9 @@ def _report_digest(rep: dict) -> dict:
         "improvement_areas": improvements,
         "recommendations": recommendations,
         "competency_assessments": comps,
-        "unassessed_topics": [
-            str(x)[:80] for x in (content.get("unassessed_topics") or []) if x
-        ][:8],
+        "unassessed_topics": [str(x)[:80] for x in (content.get("unassessed_topics") or []) if x][
+            :8
+        ],
         "evidence_kind": "feedback_report",
         "freshness": {
             "created_at": created,
@@ -851,16 +837,12 @@ def _report_digest(rep: dict) -> dict:
     }
 
 
-async def _load_user_profile(
-    db: AsyncSession, user_id, *, user: Any | None = None
-) -> dict | None:
+async def _load_user_profile(db: AsyncSession, user_id, *, user: Any | None = None) -> dict | None:
     row = user
     if row is None:
         from app.models.user import User
 
-        row = (
-            await db.execute(select(User).where(User.id == user_id))
-        ).scalar_one_or_none()
+        row = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if row is None:
         return None
     completed = getattr(row, "onboarding_completed_at", None)
@@ -877,13 +859,17 @@ async def _load_tracks(db: AsyncSession, user_id) -> list[dict]:
     from app.models.track import InterviewBrief, Track
 
     tracks = (
-        await db.execute(
-            select(Track)
-            .where(Track.user_id == user_id)
-            .order_by(Track.created_at.asc())
-            .limit(_MAX_TRACKS)
+        (
+            await db.execute(
+                select(Track)
+                .where(Track.user_id == user_id)
+                .order_by(Track.created_at.asc())
+                .limit(_MAX_TRACKS)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     out: list[dict] = []
     for track in tracks:
         brief = (
@@ -1007,10 +993,10 @@ async def _load_progression(db: AsyncSession, track_ids: list[str]) -> dict[str,
     if not uuids:
         return {}
     rows = (
-        await db.execute(
-            select(ProgressionState).where(ProgressionState.track_id.in_(uuids))
-        )
-    ).scalars().all()
+        (await db.execute(select(ProgressionState).where(ProgressionState.track_id.in_(uuids))))
+        .scalars()
+        .all()
+    )
     return {
         str(row.track_id): {
             "strict_completed": int(row.strict_completed or 0),
@@ -1089,11 +1075,7 @@ def resolve_selected_project_titles(
             continue
         # Soft containment match against vault titles.
         hit = next(
-            (
-                vault_names[vkey]
-                for vkey in vault_names
-                if key in vkey or vkey in key
-            ),
+            (vault_names[vkey] for vkey in vault_names if key in vkey or vkey in key),
             None,
         )
         if hit and hit not in matched:

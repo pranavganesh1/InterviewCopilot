@@ -66,12 +66,11 @@ Guided reactions:
 
 COVERAGE_RUBRIC = """Coverage rubric:
 - none      = no relevant content, or the answer is wrong
-- partial   = some correct points, important parts missing or wrong; OR too brief/unclear
-              to fully judge
+- partial   = some correct points, important parts missing or wrong; OR too brief/unclear to judge
 - good      = mostly correct and complete, minor gaps
 - excellent = correct, complete, with sound reasoning (and complexity/edge cases where relevant)
 Map outcomes: excellent/good → Correct; partial → Partially correct; none → Incorrect;
-brief/unclear without a clear factual error → Unclear or insufficient info (coverage=partial).
+brief/unclear without a factual error → Unclear or insufficient information (coverage=partial).
 Assess technical correctness, conceptual understanding, completeness, explanation quality,
 practical application, and relevant examples when the question calls for them.
 A short answer is not automatically incorrect — mark partial/unclear when substance is missing.

@@ -34,13 +34,7 @@ async def test_fenced_json_parses_without_repair():
         return httpx.Response(
             200,
             json={
-                "choices": [
-                    {
-                        "message": {
-                            "content": '```json\n{"reply": "hi", "count": 3}\n```'
-                        }
-                    }
-                ]
+                "choices": [{"message": {"content": '```json\n{"reply": "hi", "count": 3}\n```'}}]
             },
         )
 

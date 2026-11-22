@@ -59,7 +59,14 @@ def test_project_specific_question_generation_and_missing_info():
     # Missing architecture/tech/contribution/outcome should be askable.
     assert any(
         word in probe["next_question"].lower()
-        for word in ("architecture", "technologies", "stack", "contribution", "implement", "evaluate")
+        for word in (
+            "architecture",
+            "technologies",
+            "stack",
+            "contribution",
+            "implement",
+            "evaluate",
+        )
     )
 
 
@@ -82,7 +89,9 @@ def test_ownership_dimension_question():
         items=items, area="Projects", asked=[], mode="strict", seed=7
     )
     assert probe is not None
-    assert "personally" in probe["next_question"].lower() or "others" in probe["next_question"].lower()
+    assert (
+        "personally" in probe["next_question"].lower() or "others" in probe["next_question"].lower()
+    )
 
 
 def test_defense_follow_up_reuses_adaptive_policy():

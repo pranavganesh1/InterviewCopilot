@@ -39,9 +39,7 @@ def test_verify_welcome_has_no_project_claim():
 
 
 def test_python_alone_does_not_force_computer_science():
-    bg = infer_candidate_background(
-        [{"category": "skill", "title": "Python", "details": {}}]
-    )
+    bg = infer_candidate_background([{"category": "skill", "title": "Python", "details": {}}])
     assert bg["field_family"] != "computer_science"
 
 
@@ -104,12 +102,12 @@ async def test_profile_confirm_enables_goals_intro(clean_users_table):
     app.state.mongo_db = mongo
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        before = await client.get(
-            "/api/v1/onboarding/state", cookies={"ic_access": token}
-        )
+        before = await client.get("/api/v1/onboarding/state", cookies={"ic_access": token})
         assert before.status_code == 200
         msgs_before = before.json()["messages"]
-        assert all("What would you like to focus on" not in (m.get("content") or "") for m in msgs_before)
+        assert all(
+            "What would you like to focus on" not in (m.get("content") or "") for m in msgs_before
+        )
         assert "QCGNN" not in (msgs_before[0].get("content") or "")
 
         confirmed = await client.post(

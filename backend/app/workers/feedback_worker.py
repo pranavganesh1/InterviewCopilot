@@ -343,7 +343,10 @@ async def run_worker() -> None:
             "feedback_worker_nats_connect_failed",
             nats_url=settings.nats_url,
             error=str(exc),
-            hint="Start infra: cd infra && docker compose --env-file ../.env up -d postgres mongo nats litellm seaweedfs",
+            hint=(
+                "Start infra: cd infra && docker compose --env-file ../.env up -d"
+                " postgres mongo nats litellm seaweedfs"
+            ),
         )
         raise SystemExit(1) from exc
     js = nc.jetstream()
@@ -367,7 +370,9 @@ async def run_worker() -> None:
         )
 
     sub = await js.pull_subscribe(events.FEEDBACK_SUBJECT, durable="feedback-worker")
-    log.info("feedback_worker_listening", subject=events.FEEDBACK_SUBJECT, nats_url=settings.nats_url)
+    log.info(
+        "feedback_worker_listening", subject=events.FEEDBACK_SUBJECT, nats_url=settings.nats_url
+    )
 
     catch_up_task = maybe_start_catch_up_task()
     authoring_task = asyncio.create_task(run_authoring_consumer(nc))

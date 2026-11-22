@@ -1,7 +1,5 @@
 """Step 4 — Adaptive Interview Intelligence (isolated / offline)."""
 
-from types import SimpleNamespace
-
 import pytest
 
 from app.agents.interviewer import (
@@ -174,9 +172,7 @@ def test_follow_up_limit_respected():
 def test_topic_block_of_three_when_configured():
     assert DEFAULT_QUESTIONS_PER_TOPIC == 3
     assert _questions_per_topic(15, 5, duration_minutes=60) == 3
-    seq = _blocked_topic_sequence(
-        ["Python", "SQL", "DBMS", "OS", "DSA"], 15, duration_minutes=60
-    )
+    seq = _blocked_topic_sequence(["Python", "SQL", "DBMS", "OS", "DSA"], 15, duration_minutes=60)
     assert seq[:3] == ["Python", "Python", "Python"]
     assert seq[3:6] == ["SQL", "SQL", "SQL"]
 
@@ -298,9 +294,7 @@ def test_project_defense_prefers_selected_project():
             "last_answer": "We used a hybrid classical-quantum pipeline.",
             "questions_remaining": 8,
             "defense_mode": True,
-            "candidate_prep_context": {
-                "selected_projects": ["Music Database Management System"]
-            },
+            "candidate_prep_context": {"selected_projects": ["Music Database Management System"]},
         },
     )
     assert fixed.decision == "next_area"

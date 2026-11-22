@@ -112,9 +112,7 @@ async def main() -> int:
     )
     parser.add_argument(
         "--config",
-        default=str(
-            Path(__file__).resolve().parents[2] / "infra" / "litellm" / "config.yaml"
-        ),
+        default=str(Path(__file__).resolve().parents[2] / "infra" / "litellm" / "config.yaml"),
         help="Path to LiteLLM config.yaml (structure only; keys never printed)",
     )
     args = parser.parse_args()

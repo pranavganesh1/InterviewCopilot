@@ -41,9 +41,7 @@ async def seed_user() -> tuple[uuid.UUID, str]:
                     )
                 )
             )
-            await session.execute(
-                delete(InterviewSession).where(InterviewSession.user_id == uid)
-            )
+            await session.execute(delete(InterviewSession).where(InterviewSession.user_id == uid))
             await session.execute(
                 delete(InterviewBrief).where(InterviewBrief.track_id.in_(track_ids))
             )
@@ -91,12 +89,8 @@ async def cleanup(user_id: uuid.UUID) -> None:
                 )
             )
         )
-        await session.execute(
-            delete(InterviewSession).where(InterviewSession.user_id == user_id)
-        )
-        await session.execute(
-            delete(InterviewBrief).where(InterviewBrief.track_id.in_(track_ids))
-        )
+        await session.execute(delete(InterviewSession).where(InterviewSession.user_id == user_id))
+        await session.execute(delete(InterviewBrief).where(InterviewBrief.track_id.in_(track_ids)))
         await session.execute(delete(Track).where(Track.user_id == user_id))
         await session.execute(delete(VaultItem).where(VaultItem.user_id == user_id))
         await session.execute(delete(User).where(User.id == user_id))

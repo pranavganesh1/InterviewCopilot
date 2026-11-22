@@ -28,9 +28,7 @@ from app.services import probe as probe_service
 def test_persona_prompt_blocks_differ_and_balanced_is_empty():
     assert persona_prompt_block("balanced") == ""
     blocks = {
-        pid: persona_prompt_block(pid, mode="strict")
-        for pid in PERSONAS
-        if pid != "balanced"
+        pid: persona_prompt_block(pid, mode="strict") for pid in PERSONAS if pid != "balanced"
     }
     assert len(set(blocks.values())) == len(blocks)
     for block in blocks.values():
@@ -149,9 +147,7 @@ async def test_invalid_persona_returns_422(clean_users_table, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_persona_stored_returned_immutable_and_in_report(
-    clean_users_table, monkeypatch
-):
+async def test_persona_stored_returned_immutable_and_in_report(clean_users_table, monkeypatch):
     from app.agents.interviewer import TurnDecision
 
     calls = {"n": 0}
@@ -183,9 +179,7 @@ async def test_persona_stored_returned_immutable_and_in_report(
     async def fake_publish(session_id, *_a, **_k):
         published.append(str(session_id))
 
-    monkeypatch.setattr(
-        "app.services.interview_service.publish_feedback_job", fake_publish
-    )
+    monkeypatch.setattr("app.services.interview_service.publish_feedback_job", fake_publish)
 
     async with SessionFactory() as session:
         user = User(google_sub=f"sub-{uuid.uuid4()}", email=f"p2-{uuid.uuid4()}@ex.com")
@@ -288,9 +282,7 @@ async def test_scoring_identical_across_personas(clean_users_table, monkeypatch)
                     version=1,
                     content={
                         "summary": "Circuits",
-                        "competencies": [
-                            {"name": "Ohm", "description": "v", "importance": "core"}
-                        ],
+                        "competencies": [{"name": "Ohm", "description": "v", "importance": "core"}],
                         "question_areas": [{"topic": "Ohm", "guidance": "V=IR"}],
                     },
                 )

@@ -99,9 +99,7 @@ async def test_open_sessions_lists_owner_progress_and_excludes_archived(clean_us
 
     app = create_app()
     async with _client(app) as client:
-        mine = await client.get(
-            "/api/v1/me/open-sessions", cookies={"ic_access": owner_token}
-        )
+        mine = await client.get("/api/v1/me/open-sessions", cookies={"ic_access": owner_token})
         assert mine.status_code == 200
         body = mine.json()
         assert len(body) == 1
@@ -117,9 +115,7 @@ async def test_open_sessions_lists_owner_progress_and_excludes_archived(clean_us
         assert "duration_minutes" in row
         assert "created_at" in row
 
-        theirs = await client.get(
-            "/api/v1/me/open-sessions", cookies={"ic_access": other_token}
-        )
+        theirs = await client.get("/api/v1/me/open-sessions", cookies={"ic_access": other_token})
         assert theirs.status_code == 200
         assert len(theirs.json()) == 1
         assert theirs.json()[0]["track_subject"] == "Foreign"

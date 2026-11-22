@@ -124,20 +124,14 @@ def gateway_error_detail(exc: LLMGatewayError) -> dict:
     if cause == LLMCause.rate_limited.value:
         wait = int(retry) if retry and 1 <= retry <= 90 else 20
         return {
-            "message": (
-                f"Temporary request limit reached. "
-                f"Please retry in about {wait} seconds."
-            ),
+            "message": (f"Temporary request limit reached. Please retry in about {wait} seconds."),
             "cause": cause,
             "retry_after_seconds": wait,
         }
     if cause == LLMCause.overloaded.value:
         wait = int(retry) if retry and 1 <= retry <= 90 else 20
         return {
-            "message": (
-                f"Temporary service overload. "
-                f"Please retry in about {wait} seconds."
-            ),
+            "message": (f"Temporary service overload. Please retry in about {wait} seconds."),
             "cause": cause,
             "retry_after_seconds": wait,
         }
@@ -258,24 +252,28 @@ def classify_http_failure(
     # cannot be satisfied — treat as schema rejection so structured_completion
     # can retry once without response_format instead of burning NIM/Gemini.
     if (
-        status_code == 400
-        and any(
-            k in text
-            for k in (
-                "schema",
-                "additionalproperties",
-                "$ref",
-                "json_schema",
-                "json_validate",
-                "failed_generation",
-                "validate json",
+        (
+            status_code == 400
+            and any(
+                k in text
+                for k in (
+                    "schema",
+                    "additionalproperties",
+                    "$ref",
+                    "json_schema",
+                    "json_validate",
+                    "failed_generation",
+                    "validate json",
+                )
             )
         )
-    ) or "schema" in code.lower() or "json_validate" in code.lower():
+        or "schema" in code.lower()
+        or "json_validate" in code.lower()
+    ):
         return LLMCause.schema_rejected
-    if isinstance(exc, (httpx.TimeoutException, TimeoutError)) or "timeout" in text:
+    if isinstance(exc, httpx.TimeoutException | TimeoutError) or "timeout" in text:
         return LLMCause.timeout
-    if isinstance(exc, (httpx.NetworkError, httpx.ConnectError)) or "connect" in text:
+    if isinstance(exc, httpx.NetworkError | httpx.ConnectError) or "connect" in text:
         return LLMCause.network
     return LLMCause.unknown
 
@@ -316,9 +314,7 @@ async def chat_completion(
     last_error: LLMGatewayError | None = None
     chain_started = time.monotonic()
     total_budget = (
-        timeout_s
-        if timeout_s is not None
-        else min(float(get_settings().llm_client_timeout), 28.0)
+        timeout_s if timeout_s is not None else min(float(get_settings().llm_client_timeout), 28.0)
     )
 
     causes_seen: list[str] = []
@@ -333,9 +329,7 @@ async def chat_completion(
             if _cooldown_active(candidate):
                 # Never bypass overload/rate-limit cooldowns — that re-hammered
                 # Gemini with HTTP 503 and amplified provider load.
-                cool_cause = _model_cooldown_cause.get(
-                    candidate, LLMCause.overloaded.value
-                )
+                cool_cause = _model_cooldown_cause.get(candidate, LLMCause.overloaded.value)
                 models_skipped_cooldown.append(candidate)
                 log.info(
                     "llm_model_cooldown_skip",
@@ -402,11 +396,7 @@ async def chat_completion(
                     if saw_rate_limit:
                         break
                     saw_rate_limit = True
-                elif (
-                    saw_rate_limit
-                    and exc.status_code
-                    and exc.status_code >= 500
-                ):
+                elif saw_rate_limit and exc.status_code and exc.status_code >= 500:
                     break
                 # Primary timed out / failed: skip a Gemini already in overload cooldown
                 # (handled by the cooldown check at the top of the next iteration).
@@ -426,8 +416,7 @@ async def chat_completion(
         wait = max((_cooldown_remaining(m) for m in chain), default=_COOLDOWN_S)
         wait = min(max(wait, 8.0), _COOLDOWN_MAX_S)
         skipped_causes = [
-            _model_cooldown_cause.get(m, LLMCause.overloaded.value)
-            for m in models_skipped_cooldown
+            _model_cooldown_cause.get(m, LLMCause.overloaded.value) for m in models_skipped_cooldown
         ]
         if LLMCause.rate_limited.value in skipped_causes:
             preferred = LLMCause.rate_limited
@@ -445,9 +434,7 @@ async def chat_completion(
             retry_after_seconds=wait,
         )
 
-    err = last_error or LLMGatewayError(
-        "LLM gateway call failed", cause=LLMCause.unknown
-    )
+    err = last_error or LLMGatewayError("LLM gateway call failed", cause=LLMCause.unknown)
     # Prefer the most actionable cause when the chain mixed failures.
     if causes_seen:
         if LLMCause.rate_limited.value in causes_seen:
@@ -564,9 +551,7 @@ async def _chat_once(
         if resp.status_code == 429:
             cause = classify_http_failure(429, provider_code=provider_code)
             provider_wait = (
-                float(retry_after)
-                if retry_after is not None and retry_after > 0
-                else 30.0
+                float(retry_after) if retry_after is not None and retry_after > 0 else 30.0
             )
             # Same-model retry only: short jittered pause (never ignore Retry-After
             # when surfacing the error / setting cooldown on the chain).
@@ -596,9 +581,7 @@ async def _chat_once(
             )
 
         if resp.status_code >= 400:
-            cause = classify_http_failure(
-                resp.status_code, provider_code=provider_code
-            )
+            cause = classify_http_failure(resp.status_code, provider_code=provider_code)
             log.warning(
                 "llm_gateway_http_error",
                 model=model,

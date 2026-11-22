@@ -87,9 +87,7 @@ def test_resume_probe_requires_vault_and_ignores_instruction_injection():
 
 
 def test_no_resume_means_no_vault_probe():
-    assert (
-        probe_service.craft_resume_probe(items=[], area="X", asked=[], mode="strict") is None
-    )
+    assert probe_service.craft_resume_probe(items=[], area="X", asked=[], mode="strict") is None
     assert (
         probe_service.pick_probe(
             opts={"use_resume": False, "focus_weak": False},

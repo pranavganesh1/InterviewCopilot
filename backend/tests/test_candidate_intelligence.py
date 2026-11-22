@@ -92,9 +92,10 @@ def test_empty_history_produces_valid_snapshot():
     assert snap["knowledge_evidence"]["not_assessed"]["evidence_kind"] == "not_assessed"
     assert snap["interview_history"]["tracks"] == []
     assert snap["feedback_history"]["reports"] == []
-    assert "fresh candidate" in " ".join(snap["composition_notes"]).lower() or snap[
-        "composition_notes"
-    ]
+    assert (
+        "fresh candidate" in " ".join(snap["composition_notes"]).lower()
+        or snap["composition_notes"]
+    )
 
 
 def test_resume_claims_are_not_demonstrated():
@@ -283,7 +284,11 @@ def test_partial_snapshot_when_sources_marked_unavailable():
     snap = ci.compose_candidate_intelligence(
         user_profile=None,
         vault_items=[_vault_project("Campus Cart", details={"technologies": "FastAPI"})],
-        preferences={"interests": ["project"], "focus_projects": ["Campus Cart"], "confirmed": True},
+        preferences={
+            "interests": ["project"],
+            "focus_projects": ["Campus Cart"],
+            "confirmed": True,
+        },
         profile_review=None,
         coach_context=None,
         tracks=[],

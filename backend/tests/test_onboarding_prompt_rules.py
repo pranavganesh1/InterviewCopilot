@@ -83,15 +83,15 @@ def test_continue_topic_avoids_repeating_last_probe():
         "focus_kind": "project",
         "answers_received": ["used postgres"],
         "asked_questions": [
-            "staying with “inventory tracker” — what problem were you solving, "
-            "and who was it for?"
+            "staying with “inventory tracker” — what problem were you solving, and who was it for?"
         ],
         "last_assistant_question": (
-            "Staying with “Inventory Tracker” — What problem were you solving, "
-            "and who was it for?"
+            "Staying with “Inventory Tracker” — What problem were you solving, and who was it for?"
         ),
     }
-    first = continue_topic_reply(ctx, [{"category": "project", "title": "Inventory Tracker", "details": {}}])
+    first = continue_topic_reply(
+        ctx, [{"category": "project", "title": "Inventory Tracker", "details": {}}]
+    )
     second = continue_topic_reply(
         {**ctx, "answers_received": ["used postgres", "ok"]},
         [{"category": "project", "title": "Inventory Tracker", "details": {}}],

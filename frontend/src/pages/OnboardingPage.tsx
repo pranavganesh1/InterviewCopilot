@@ -16,7 +16,8 @@ import ConversationStarters from "../components/ConversationStarters";
 import EmojiPicker from "../components/EmojiPicker";
 import GoalDiscovery from "../components/GoalDiscovery";
 import ConversationHistory from "../components/ConversationHistory";
-import ResumeVaultManager, { syncSummary } from "../components/ResumeVaultManager";
+import ResumeVaultManager from "../components/ResumeVaultManager";
+import { syncSummary } from "../lib/resumeSync";
 import StartInterviewModal from "../components/StartInterviewModal";
 import { VaultSidebar } from "../components/VaultSidebar";
 
@@ -115,9 +116,8 @@ function CoachAvatar({
         : "M10 16c1.3.8 2.7.8 4 0";
   return (
     <div
-      className={`${dim} shrink-0 overflow-hidden rounded-full bg-gradient-to-b from-violet-100 to-accent-soft shadow-sm ring-2 ring-white ${
-        mood === "thinking" ? "coach-avatar-thinking" : ""
-      }`}
+      className={`${dim} shrink-0 overflow-hidden rounded-full bg-gradient-to-b from-violet-100 to-accent-soft shadow-sm ring-2 ring-white ${mood === "thinking" ? "coach-avatar-thinking" : ""
+        }`}
       aria-hidden
     >
       <svg viewBox="0 0 24 24" className="h-full w-full">
@@ -227,7 +227,7 @@ function coachErrorCopy(err: unknown): {
             : cause === "unknown" || cause === "schema_rejected"
               ? "Something is wrong on our side. We've logged it. Try again in a moment."
               : err.message ||
-                "Something is wrong on our side. We've logged it. Try again in a moment.",
+              "Something is wrong on our side. We've logged it. Try again in a moment.",
       };
     }
     // Legacy plain-string 503 without cause — only then sniff message text.
@@ -1047,15 +1047,15 @@ export default function OnboardingPage() {
       : []),
     ...(chat.isPending || starter.isPending || saveGoals.isPending
       ? [
-          {
-            role: "pending",
-            content: finished
-              ? "Updating your profile…"
-              : starter.isPending
-                ? "Opening that conversation…"
-                : "Your onboarding coach is thinking…",
-          },
-        ]
+        {
+          role: "pending",
+          content: finished
+            ? "Updating your profile…"
+            : starter.isPending
+              ? "Opening that conversation…"
+              : "Your onboarding coach is thinking…",
+        },
+      ]
       : []),
   ];
 
@@ -1112,13 +1112,12 @@ export default function OnboardingPage() {
         setDragOver(false);
         pickResume(event.dataTransfer.files?.[0]);
       }}
-      className={`inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-        upload.isPending
-          ? "cursor-not-allowed border-line bg-surface opacity-80"
-          : dragOver
-            ? "border-accent bg-accent-soft"
-            : "border-line bg-surface hover:border-accent hover:bg-accent-soft/50"
-      }`}
+      className={`inline-flex min-h-10 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${upload.isPending
+        ? "cursor-not-allowed border-line bg-surface opacity-80"
+        : dragOver
+          ? "border-accent bg-accent-soft"
+          : "border-line bg-surface hover:border-accent hover:bg-accent-soft/50"
+        }`}
     >
       {upload.isPending ? (
         <span className="inline-flex items-center gap-2 text-xs font-semibold text-ink">
@@ -1289,11 +1288,10 @@ export default function OnboardingPage() {
           aria-selected={mobilePane === "chat"}
           data-testid="mobile-pane-chat"
           onClick={() => setMobilePane("chat")}
-          className={`min-h-11 flex-1 rounded-xl text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-            mobilePane === "chat"
-              ? "bg-accent text-white shadow-card"
-              : "text-ink-soft"
-          }`}
+          className={`min-h-11 flex-1 rounded-xl text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${mobilePane === "chat"
+            ? "bg-accent text-white shadow-card"
+            : "text-ink-soft"
+            }`}
         >
           Chat
         </button>
@@ -1303,19 +1301,17 @@ export default function OnboardingPage() {
           aria-selected={mobilePane === "profile"}
           data-testid="mobile-pane-profile"
           onClick={() => setMobilePane("profile")}
-          className={`relative min-h-11 flex-1 rounded-xl text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-            mobilePane === "profile"
-              ? "bg-accent text-white shadow-card"
-              : "text-ink-soft"
-          }`}
+          className={`relative min-h-11 flex-1 rounded-xl text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${mobilePane === "profile"
+            ? "bg-accent text-white shadow-card"
+            : "text-ink-soft"
+            }`}
         >
           Profile
           <span
-            className={`ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-semibold ${
-              mobilePane === "profile"
-                ? "bg-white/20 text-white"
-                : "bg-accent-soft text-accent-strong"
-            }`}
+            className={`ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-semibold ${mobilePane === "profile"
+              ? "bg-white/20 text-white"
+              : "bg-accent-soft text-accent-strong"
+              }`}
           >
             {profilePercent}%
           </span>
@@ -1326,18 +1322,16 @@ export default function OnboardingPage() {
         <section
           data-testid="onboarding-chat-panel"
           aria-label="Coach chat"
-          className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-surface shadow-card ${
-            mobilePane === "chat" ? "flex" : "hidden lg:flex"
-          }`}
+          className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-surface shadow-card ${mobilePane === "chat" ? "flex" : "hidden lg:flex"
+            }`}
         >
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line/70 px-4 py-3 sm:px-5">
             <div className="flex min-w-0 items-center gap-3">
               <div className="relative">
                 <CoachAvatar mood={coachMood} />
                 <span
-                  className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ring-2 ring-surface ${
-                    busy ? "bg-amber-400 coach-status-pulse" : "bg-emerald-500"
-                  }`}
+                  className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ring-2 ring-surface ${busy ? "bg-amber-400 coach-status-pulse" : "bg-emerald-500"
+                    }`}
                   aria-hidden
                 />
               </div>
@@ -1361,11 +1355,10 @@ export default function OnboardingPage() {
                     ? `Completed ${new Date(state.data.onboarding_completed_at).toLocaleString()}`
                     : undefined
                 }
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ${
-                  finished
-                    ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
-                    : "bg-accent-soft text-accent-strong ring-accent/20"
-                }`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ${finished
+                  ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
+                  : "bg-accent-soft text-accent-strong ring-accent/20"
+                  }`}
               >
                 {finished ? (
                   <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
@@ -1440,9 +1433,8 @@ export default function OnboardingPage() {
                 return (
                   <div
                     key={key}
-                    className={`flex max-w-[92%] gap-2.5 sm:max-w-[min(90%,42rem)] ${
-                      m.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
-                    } ${enterClass}`}
+                    className={`flex max-w-[92%] gap-2.5 sm:max-w-[min(90%,42rem)] ${m.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
+                      } ${enterClass}`}
                   >
                     {m.role !== "user" && (
                       <div className="w-8 shrink-0">
@@ -1456,13 +1448,12 @@ export default function OnboardingPage() {
                     )}
                     <div className="min-w-0">
                       <div
-                        className={`min-w-0 break-words rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap shadow-sm [overflow-wrap:anywhere] ${
-                          m.role === "user"
-                            ? "rounded-br-md bg-accent text-white"
-                            : m.role === "pending"
-                              ? "rounded-bl-md border border-line bg-accent-soft/60 text-ink-soft"
-                              : "rounded-bl-md border border-line/80 bg-accent-soft/35 text-ink"
-                        }`}
+                        className={`min-w-0 break-words rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap shadow-sm [overflow-wrap:anywhere] ${m.role === "user"
+                          ? "rounded-br-md bg-accent text-white"
+                          : m.role === "pending"
+                            ? "rounded-bl-md border border-line bg-accent-soft/60 text-ink-soft"
+                            : "rounded-bl-md border border-line/80 bg-accent-soft/35 text-ink"
+                          }`}
                       >
                         {m.role === "pending" ? (
                           <div>
@@ -1839,9 +1830,8 @@ export default function OnboardingPage() {
         </section>
 
         <aside
-          className={`min-h-0 min-w-0 ${
-            mobilePane === "profile" ? "flex" : "hidden lg:flex"
-          }`}
+          className={`min-h-0 min-w-0 ${mobilePane === "profile" ? "flex" : "hidden lg:flex"
+            }`}
           aria-label="Profile vault"
         >
           <VaultSidebar

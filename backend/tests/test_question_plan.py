@@ -77,7 +77,9 @@ def test_physics_brief_stays_on_physics_subjects():
             {"topic": "Electromagnetism", "guidance": "Maxwell"},
             {"topic": "Quantum Mechanics", "guidance": "wavefunctions"},
         ],
-        "competencies": [{"name": "Mathematical Methods", "description": "LA", "importance": "core"}],
+        "competencies": [
+            {"name": "Mathematical Methods", "description": "LA", "importance": "core"}
+        ],
     }
     slots = deterministic_question_plan(physics, 12, duration_minutes=45)
     topics = {s["topic"] for s in slots}

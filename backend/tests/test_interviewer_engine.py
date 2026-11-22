@@ -354,9 +354,7 @@ def test_programming_arrays_topic_keeps_array_concept_bank():
             "style_hint": "Ask about behavior or trade-offs.",
             "allowed_types": ["conceptual", "mcq", "coding"],
         },
-        "asked_questions": [
-            "Can you explain what an array is and how elements are stored?"
-        ],
+        "asked_questions": ["Can you explain what an array is and how elements are stored?"],
         "remaining_areas": [],
         "covered_areas": ["Arrays"],
         "current_area": "Arrays",

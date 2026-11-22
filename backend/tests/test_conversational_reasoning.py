@@ -17,15 +17,13 @@ from app.agents.onboarding import (
     wants_stop_session,
 )
 
-
 JAVA_CTX = {
     "current_topic": "Java",
     "focus_kind": "skill",
     "focus_locked": True,
     "last_question_intent": "explore",
     "last_assistant_question": (
-        "Let's dig into your Java experience. "
-        "How have you used it in a real task or project?"
+        "Let's dig into your Java experience. How have you used it in a real task or project?"
     ),
     "answers_received": [],
     "uncertainty_streak": 0,
@@ -68,9 +66,7 @@ def _decision(**kwargs) -> TurnDecision:
 def test_uncertainty_on_example_simplifies_same_topic():
     d = decide_conversational_action("I don't know.", coach_context=JAVA_CTX)
     assert d["action"] == "simplify"
-    reply = render_coach_action_reply(
-        d["action"], coach_context=JAVA_CTX, vault_summary=VAULT
-    )
+    reply = render_coach_action_reply(d["action"], coach_context=JAVA_CTX, vault_summary=VAULT)
     low = reply.lower()
     assert "java" in low
     assert "which skill" not in low
@@ -80,20 +76,14 @@ def test_uncertainty_on_example_simplifies_same_topic():
 
 
 def test_not_understanding_question_simplifies():
-    d = decide_conversational_action(
-        "I don't understand the question.", coach_context=JAVA_CTX
-    )
+    d = decide_conversational_action("I don't understand the question.", coach_context=JAVA_CTX)
     assert d["action"] == "simplify"
 
 
 def test_explicit_topic_change():
-    d = decide_conversational_action(
-        "Ask me something else.", coach_context=JAVA_CTX
-    )
+    d = decide_conversational_action("Ask me something else.", coach_context=JAVA_CTX)
     assert d["action"] == "change_topic"
-    reply = render_coach_action_reply(
-        d["action"], coach_context=JAVA_CTX, vault_summary=VAULT
-    )
+    reply = render_coach_action_reply(d["action"], coach_context=JAVA_CTX, vault_summary=VAULT)
     assert "which skill" not in reply.lower()
     assert "Java, SQL" not in reply
 
@@ -152,9 +142,7 @@ def test_contradiction_still_contextual_not_menu():
         coach_context=ctx,
     )
     assert d["action"] == "change_topic"
-    reply = render_coach_action_reply(
-        d["action"], coach_context=ctx, vault_summary=VAULT
-    )
+    reply = render_coach_action_reply(d["action"], coach_context=ctx, vault_summary=VAULT)
     assert "which skill" not in reply.lower()
 
 

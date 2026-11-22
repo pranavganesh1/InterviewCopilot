@@ -69,16 +69,14 @@ function ChipRow({
             disabled={pending}
             title={item.subtitle || item.label}
             onClick={() => onToggle(item.id)}
-            className={`rounded-md px-2.5 py-1 text-left text-xs transition ${
-              active ? activeClass : "bg-white text-ink ring-1 ring-stone-200 hover:ring-accent"
-            }`}
+            className={`rounded-md px-2.5 py-1 text-left text-xs transition ${active ? activeClass : "bg-white text-ink ring-1 ring-stone-200 hover:ring-accent"
+              }`}
           >
             <span className="font-medium">{item.label}</span>
             {item.subtitle ? (
               <span
-                className={`mt-0.5 block text-[10px] ${
-                  active ? "text-white/80" : "text-ink-faint"
-                }`}
+                className={`mt-0.5 block text-[10px] ${active ? "text-white/80" : "text-ink-faint"
+                  }`}
               >
                 {item.subtitle}
               </span>
@@ -179,24 +177,15 @@ export default function GoalDiscovery({
     setCustomRole(preferences?.target_role ?? "");
   }, [preferences?.target_role]);
 
+  const selectedKey = selected.join("|");
   useEffect(() => {
     setDraft(selected);
-  }, [selected.join("|")]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey]);
 
   const step = useMemo(
     () => deriveNextStep(preferences, skipped),
-    [
-      preferences?.interests?.join("|"),
-      preferences?.target_role,
-      preferences?.technical_areas?.join("|"),
-      preferences?.focus_skills?.join("|"),
-      preferences?.focus_projects?.join("|"),
-      preferences?.project_aspects?.join("|"),
-      preferences?.placement_target,
-      preferences?.experience_level,
-      preferences?.behavioral_goals,
-      skipped,
-    ],
+    [preferences, skipped],
   );
 
   const detailsDone =
@@ -220,10 +209,10 @@ export default function GoalDiscovery({
   const projectItems: GoalOption[] =
     projectOptions.length > 0
       ? projectOptions.map((p) => ({
-          id: p.id || p.label,
-          label: p.label,
-          subtitle: p.subtitle,
-        }))
+        id: p.id || p.label,
+        label: p.label,
+        subtitle: p.subtitle,
+      }))
       : suggestedProjects.map((p) => ({ id: p, label: p }));
   const roleItems = [
     ...suggestedRoles.map((r) => ({ id: r, label: r })),
@@ -235,13 +224,13 @@ export default function GoalDiscovery({
     projectAspectOptions.length > 0
       ? projectAspectOptions
       : [
-          { id: "architecture", label: "Project architecture" },
-          { id: "implementation", label: "Technical implementation" },
-          { id: "challenges", label: "Challenges and solutions" },
-          { id: "technologies", label: "Technologies used" },
-          { id: "research", label: "Research contributions" },
-          { id: "deep_dive", label: "Complete project deep dive" },
-        ];
+        { id: "architecture", label: "Project architecture" },
+        { id: "implementation", label: "Technical implementation" },
+        { id: "challenges", label: "Challenges and solutions" },
+        { id: "technologies", label: "Technologies used" },
+        { id: "research", label: "Research contributions" },
+        { id: "deep_dive", label: "Complete project deep dive" },
+      ];
 
   const highlightSkills =
     resumeHighlights?.skills?.slice(0, 4) ?? suggestedSkills.slice(0, 4);
@@ -319,8 +308,8 @@ export default function GoalDiscovery({
               {highlightSkills.length ? ` (${highlightSkills.join(", ")})` : ""}
               {highlightProjects.length
                 ? `${highlightSkills.length ? " and" : ""} projects like ${highlightProjects
-                    .map((p) => `“${p}”`)
-                    .join(", ")}`
+                  .map((p) => `“${p}”`)
+                  .join(", ")}`
                 : ""}
               .
             </p>
@@ -336,11 +325,10 @@ export default function GoalDiscovery({
                   disabled={pending}
                   data-testid={`goal-interest-${opt.id}`}
                   onClick={() => toggleInterest(opt.id)}
-                  className={`rounded-xl px-3 py-2.5 text-left text-xs font-medium shadow-sm transition ${
-                    active
-                      ? "bg-accent text-white shadow-md"
-                      : "bg-white text-ink ring-1 ring-stone-200 hover:bg-accent-soft/50 hover:ring-accent"
-                  }`}
+                  className={`rounded-xl px-3 py-2.5 text-left text-xs font-medium shadow-sm transition ${active
+                    ? "bg-accent text-white shadow-md"
+                    : "bg-white text-ink ring-1 ring-stone-200 hover:bg-accent-soft/50 hover:ring-accent"
+                    }`}
                 >
                   {opt.label}
                 </button>
@@ -417,9 +405,9 @@ export default function GoalDiscovery({
               <p className="text-sm font-medium text-ink">
                 {skillItems.length
                   ? `Your resume mentions ${skillItems
-                      .slice(0, 3)
-                      .map((s) => s.label)
-                      .join(", ")}. Which skill would you like to test first?`
+                    .slice(0, 3)
+                    .map((s) => s.label)
+                    .join(", ")}. Which skill would you like to test first?`
                   : "Which skill would you like to practice?"}
               </p>
               <ChipRow
@@ -453,12 +441,12 @@ export default function GoalDiscovery({
               <p className="text-sm font-medium text-ink">
                 {focusProjects[0]
                   ? (() => {
-                      const card = projectItems.find((p) => p.id === focusProjects[0]);
-                      const tech = card?.subtitle;
-                      return tech
-                        ? `I noticed your “${focusProjects[0]}” project uses ${tech}. What would you like to practice?`
-                        : `What should we practice for “${focusProjects[0]}”?`;
-                    })()
+                    const card = projectItems.find((p) => p.id === focusProjects[0]);
+                    const tech = card?.subtitle;
+                    return tech
+                      ? `I noticed your “${focusProjects[0]}” project uses ${tech}. What would you like to practice?`
+                      : `What should we practice for “${focusProjects[0]}”?`;
+                  })()
                   : "What should we practice for your selected projects?"}
               </p>
               <ChipRow
@@ -483,11 +471,10 @@ export default function GoalDiscovery({
                     type="button"
                     disabled={pending}
                     onClick={() => onSaveDetails({ placement_target: opt })}
-                    className={`rounded-md px-2.5 py-1 text-xs capitalize ${
-                      preferences?.placement_target === opt
-                        ? "bg-accent text-white"
-                        : "bg-white text-ink ring-1 ring-stone-200"
-                    }`}
+                    className={`rounded-md px-2.5 py-1 text-xs capitalize ${preferences?.placement_target === opt
+                      ? "bg-accent text-white"
+                      : "bg-white text-ink ring-1 ring-stone-200"
+                      }`}
                   >
                     {opt}
                   </button>

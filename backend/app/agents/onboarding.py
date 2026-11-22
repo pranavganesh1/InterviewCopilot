@@ -541,9 +541,7 @@ def is_negative_or_skip(message: str) -> bool:
     if any(c in t for c in _MOVE_ON_PHRASES):
         return True
     # Short uncertain replies; avoid treating long explanatory answers as skips.
-    if len(t) <= 100 and any(c in t for c in _SKIP_PHRASES):
-        return True
-    return False
+    return bool(len(t) <= 100 and any(c in t for c in _SKIP_PHRASES))
 
 
 def wants_topic_switch(message: str) -> bool:
@@ -635,7 +633,6 @@ def _message_signals(message: str) -> dict[str, bool]:
                 "nothing comes to mind",
             )
         ),
-
         "confused": any(
             c in t
             for c in (
@@ -648,8 +645,7 @@ def _message_signals(message: str) -> dict[str, bool]:
             )
         ),
         "hint": any(
-            c in t
-            for c in ("hint", "help me", "give me a clue", "nudge", "can you guide")
+            c in t for c in ("hint", "help me", "give me a clue", "nudge", "can you guide")
         ),
         "no_experience": short
         and any(
@@ -667,7 +663,10 @@ def _message_signals(message: str) -> dict[str, bool]:
         and not any(c in t for c in _MOVE_ON_PHRASES)
         and "?" not in t,
         "detailed": len(t) >= 160
-        or (len(words) >= 28 and any(c in t for c in ("because", "for example", "i used", "we built"))),
+        or (
+            len(words) >= 28
+            and any(c in t for c in ("because", "for example", "i used", "we built"))
+        ),
         "subject_shift": bool(
             re.search(
                 r"\b(actually|instead|can we talk about|let'?s talk about|"
@@ -742,15 +741,19 @@ def extract_focus_shift_from_reply(reply: str, current_topic: str | None = None)
         return None
     current = (current_topic or "").strip().lower()
     low = text.lower()
-    if current and current in low and not any(
-        p in low
-        for p in (
-            "move the focus",
-            "switch",
-            "instead",
-            "would you prefer",
-            "another area",
-            "different topic",
+    if (
+        current
+        and current in low
+        and not any(
+            p in low
+            for p in (
+                "move the focus",
+                "switch",
+                "instead",
+                "would you prefer",
+                "another area",
+                "different topic",
+            )
         )
     ):
         return None
@@ -866,8 +869,8 @@ def _simpler_skill_or_topic_ask(topic: str, kind: str, last_q: str) -> str:
     candidates: list[str]
     if kind_l == "skill":
         candidates = [
-            f"No worries. Have you used {title} in coursework, a small script, or even debugging something?",
-            f"Let's make it easier — what's the first thing that comes to mind when you hear {title}?",
+            f"No worries. Have you used {title} in coursework, scripts, or debugging?",
+            f"Let's make it easier — what's the first thing that comes to mind for {title}?",
             f"Okay — forget a full project story. What's one task where {title} showed up at all?",
         ]
     elif kind_l == "project":
@@ -932,22 +935,19 @@ def render_coach_action_reply(
     if action == "clarify":
         if topic:
             candidate = (
-                f"Could you add one concrete detail about {topic} — "
-                "a tool, a task, or an outcome?"
+                f"Could you add one concrete detail about {topic} — a tool, a task, or an outcome?"
             )
             # Never re-emit the same clarify fingerprint.
             asked = [str(a) for a in (ctx.get("asked_questions") or []) if a]
             if _probe_already_asked(candidate, asked, last_q):
-                return (
-                    continue_topic_reply(ctx, vault_summary)
-                    or _simpler_skill_or_topic_ask(topic, kind, last_q)
+                return continue_topic_reply(ctx, vault_summary) or _simpler_skill_or_topic_ask(
+                    topic, kind, last_q
                 )
             return candidate
         return "Could you share one concrete detail so I know where to go next?"
     if action == "follow_up":
-        return (
-            continue_topic_reply(ctx, vault_summary)
-            or _simpler_skill_or_topic_ask(topic or "this topic", kind, last_q)
+        return continue_topic_reply(ctx, vault_summary) or _simpler_skill_or_topic_ask(
+            topic or "this topic", kind, last_q
         )
     # advance: caller should prefer the LLM / normal pipeline
     return (
@@ -978,9 +978,7 @@ def ensure_nonempty_reply(
     if text:
         return text
     if duplicates_resolved == "keep_both":
-        return (
-            "Kept both entries. Which project or skill should we discuss next?"
-        )
+        return "Kept both entries. Which project or skill should we discuss next?"
     if duplicates_resolved == "merge":
         return (
             "Merged those into one entry. What was the goal of that item, "
@@ -1006,19 +1004,14 @@ def ensure_nonempty_reply(
         )
     if skills:
         return "Which skill have you used in a real task, and how?"
-    return (
-        "What would you like to prepare for first — a project story, "
-        "a skill, or a target role?"
-    )
+    return "What would you like to prepare for first — a project story, a skill, or a target role?"
 
 
 def ack_followup_question(
     vault_summary: list[dict] | None = None,
     coach_context: dict | None = None,
 ) -> str:
-    return ensure_nonempty_reply(
-        "", vault_summary=vault_summary, coach_context=coach_context
-    )
+    return ensure_nonempty_reply("", vault_summary=vault_summary, coach_context=coach_context)
 
 
 _PRACTISE_RE = re.compile(
@@ -1029,9 +1022,7 @@ _PRACTISE_RE = re.compile(
 )
 
 
-def classify_practise_intent(
-    message: str, vault_summary: list[dict] | None = None
-) -> dict | None:
+def classify_practise_intent(message: str, vault_summary: list[dict] | None = None) -> dict | None:
     """Return {subject, track_type} when the user asks to practise / be interviewed."""
     text = (message or "").strip()
     if not text or len(text) > 160:
@@ -1084,10 +1075,7 @@ def classify_practise_intent(
 
 
 def practise_followup_reply(subject: str) -> str:
-    return (
-        f"Great — we can run a focused interview on {subject}. "
-        "Want to start now?"
-    )
+    return f"Great — we can run a focused interview on {subject}. Want to start now?"
 
 
 # Cross-domain resume abbreviations → related tokens for vault matching.
@@ -1130,9 +1118,7 @@ _TOPIC_FOCUS_CUES = (
     "my ",
 )
 
-_FOCUSABLE_CATEGORIES = frozenset(
-    {"project", "skill", "internship", "education", "achievement"}
-)
+_FOCUSABLE_CATEGORIES = frozenset({"project", "skill", "internship", "education", "achievement"})
 
 _STOP_TOKENS = frozenset(
     {
@@ -1264,10 +1250,7 @@ def classify_topic_focus(
     if is_ack_only(text) or is_negative_or_skip(text):
         return None
     low = text.lower()
-    if any(
-        k in low
-        for k in ("practise", "practice", "interview me", "mock interview", "quiz me")
-    ):
+    if any(k in low for k in ("practise", "practice", "interview me", "mock interview", "quiz me")):
         return None
     # Require an explicit selection cue unless the message is basically a vault title.
     titles = [
@@ -1275,9 +1258,7 @@ def classify_topic_focus(
         for i in (vault_summary or [])
         if isinstance(i, dict) and i.get("title")
     ]
-    looks_like_title = any(
-        t and (t == low or t in low or low in t) for t in titles if len(t) >= 3
-    )
+    looks_like_title = any(t and (t == low or t in low or low in t) for t in titles if len(t) >= 3)
     if not looks_like_title and not any(cue in low for cue in _TOPIC_FOCUS_CUES):
         return None
     if not wants_topic_switch(text):
@@ -1322,9 +1303,7 @@ def classify_topic_focus(
     }
 
 
-def classify_project_focus(
-    message: str, vault_summary: list[dict] | None = None
-) -> dict | None:
+def classify_project_focus(message: str, vault_summary: list[dict] | None = None) -> dict | None:
     """Backward-compatible alias — prefers projects when several categories match."""
     focused = classify_topic_focus(message, vault_summary)
     return focused
@@ -1361,11 +1340,7 @@ def resolve_topic_confirmation(
     if not pending:
         return None
     current = (ctx.get("current_topic") or "").strip()
-    if (
-        ctx.get("focus_locked")
-        and current
-        and current.lower() == pending.lower()
-    ):
+    if ctx.get("focus_locked") and current and current.lower() == pending.lower():
         # Already exploring this topic — do not restart the opening question.
         return None
     item = find_vault_item_by_title(pending, vault_summary)
@@ -1419,20 +1394,14 @@ def _focus_core_question(title: str, kind: str, details: dict | None = None) -> 
         or ""
     ).strip()
     if kind == "skill":
-        return (
-            f"How have you used {title} in a real task or project, "
-            "and what was the outcome?"
-        )
+        return f"How have you used {title} in a real task or project, and what was the outcome?"
     if kind == "education":
         return (
             f"In your {title} studies, what did you focus on most, "
             "and which course or topic felt strongest?"
         )
     if kind == "internship":
-        return (
-            f"What was your main responsibility at {title}, "
-            "and what did you deliver?"
-        )
+        return f"What was your main responsibility at {title}, and what did you deliver?"
     if kind == "achievement":
         return f"What led to your “{title}” achievement?"
     # project / default
@@ -1449,14 +1418,8 @@ def _focus_core_question(title: str, kind: str, details: dict | None = None) -> 
         )
     if tech:
         first = tech.split(",")[0].strip() or tech
-        return (
-            f"What was the main purpose of “{title}”, "
-            f"and how did you use {first}?"
-        )
-    return (
-        f"What was the main purpose of “{title}”, "
-        "and which tools or methods did you use?"
-    )
+        return f"What was the main purpose of “{title}”, and how did you use {first}?"
+    return f"What was the main purpose of “{title}”, and which tools or methods did you use?"
 
 
 def _continuity_bridge(
@@ -1473,10 +1436,7 @@ def _continuity_bridge(
         return ""
     last_q_l = (last_q or "").lower()
     # Avoid stacking another transition after a move-on / simplify ack.
-    if any(
-        p in last_q_l
-        for p in ("move on", "no problem", "no worries", "let's try a simpler")
-    ):
+    if any(p in last_q_l for p in ("move on", "no problem", "no worries", "let's try a simpler")):
         return ""
     fragment = _answer_fragment(last_answer)
     if fragment:
@@ -1592,10 +1552,7 @@ def continue_topic_reply(
     asked = [str(a) for a in (ctx.get("asked_questions") or []) if a]
     last_q = str(ctx.get("last_assistant_question") or "")
     tech = str(
-        details.get("technologies")
-        or details.get("tools")
-        or details.get("stack")
-        or ""
+        details.get("technologies") or details.get("tools") or details.get("stack") or ""
     ).strip()
     first_tech = (tech.split(",")[0].strip() if tech else "") or ""
 
@@ -1683,9 +1640,7 @@ def skip_move_on_reply(
     ]
     if prev:
         skipped.append(prev)
-    nxt_list = suggested_next_topics(
-        vault_summary, prev, exclude_titles=skipped, limit=6
-    )
+    nxt_list = suggested_next_topics(vault_summary, prev, exclude_titles=skipped, limit=6)
     ack = "No problem — we can move on."
     if not nxt_list:
         return (
@@ -1763,9 +1718,7 @@ def _approx_chars(messages: list[dict]) -> int:
     return sum(len(str(m.get("content") or "")) for m in messages)
 
 
-def compact_vault_for_llm(
-    vault_summary: list[dict] | None, *, limit: int = 20
-) -> list[dict]:
+def compact_vault_for_llm(vault_summary: list[dict] | None, *, limit: int = 20) -> list[dict]:
     """Send titles + short detail snippets — not full resume blobs every turn."""
     out: list[dict] = []
     for item in (vault_summary or [])[:limit]:
@@ -1787,9 +1740,7 @@ def compact_vault_for_llm(
     return out
 
 
-def trim_history_for_llm(
-    history: list[dict] | None, *, max_chars: int = 3500
-) -> list[dict]:
+def trim_history_for_llm(history: list[dict] | None, *, max_chars: int = 3500) -> list[dict]:
     """Keep recent turns under a char budget; summarise older ones without LLM."""
     msgs = [
         {"role": str(m.get("role") or "user"), "content": str(m.get("content") or "")}
@@ -1863,11 +1814,13 @@ async def run_onboarding_turn(
             current_phase = "profile"
 
     options = resume_goal_options or build_resume_goal_options(vault_summary)
-    skills = available_skills if available_skills is not None else options.get(
-        "suggested_skills", []
+    skills = (
+        available_skills if available_skills is not None else options.get("suggested_skills", [])
     )
-    projects = available_projects if available_projects is not None else options.get(
-        "suggested_projects", []
+    projects = (
+        available_projects
+        if available_projects is not None
+        else options.get("suggested_projects", [])
     )
 
     payload = {
@@ -1887,12 +1840,9 @@ async def run_onboarding_turn(
             "answers_received": (ctx.get("answers_received") or [])[-8:],
             "proceed_to_goals": bool(ctx.get("proceed_to_goals")),
         },
-        "suggested_next_topics": suggested_next_topics(
-            vault_summary, ctx.get("current_topic")
-        ),
+        "suggested_next_topics": suggested_next_topics(vault_summary, ctx.get("current_topic")),
         "possible_duplicates": (possible_duplicates or [])[:6],
-        "profile_gaps": profile_gaps
-        or compute_profile_gaps(vault_summary, coach_context=ctx),
+        "profile_gaps": profile_gaps or compute_profile_gaps(vault_summary, coach_context=ctx),
         "current_preparation_preferences": prefs,
         "next_goal_followup": next_goal_followup(prefs),
         "available_skills": (skills or [])[:16],
@@ -1977,9 +1927,7 @@ async def run_onboarding_turn(
         turn.onboarding_complete = False
         turn.show_goal_menu = False
 
-    turn.reply = ensure_nonempty_reply(
-        turn.reply, vault_summary=vault_summary, coach_context=ctx
-    )
+    turn.reply = ensure_nonempty_reply(turn.reply, vault_summary=vault_summary, coach_context=ctx)
     return turn
 
 

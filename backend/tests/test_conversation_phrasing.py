@@ -98,9 +98,7 @@ def test_project_and_internship_focus_are_direct_questions():
         },
         coach_context={
             "current_topic": "Campus Nav",
-            "answers_received": [
-                "We built indoor routing with IR sensors for campus buildings."
-            ],
+            "answers_received": ["We built indoor routing with IR sensors for campus buildings."],
             "last_assistant_question": project,
         },
     )
@@ -150,10 +148,7 @@ def test_skip_move_on_has_no_explore_lead_in():
 
 
 def test_sanitize_strips_leading_rote_intros():
-    raw = (
-        "Let's dig into your SQL experience. "
-        "How have you used it in a real task or project?"
-    )
+    raw = "Let's dig into your SQL experience. How have you used it in a real task or project?"
     cleaned = sanitize_coach_reply(raw)
     assert "let's dig into" not in cleaned.lower()
     assert "how have you used" in cleaned.lower()

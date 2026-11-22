@@ -104,9 +104,7 @@ def stub_storage_and_llm(monkeypatch):
 
     async def fake_completion(client, **kwargs):
         llm_calls.append(1)
-        return ResumeExtraction(
-            items=[ExtractedItem(category="skill", title="Python", details={})]
-        )
+        return ResumeExtraction(items=[ExtractedItem(category="skill", title="Python", details={})])
 
     monkeypatch.setattr(resume_svc, "store_resume_pdf", fake_store)
     monkeypatch.setattr(resume_svc, "structured_completion", fake_completion)
@@ -328,9 +326,7 @@ def test_resume_extraction_coerces_category_and_detail_types():
 
 
 @pytest.mark.asyncio
-async def test_valid_pdf_success(
-    stub_storage_and_llm, readable_pdf_text, clean_users_table
-):
+async def test_valid_pdf_success(stub_storage_and_llm, readable_pdf_text, clean_users_table):
     store_calls, llm_calls = stub_storage_and_llm
     _user, token = await _user_token()
     app = create_app()

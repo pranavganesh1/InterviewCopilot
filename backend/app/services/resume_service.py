@@ -72,7 +72,7 @@ def _stringify_detail_value(value: Any) -> str:
         return ""
     if isinstance(value, str):
         return value
-    if isinstance(value, (dict, list)):
+    if isinstance(value, dict | list):
         return json.dumps(value, separators=(",", ":"))
     return str(value)
 
@@ -121,9 +121,7 @@ class ResumeExtraction(BaseModel):
             if details is None:
                 fixed["details"] = {}
             elif isinstance(details, dict):
-                fixed["details"] = {
-                    str(k): _stringify_detail_value(v) for k, v in details.items()
-                }
+                fixed["details"] = {str(k): _stringify_detail_value(v) for k, v in details.items()}
             else:
                 fixed["details"] = {"note": _stringify_detail_value(details)}
             fixed_items.append(fixed)
@@ -148,18 +146,14 @@ def extract_pdf_text(data: bytes) -> str:
         raise ResumeUploadError(
             status=422,
             code="pdf_unreadable",
-            message=(
-                "We couldn't read this PDF. Try exporting it again without a password."
-            ),
+            message=("We couldn't read this PDF. Try exporting it again without a password."),
         ) from exc
     except Exception as exc:
         # pypdf can raise other parse errors for truncated/corrupt files.
         raise ResumeUploadError(
             status=422,
             code="pdf_unreadable",
-            message=(
-                "We couldn't read this PDF. Try exporting it again without a password."
-            ),
+            message=("We couldn't read this PDF. Try exporting it again without a password."),
         ) from exc
 
     if getattr(reader, "is_encrypted", False):
@@ -169,17 +163,13 @@ def extract_pdf_text(data: bytes) -> str:
             raise ResumeUploadError(
                 status=422,
                 code="pdf_encrypted",
-                message=(
-                    "We couldn't read this PDF. Try exporting it again without a password."
-                ),
+                message=("We couldn't read this PDF. Try exporting it again without a password."),
             ) from exc
         if not unlocked:
             raise ResumeUploadError(
                 status=422,
                 code="pdf_encrypted",
-                message=(
-                    "We couldn't read this PDF. Try exporting it again without a password."
-                ),
+                message=("We couldn't read this PDF. Try exporting it again without a password."),
             )
 
     try:
@@ -188,9 +178,7 @@ def extract_pdf_text(data: bytes) -> str:
         raise ResumeUploadError(
             status=422,
             code="pdf_unreadable",
-            message=(
-                "We couldn't read this PDF. Try exporting it again without a password."
-            ),
+            message=("We couldn't read this PDF. Try exporting it again without a password."),
         ) from exc
 
 
@@ -223,18 +211,14 @@ def store_resume_pdf(s3: BaseClient, *, user_id: str, filename: str, data: bytes
     key = f"{user_id}/{uuid.uuid4()}-{filename}"
     try:
         ensure_bucket(s3, RESUME_BUCKET)
-        s3.put_object(
-            Bucket=RESUME_BUCKET, Key=key, Body=data, ContentType="application/pdf"
-        )
+        s3.put_object(Bucket=RESUME_BUCKET, Key=key, Body=data, ContentType="application/pdf")
     except ResumeUploadError:
         raise
     except (EndpointConnectionError, BotoCoreError, ClientError, OSError) as exc:
         raise ResumeUploadError(
             status=503,
             code="storage_unavailable",
-            message=(
-                "File storage is temporarily unavailable. Please retry in a minute."
-            ),
+            message=("File storage is temporarily unavailable. Please retry in a minute."),
         ) from exc
     return key
 
@@ -379,7 +363,6 @@ async def reprocess_latest_resume(
             code="storage_unavailable",
             message="File storage is temporarily unavailable. Please retry in a minute.",
         ) from exc
-    filename = key.rsplit("/", 1)[-1]
     # Skip re-storing: process_resume always stores. Use extract+sync path instead.
     stage = "extract"
     try:

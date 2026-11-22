@@ -11,9 +11,7 @@ from app.gateway.llm import LLMCause, LLMGatewayError, chat_completion, get_http
 
 log = get_logger(__name__)
 
-_FENCE_RE = re.compile(
-    r"^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$", re.IGNORECASE
-)
+_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$", re.IGNORECASE)
 
 
 def gemini_safe_schema(schema: dict) -> dict:
@@ -177,9 +175,7 @@ async def structured_completion(
                 }
             )
     err_name = type(last_error).__name__ if last_error else "unknown"
-    err_detail = (
-        str(last_error).replace("\n", " ")[:240] if last_error is not None else ""
-    )
+    err_detail = str(last_error).replace("\n", " ")[:240] if last_error is not None else ""
     log.warning(
         "structured_output_exhausted",
         model=model,

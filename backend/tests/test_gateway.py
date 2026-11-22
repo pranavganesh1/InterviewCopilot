@@ -23,15 +23,9 @@ def _clear_cooldowns():
 
 
 def test_classify_http_failure_mapping():
-    assert (
-        classify_http_failure(429, provider_code="RESOURCE_EXHAUSTED")
-        == LLMCause.rate_limited
-    )
+    assert classify_http_failure(429, provider_code="RESOURCE_EXHAUSTED") == LLMCause.rate_limited
     assert classify_http_failure(503, provider_code="overloaded") == LLMCause.overloaded
-    assert (
-        classify_http_failure(404, provider_code="model_not_found")
-        == LLMCause.model_not_found
-    )
+    assert classify_http_failure(404, provider_code="model_not_found") == LLMCause.model_not_found
     assert classify_http_failure(401, provider_code="invalid_api_key") == LLMCause.auth_failed
     assert (
         classify_http_failure(400, provider_code="Invalid schema additionalProperties")
@@ -304,9 +298,7 @@ def test_gateway_error_detail_is_customer_safe():
 def test_groq_json_validate_classified_as_schema_rejected():
     from app.gateway.llm import classify_http_failure
 
-    cause = classify_http_failure(
-        400, provider_code="json_validate_failed", exc=None
-    )
+    cause = classify_http_failure(400, provider_code="json_validate_failed", exc=None)
     assert cause == LLMCause.schema_rejected
     cause2 = classify_http_failure(
         400, provider_code="invalid_request_error", exc=Exception("Failed to validate JSON")
@@ -389,9 +381,7 @@ async def test_skips_gemini_on_overload_cooldown_after_primary_timeout(monkeypat
     """Primary timeout must not re-hit Gemini while it is already overload-cooling."""
     from app.gateway import llm as llm_mod
 
-    llm_mod._set_cooldown(
-        "structured-json-gemini", 20.0, cause=LLMCause.overloaded.value
-    )
+    llm_mod._set_cooldown("structured-json-gemini", 20.0, cause=LLMCause.overloaded.value)
     seen: list[str] = []
 
     async def fake_once(client, *, timeout_s, model, **kwargs):
@@ -414,9 +404,7 @@ async def test_skips_gemini_on_overload_cooldown_after_primary_timeout(monkeypat
 async def test_skips_gemini_on_overload_cooldown_after_primary_429(monkeypatch):
     from app.gateway import llm as llm_mod
 
-    llm_mod._set_cooldown(
-        "structured-json-gemini", 20.0, cause=LLMCause.overloaded.value
-    )
+    llm_mod._set_cooldown("structured-json-gemini", 20.0, cause=LLMCause.overloaded.value)
     seen: list[str] = []
 
     async def fake_once(client, *, timeout_s, model, **kwargs):
@@ -447,12 +435,8 @@ async def test_entire_chain_cooling_fails_fast_without_bypass(monkeypatch):
     """Do not bypass cooldowns when every deployment is cooling — that hammered Gemini."""
     from app.gateway import llm as llm_mod
 
-    llm_mod._set_cooldown(
-        "structured-json", 25.0, cause=LLMCause.rate_limited.value
-    )
-    llm_mod._set_cooldown(
-        "structured-json-gemini", 25.0, cause=LLMCause.overloaded.value
-    )
+    llm_mod._set_cooldown("structured-json", 25.0, cause=LLMCause.rate_limited.value)
+    llm_mod._set_cooldown("structured-json-gemini", 25.0, cause=LLMCause.overloaded.value)
     seen: list[str] = []
 
     async def fake_once(client, *, timeout_s, model, **kwargs):
