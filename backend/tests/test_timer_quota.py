@@ -186,7 +186,11 @@ async def test_quota_retry_does_not_duplicate_the_turn(monkeypatch, clean_users_
             cookies={"ic_access": token},
         )
     assert failed.status_code == 503
-    assert "retry" in failed.json()["detail"].lower()
+    failed_detail = failed.json()["detail"]
+    failed_msg = (
+        failed_detail.get("message", "") if isinstance(failed_detail, dict) else str(failed_detail)
+    )
+    assert "retry" in failed_msg.lower()
     assert retried.status_code == 200
     turns = fetched.json()["turns"]
     answered = [t for t in turns if t.get("answer") == answer]

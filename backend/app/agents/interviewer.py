@@ -66,11 +66,12 @@ Guided reactions:
 
 COVERAGE_RUBRIC = """Coverage rubric:
 - none      = no relevant content, or the answer is wrong
-- partial   = some correct points, important parts missing or wrong; OR too brief/unclear to fully judge
+- partial   = some correct points, important parts missing or wrong; OR too brief/unclear
+              to fully judge
 - good      = mostly correct and complete, minor gaps
 - excellent = correct, complete, with sound reasoning (and complexity/edge cases where relevant)
 Map outcomes: excellent/good → Correct; partial → Partially correct; none → Incorrect;
-brief/unclear without a clear factual error → Unclear or insufficient information (coverage=partial).
+brief/unclear without a clear factual error → Unclear or insufficient info (coverage=partial).
 Assess technical correctness, conceptual understanding, completeness, explanation quality,
 practical application, and relevant examples when the question calls for them.
 A short answer is not automatically incorrect — mark partial/unclear when substance is missing.
@@ -251,11 +252,7 @@ SYSTEM_PROMPT = STRICT_SYSTEM_PROMPT
 def system_prompt_for_mode(mode: str, persona_id: str | None = None) -> str:
     from app.agents.persona import persona_prompt_block
 
-    base = (
-        GUIDED_QUESTION_SYSTEM_PROMPT
-        if mode == "guided"
-        else STRICT_QUESTION_SYSTEM_PROMPT
-    )
+    base = GUIDED_QUESTION_SYSTEM_PROMPT if mode == "guided" else STRICT_QUESTION_SYSTEM_PROMPT
     extra = persona_prompt_block(persona_id, mode=mode)
     if extra:
         return f"{base}\n{extra}"
@@ -427,10 +424,7 @@ def decision_violation(decision: TurnDecision, payload: dict) -> str | None:
                 deeper_probe=bool(payload.get("deeper_probe")),
             ):
                 if is_near_duplicate(decision.next_question, collide, threshold=0.92):
-                    return (
-                        "next_question repeats a previously asked question: "
-                        f"{collide[:120]}"
-                    )
+                    return f"next_question repeats a previously asked question: {collide[:120]}"
             else:
                 return (
                     "next_question repeats or closely paraphrases a previously asked "
@@ -497,9 +491,7 @@ def classify_answer_outcome(
     cov = (coverage or "").strip().lower()
     checks_l = {str(c).lower() for c in (checks or [])}
     # Only treat as empty when the answer was provided and blank, or the empty guard fired.
-    if "empty_answer" in checks_l or (
-        answer_text is not None and not str(answer_text).strip()
-    ):
+    if "empty_answer" in checks_l or (answer_text is not None and not str(answer_text).strip()):
         return "Unclear or insufficient information"
     if "idk_answer" in checks_l:
         # Uncertainty is not automatically a scored incorrect / weakness.
@@ -561,9 +553,10 @@ def _progression_target(payload: dict, current: str) -> str | None:
         for topic in remaining:
             text = (topic or "").strip()
             key = text.lower()
-            if text and key != current_key and (
-                key in selected_l
-                or any(key in s or s in key for s in selected_l if s)
+            if (
+                text
+                and key != current_key
+                and (key in selected_l or any(key in s or s in key for s in selected_l if s))
             ):
                 return text
     if planned and planned.lower() != current_key:
@@ -591,9 +584,7 @@ def _apply_closing(decision: TurnDecision) -> TurnDecision:
     # Closing must not look like a new assessment prompt.
     if "?" in msg and msg != CLOSING_MESSAGE:
         msg = CLOSING_MESSAGE
-    return decision.model_copy(
-        update={"decision": "complete", "next_question": msg}
-    )
+    return decision.model_copy(update={"decision": "complete", "next_question": msg})
 
 
 _CHOICE_MENU_RE = re.compile(
@@ -618,8 +609,7 @@ def _simplified_follow_up_question(area: str, *, mode: str) -> str:
     topic = (area or "this topic").strip() or "this topic"
     if (mode or "").lower() == "guided":
         return (
-            f"Let's simplify. What's one concrete place you've encountered {topic}, "
-            "even briefly?"
+            f"Let's simplify. What's one concrete place you've encountered {topic}, even briefly?"
         )
     return (
         f"Let's try a simpler angle on {topic}. "
@@ -648,14 +638,9 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
     recent = list((knowledge or {}).get("recent_coverage") or [])
     strong_streak = len(recent) >= 2 and all(c in ("good", "excellent") for c in recent[-2:])
     minutes = payload.get("minutes_remaining")
-    checks_l = {
-        str(c).lower()
-        for c in (getattr(decision, "evaluator_checks", None) or [])
-    }
+    checks_l = {str(c).lower() for c in (getattr(decision, "evaluator_checks", None) or [])}
     last_answer = str(payload.get("last_answer") or "").strip()
-    uncertain = "idk_answer" in checks_l or bool(
-        last_answer and _IDK_RE.match(last_answer)
-    )
+    uncertain = "idk_answer" in checks_l or bool(last_answer and _IDK_RE.match(last_answer))
     try:
         minutes_left = float(minutes) if minutes is not None else None
     except (TypeError, ValueError):
@@ -781,9 +766,7 @@ def apply_local_policy(decision: TurnDecision, payload: dict) -> TurnDecision:
                 "decision": "next_area",
                 "next_question": (decision.next_question or "").strip()
                 or "Continue with the next planned objective.",
-                "question_area": planned
-                or (decision.question_area or "").strip()
-                or "General",
+                "question_area": planned or (decision.question_area or "").strip() or "General",
             }
         )
     decision = _prefer_unused_bank(decision, payload)
@@ -970,11 +953,7 @@ def _prefer_unused_bank(decision: TurnDecision, payload: dict) -> TurnDecision:
         if exact:
             unused = exact
         else:
-            soft = [
-                entry
-                for entry in unused
-                if areas_soft_match(planned, entry.get("area"))
-            ]
+            soft = [entry for entry in unused if areas_soft_match(planned, entry.get("area"))]
             if soft:
                 unused = soft
     if not unused:
@@ -1156,6 +1135,7 @@ _FALLBACK_STEMS_BY_CATEGORY: dict[str, tuple[str, ...]] = {
     "other": _NON_PROGRAMMING_FALLBACK_STEMS,
 }
 
+
 def _payload_is_programming(payload: dict) -> bool:
     profile = payload.get("domain_profile")
     if isinstance(profile, dict):
@@ -1166,9 +1146,7 @@ def _payload_is_programming(payload: dict) -> bool:
             return True
         if profile.get("category") == "programming":
             return True
-    if payload.get("programming_track") is True:
-        return True
-    return False
+    return payload.get("programming_track") is True
 
 
 def _fallback_stems_for_payload(payload: dict) -> tuple[str, ...]:
@@ -1365,7 +1343,9 @@ def _guarded_none_evaluation(*, check: str) -> tuple[AnswerEvaluation, list[str]
     return ev, [check]
 
 
-def _guarded_brief_evaluation(*, check: str = "too_short_answer") -> tuple[AnswerEvaluation, list[str]]:
+def _guarded_brief_evaluation(
+    *, check: str = "too_short_answer"
+) -> tuple[AnswerEvaluation, list[str]]:
     """Short answers are unclear/insufficient — not automatically Incorrect."""
     ev = AnswerEvaluation(
         coverage="partial",
@@ -1527,9 +1507,22 @@ async def run_interviewer_turn(
         return d.model_copy(update={"rubric_version": RUBRIC_VERSION})
 
     turn_started = time.monotonic()
-    # Cheap guards first: do not spend an LLM call on empty / IDK / too-short answers.
-    if not text_answer or is_idk or is_too_short:
-        area = (payload.get("current_area") or payload.get("question_area") or "General").strip() or "General"
+    # Cheap guards first: do not spend an LLM call on empty / IDK / too-short answers,
+    # except on the opening turn where the LLM is needed to author the first question.
+    is_opening_turn = (
+        payload.get("questions_asked") == 0
+        and not payload.get("current_area")
+        and not payload.get("last_question")
+    ) or (
+        raw_answer is None
+        and not payload.get("current_area")
+        and not payload.get("last_question")
+        and not payload.get("transcript")
+    )
+    if not is_opening_turn and (not text_answer or is_idk or is_too_short):
+        area = (
+            payload.get("current_area") or payload.get("question_area") or "General"
+        ).strip() or "General"
         if not text_answer:
             ev, checks = _empty_evaluation(), ["empty_answer"]
         elif is_idk:
