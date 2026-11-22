@@ -99,6 +99,8 @@ Hard rules:
    already in conversation / vault for that item). Then bridge naturally, e.g.
    "You've covered a lot on X — shall we look at your Y next?" using
    suggested_next_topics when helpful. Never silently replace the topic.
+   If the candidate (or you) already moved to a new subject, do NOT return to the
+   abandoned topic on the next turn — honor the latest focus and any choice they pick.
 6. Adapt to background (Commerce → business/analytics; Physics → research/analytical;
    CS → projects/skills only if the resume supports it). Do not force DSA/programming
    on non-tech backgrounds unless they ask.
@@ -668,11 +670,112 @@ def _message_signals(message: str) -> dict[str, bool]:
         or (len(words) >= 28 and any(c in t for c in ("because", "for example", "i used", "we built"))),
         "subject_shift": bool(
             re.search(
-                r"\b(actually|instead|can we talk about|let'?s talk about)\b",
+                r"\b(actually|instead|can we talk about|let'?s talk about|"
+                r"let us talk about|can we discuss|let'?s discuss|let us discuss|"
+                r"want to discuss|i want to discuss|i(?:'d| would) like to discuss|"
+                r"go to|move to|switch to|focus on|we(?:'ll| will) go)\b",
                 t,
             )
         ),
     }
+
+
+def _last_ask_targets_locked_topic(coach_context: dict | None) -> bool:
+    """False when the latest assistant ask has already left the locked topic."""
+    ctx = coach_context or {}
+    topic = str(ctx.get("current_topic") or "").strip().lower()
+    last_q = str(ctx.get("last_assistant_question") or "").strip().lower()
+    if not topic or not last_q:
+        return bool(topic)
+    if topic in last_q:
+        return True
+    # Short topic tokens (e.g. "sql") also match inside larger words carefully.
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(topic)}(?![a-z0-9])", last_q))
+
+
+def _last_ask_awaits_selection(last_q: str) -> bool:
+    """True when the last ask offered alternatives the candidate can pick briefly."""
+    low = (last_q or "").lower()
+    if not low or "?" not in low:
+        return False
+    if " or " not in low:
+        return False
+    return any(
+        p in low
+        for p in (
+            "would you",
+            "prefer",
+            "which",
+            "do you want",
+            "should we",
+            "pick",
+            "choose",
+        )
+    )
+
+
+def _already_clarified_locked_topic(coach_context: dict | None) -> bool:
+    """True when we already asked for a concrete detail on the locked topic."""
+    ctx = coach_context or {}
+    topic = str(ctx.get("current_topic") or "").strip().lower()
+    if not topic:
+        return False
+    try:
+        if int(ctx.get("clarify_count") or 0) >= 1:
+            return True
+    except (TypeError, ValueError):
+        pass
+    last_q = str(ctx.get("last_assistant_question") or "").lower()
+    if "concrete detail" in last_q and topic in last_q:
+        return True
+    clarify_fp = _question_fingerprint(
+        f"Could you add one concrete detail about {topic} — a tool, a task, or an outcome?"
+    )
+    asked = [str(a).lower() for a in (ctx.get("asked_questions") or []) if a]
+    return bool(clarify_fp and any(clarify_fp[:48] in a or a[:48] in clarify_fp for a in asked))
+
+
+def extract_focus_shift_from_reply(reply: str, current_topic: str | None = None) -> str | None:
+    """If the assistant pivoted away from the locked topic, return the new focus label."""
+    text = (reply or "").strip()
+    if not text:
+        return None
+    current = (current_topic or "").strip().lower()
+    low = text.lower()
+    if current and current in low and not any(
+        p in low
+        for p in (
+            "move the focus",
+            "switch",
+            "instead",
+            "would you prefer",
+            "another area",
+            "different topic",
+        )
+    ):
+        return None
+    patterns = (
+        r"(?i)(?:move(?:\s+the)?\s+focus\s+to|switch(?:ing)?\s+(?:the\s+focus\s+)?to|"
+        r"focus(?:ing)?\s+on|talk(?:ing)?\s+about|discuss(?:ing)?)\s+"
+        r"([A-Za-z][A-Za-z0-9+.# /\-]{1,48})",
+        r"(?i)would you prefer\s+(?:to\s+)?(?:practice\s+|discuss\s+|explore\s+)?"
+        r"(.{3,60}?)\s+or\s+",
+    )
+    for pat in patterns:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        label = " ".join(m.group(1).split()).strip(" .,;:!?\"'")
+        # Prefer a compact noun phrase (first ~6 words).
+        parts = label.split()
+        if len(parts) > 6:
+            label = " ".join(parts[:6])
+        if len(label) < 2:
+            continue
+        if current and label.lower() == current:
+            continue
+        return label[:80]
+    return None
 
 
 def decide_conversational_action(
@@ -692,11 +795,14 @@ def decide_conversational_action(
         mode_l = "guided"
     locked = bool(ctx.get("focus_locked") and ctx.get("current_topic"))
     intent = str(ctx.get("last_question_intent") or "")
+    last_q = str(ctx.get("last_assistant_question") or "")
     try:
         streak = int(ctx.get("uncertainty_streak") or 0)
     except (TypeError, ValueError):
         streak = 0
     answers_n = len(ctx.get("answers_received") or [])
+    ask_on_locked = _last_ask_targets_locked_topic(ctx)
+    awaits_selection = _last_ask_awaits_selection(last_q)
 
     if sig["pause"]:
         return {"action": "pause", "reason": "candidate_requested_pause"}
@@ -706,7 +812,9 @@ def decide_conversational_action(
         return {"action": "change_topic", "reason": "explicit_move_on_or_no_experience"}
 
     if sig["subject_shift"] and locked and not sig["detailed"]:
-        return {"action": "change_topic", "reason": "subject_shift"}
+        # Named redirect (including "I don't know, go to X") → let the mentor path
+        # honor the new subject instead of simplifying the old lock.
+        return {"action": "advance", "reason": "subject_shift"}
 
     if sig["hint"]:
         if mode_l == "strict":
@@ -717,12 +825,16 @@ def decide_conversational_action(
         return {"action": "simplify", "reason": "question_not_understood"}
 
     if sig["uncertainty"]:
+        # Uncertainty + redirect already handled above via subject_shift → advance.
         if locked and streak >= 2:
             return {"action": "change_topic", "reason": "repeated_uncertainty"}
-        if locked and intent in ("explore", "detail", "other", ""):
+        if locked and ask_on_locked and intent in ("explore", "detail", "other", ""):
             return {"action": "simplify", "reason": "uncertain_on_locked_topic"}
-        if locked:
+        if locked and ask_on_locked:
             return {"action": "simplify", "reason": "uncertain_on_locked_topic"}
+        if locked and not ask_on_locked:
+            # Assistant already left this topic — do not revive it.
+            return {"action": "advance", "reason": "uncertain_after_topic_pivot"}
         return {"action": "change_topic", "reason": "uncertain_without_focus"}
 
     if sig["deepen"] and locked:
@@ -735,8 +847,13 @@ def decide_conversational_action(
         return {"action": "follow_up", "reason": "partial_answer"}
 
     if locked and answers_n >= 1 and len(_norm_msg(message).split()) <= 3:
-        # Tiny non-ack replies after an open ask → clarify once.
-        if intent in ("explore", "detail"):
+        # Answering an offered choice (A or B) must not revive a stale locked topic.
+        if awaits_selection or not ask_on_locked:
+            return {"action": "advance", "reason": "selection_or_pivoted_ask"}
+        # Tiny non-ack replies after an open ask on the SAME topic → clarify at most once.
+        if intent in ("explore", "detail") and ask_on_locked:
+            if _already_clarified_locked_topic(ctx):
+                return {"action": "advance", "reason": "clarify_already_asked"}
             return {"action": "clarify", "reason": "too_brief_for_open_ask"}
 
     return {"action": "advance", "reason": "default_continue"}
@@ -814,10 +931,18 @@ def render_coach_action_reply(
         )
     if action == "clarify":
         if topic:
-            return (
+            candidate = (
                 f"Could you add one concrete detail about {topic} — "
                 "a tool, a task, or an outcome?"
             )
+            # Never re-emit the same clarify fingerprint.
+            asked = [str(a) for a in (ctx.get("asked_questions") or []) if a]
+            if _probe_already_asked(candidate, asked, last_q):
+                return (
+                    continue_topic_reply(ctx, vault_summary)
+                    or _simpler_skill_or_topic_ask(topic, kind, last_q)
+                )
+            return candidate
         return "Could you share one concrete detail so I know where to go next?"
     if action == "follow_up":
         return (
