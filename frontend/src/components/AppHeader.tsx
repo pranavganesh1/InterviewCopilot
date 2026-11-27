@@ -91,27 +91,6 @@ export default function AppHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
-          <button
-            type="button"
-            className="grid h-9 w-9 place-items-center rounded-full text-ink-soft hover:bg-page"
-            aria-label="Notifications"
-            title="Notifications"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9"
-              />
-            </svg>
-          </button>
-
           <div className="relative" ref={menuRef}>
             <button
               type="button"

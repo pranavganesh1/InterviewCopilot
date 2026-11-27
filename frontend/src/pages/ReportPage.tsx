@@ -43,7 +43,7 @@ function StatusShell({
           className="mx-auto mb-4 h-1.5 w-24 overflow-hidden rounded-full bg-accent-soft"
           aria-hidden
         >
-          <div className="h-full w-1/2 animate-pulse rounded-full bg-accent-soft0" />
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-accent" />
         </div>
       )}
       <p className="text-base font-semibold text-stone-900">{title}</p>

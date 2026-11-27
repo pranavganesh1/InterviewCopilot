@@ -708,6 +708,20 @@ export default function OnboardingPage() {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
+  useEffect(() => {
+    const timers = toastTimers.current;
+    return () => {
+      if (countdownTimerRef.current) {
+        window.clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
+      for (const timer of timers.values()) {
+        window.clearTimeout(timer);
+      }
+      timers.clear();
+    };
+  }, []);
+
   const suggestedProjectsRef = useRef<string[]>([]);
   const suggestedSkillsRef = useRef<string[]>([]);
   useEffect(() => {

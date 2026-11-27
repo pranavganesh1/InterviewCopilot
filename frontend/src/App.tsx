@@ -54,14 +54,22 @@ export default function App() {
               : "mx-auto flex min-h-0 w-full min-w-0 max-w-6xl flex-1 flex-col overflow-hidden px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4 sm:py-4"
           }
         >
-          <Routes>
-            <Route path="/onboarding" element={<OnboardingPage />} />
-            <Route
-              path="/tracks/:trackId/interview/:sessionId"
-              element={<InterviewPage />}
-            />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense
+            fallback={
+              <div className="grid flex-1 place-items-center text-sm text-ink-soft">
+                Loading…
+              </div>
+            }
+          >
+            <Routes>
+              <Route path="/onboarding" element={<OnboardingPage />} />
+              <Route
+                path="/tracks/:trackId/interview/:sessionId"
+                element={<InterviewPage />}
+              />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
     );
