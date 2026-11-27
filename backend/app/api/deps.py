@@ -17,9 +17,10 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         user_id = decode_token(token, "access")
-    except jwt.PyJWTError:
+        uid = uuid.UUID(user_id)
+    except (jwt.PyJWTError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid or expired token") from None
-    user = await db.get(User, uuid.UUID(user_id))
+    user = await db.get(User, uid)
     if user is None:
         raise HTTPException(status_code=401, detail="Unknown user")
     return user
@@ -29,8 +30,6 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     """403 unless the signed-in email is in ADMIN_EMAILS (M11 admin portal)."""
     allowed = get_settings().admin_email_set
     if user.email.lower() not in allowed:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 

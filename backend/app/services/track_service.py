@@ -188,11 +188,6 @@ async def reauthor_brief(db: AsyncSession, user: User, track_id: uuid.UUID) -> d
     return {"track": _track_dict(track)}
 
 
-class UnfinishedInterviewError(Exception):
-    def __init__(self, session_id: uuid.UUID):
-        self.session_id = session_id
-
-
 async def list_tracks(
     db: AsyncSession, user: User, *, include_archived: bool = False
 ) -> list[dict]:

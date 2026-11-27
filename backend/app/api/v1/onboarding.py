@@ -1,10 +1,11 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_request_mongo
 from app.core.logging import get_logger
 from app.db.sqlalchemy import get_db
 from app.gateway.llm import LLMGatewayError, gateway_error_detail
@@ -117,13 +118,14 @@ async def chat(
     request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
-    await onboarding_service.ensure_review_opener(db, request.app.state.mongo_db, user)
-    await onboarding_service.ensure_goals_intro(db, request.app.state.mongo_db, user)
+    await onboarding_service.ensure_review_opener(db, mongo, user)
+    await onboarding_service.ensure_goals_intro(db, mongo, user)
     try:
         return await onboarding_service.chat(
             db,
-            request.app.state.mongo_db,
+            mongo,
             user,
             body.message,
             request_id=request.headers.get("x-request-id"),
@@ -180,13 +182,14 @@ async def conversation_starter(
     request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     """Kick off a focused onboarding conversation from a starter card."""
-    await onboarding_service.ensure_review_opener(db, request.app.state.mongo_db, user)
+    await onboarding_service.ensure_review_opener(db, mongo, user)
     try:
         return await onboarding_service.start_conversation_starter(
             db,
-            request.app.state.mongo_db,
+            mongo,
             user,
             body.starter_id,
             already_finished=user.onboarding_completed_at is not None,
@@ -201,36 +204,34 @@ async def conversation_starter(
 
 @router.get("/state")
 async def state(
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
-    return await _state_payload(request.app.state.mongo_db, db, user)
+    return await _state_payload(mongo, db, user)
 
 
 @router.get("/conversations")
 async def list_conversations(
-    request: Request,
     user: User = Depends(get_current_user),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     """List active + archived onboarding conversations for the authenticated user."""
-    rows = await conversation_store.list_conversation_summaries(
-        request.app.state.mongo_db, str(user.id)
-    )
+    rows = await conversation_store.list_conversation_summaries(mongo, str(user.id))
     return {"conversations": rows, "count": len(rows)}
 
 
 @router.post("/conversations")
 async def create_conversation(
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     """Start a New Chat — archives the current thread without deleting it."""
     from app.services.vault_service import build_verify_first_welcome
 
     started = await conversation_store.start_new_conversation(
-        request.app.state.mongo_db,
+        mongo,
         str(user.id),
         title="New chat",
         reason="new_chat",
@@ -238,7 +239,7 @@ async def create_conversation(
         reset_coach=True,
         coach_patch={"proceed_to_goals": False, "profile_verified": False},
     )
-    payload = await _state_payload(request.app.state.mongo_db, db, user)
+    payload = await _state_payload(mongo, db, user)
     return {**payload, "conversation_started": started}
 
 
@@ -249,29 +250,29 @@ class ActivateConversationRequest(BaseModel):
 @router.post("/conversations/activate")
 async def activate_conversation(
     body: ActivateConversationRequest,
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     """Switch the active onboarding conversation (owner-only)."""
     result = await conversation_store.activate_conversation(
-        request.app.state.mongo_db, str(user.id), body.conversation_id
+        mongo, str(user.id), body.conversation_id
     )
     if result is None:
         raise HTTPException(
             status_code=404,
             detail="Conversation not found for this account.",
         )
-    payload = await _state_payload(request.app.state.mongo_db, db, user)
+    payload = await _state_payload(mongo, db, user)
     return {**payload, "conversation_switched": result}
 
 
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(
     conversation_id: str,
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     """Permanently delete one onboarding conversation owned by this candidate.
 
@@ -281,15 +282,13 @@ async def delete_conversation(
     cid = (conversation_id or "").strip()
     if len(cid) < 8 or len(cid) > 80:
         raise HTTPException(status_code=404, detail="Conversation not found for this account.")
-    result = await conversation_store.delete_conversation(
-        request.app.state.mongo_db, str(user.id), cid
-    )
+    result = await conversation_store.delete_conversation(mongo, str(user.id), cid)
     if result is None:
         raise HTTPException(
             status_code=404,
             detail="Conversation not found for this account.",
         )
-    payload = await _state_payload(request.app.state.mongo_db, db, user)
+    payload = await _state_payload(mongo, db, user)
     return {
         **payload,
         "conversation_deleted": result,
@@ -304,27 +303,27 @@ class ProfileConfirmRequest(BaseModel):
 @router.post("/profile/confirm")
 async def confirm_profile(
     body: ProfileConfirmRequest,
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     """Candidate confirms vault/resume extraction before personalization (additive)."""
     uid = str(user.id)
     if body.confirmed:
         await conversation_store.merge_coach_context(
-            request.app.state.mongo_db,
+            mongo,
             uid,
             {"profile_verified": True, "proceed_to_goals": True},
         )
     else:
         await conversation_store.merge_coach_context(
-            request.app.state.mongo_db,
+            mongo,
             uid,
             {"profile_verified": False, "proceed_to_goals": False},
         )
     # Goals intro may seed only after verification.
-    await onboarding_service.ensure_goals_intro(db, request.app.state.mongo_db, user)
-    return await _state_payload(request.app.state.mongo_db, db, user)
+    await onboarding_service.ensure_goals_intro(db, mongo, user)
+    return await _state_payload(mongo, db, user)
 
 
 @router.post("/goals")
@@ -333,41 +332,46 @@ async def save_goals(
     request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     """Save interactive goal selections and return the next coach follow-up."""
-    return await onboarding_service.save_goals(
-        db,
-        request.app.state.mongo_db,
-        user,
-        body.model_dump(exclude_none=True),
-        already_finished=user.onboarding_completed_at is not None,
-        request_id=request.headers.get("x-request-id"),
-    )
+    try:
+        return await onboarding_service.save_goals(
+            db,
+            mongo,
+            user,
+            body.model_dump(exclude_none=True),
+            already_finished=user.onboarding_completed_at is not None,
+            request_id=request.headers.get("x-request-id"),
+        )
+    except LLMGatewayError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=gateway_error_detail(exc),
+        ) from exc
 
 
 @router.post("/goals/confirm")
 async def confirm_goals(
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
-    await onboarding_service.confirm_goals(request.app.state.mongo_db, user)
-    return await _state_payload(request.app.state.mongo_db, db, user)
+    await onboarding_service.confirm_goals(mongo, user)
+    return await _state_payload(mongo, db, user)
 
 
 @router.post("/complete")
 async def complete(
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     """Mark onboarding finished and return refreshed state (idempotent).
 
     Requires preparation goals (vault sections are optional).
     """
-    prefs = await conversation_store.get_preparation_preferences(
-        request.app.state.mongo_db, str(user.id)
-    )
+    prefs = await conversation_store.get_preparation_preferences(mongo, str(user.id))
     if user.onboarding_completed_at is None and not preferences_ready(prefs):
         if not prefs.get("interests"):
             raise HTTPException(
@@ -375,21 +379,17 @@ async def complete(
                 detail="Choose your interview preparation goals before starting.",
             )
         # Interests chosen but not confirmed — confirm now as part of Start Preparing.
-        await onboarding_service.confirm_goals(request.app.state.mongo_db, user)
+        await onboarding_service.confirm_goals(mongo, user)
     first_finish = user.onboarding_completed_at is None
     if first_finish:
         user.onboarding_completed_at = datetime.now(UTC)
         await db.commit()
         await db.refresh(user)
     # Personalized post-onboarding review + roadmap (idempotent refresh).
-    await onboarding_service.ensure_profile_review(
-        db, request.app.state.mongo_db, user, force=first_finish
-    )
-    payload = await _state_payload(request.app.state.mongo_db, db, user)
+    await onboarding_service.ensure_profile_review(db, mongo, user, force=first_finish)
+    payload = await _state_payload(mongo, db, user)
     # Offer the start-interview popup once on first finish (additive field).
-    if first_finish and not await conversation_store.get_start_offer_shown(
-        request.app.state.mongo_db, str(user.id)
-    ):
+    if first_finish and not await conversation_store.get_start_offer_shown(mongo, str(user.id)):
         seeds = payload.get("recommended_tracks") or []
         seed = seeds[0] if seeds else {}
         subject = (
@@ -402,45 +402,45 @@ async def complete(
             "track_type": (seed.get("track_type") if isinstance(seed, dict) else None) or "topic",
             "reason": "onboarding_finished",
         }
-        await conversation_store.mark_start_offer_shown(request.app.state.mongo_db, str(user.id))
+        await conversation_store.mark_start_offer_shown(mongo, str(user.id))
     return payload
 
 
 @router.get("/review")
 async def get_review(
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
-    return await onboarding_service.get_profile_review_payload(
-        db, request.app.state.mongo_db, user, ensure=True
-    )
+    return await onboarding_service.get_profile_review_payload(db, mongo, user, ensure=True)
 
 
 @router.patch("/review")
 async def patch_review(
     body: ReviewPatchRequest,
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     patch = body.model_dump(exclude_none=True)
     if "item_statuses" in patch:
         patch["item_statuses"] = [s.model_dump() for s in body.item_statuses or []]
-    return await onboarding_service.patch_profile_review(
-        db, request.app.state.mongo_db, user, patch
-    )
+    return await onboarding_service.patch_profile_review(db, mongo, user, patch)
 
 
 @router.post("/review/refresh")
 async def refresh_review(
-    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
-    return await onboarding_service.ensure_profile_review(
-        db, request.app.state.mongo_db, user, force=True
-    )
+    try:
+        return await onboarding_service.ensure_profile_review(db, mongo, user, force=True)
+    except LLMGatewayError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=gateway_error_detail(exc),
+        ) from exc
 
 
 @router.post("/review/start-recommended")
@@ -449,13 +449,20 @@ async def start_recommended(
     body: StartRecommendedRequest | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    mongo: AsyncIOMotorDatabase = Depends(get_request_mongo),
 ):
     payload = body.model_dump(exclude_none=True) if body else {}
-    return await onboarding_service.start_recommended_track(
-        db,
-        request.app.state.mongo_db,
-        user,
-        request_id=request.headers.get("x-request-id"),
-        subject=payload.get("subject"),
-        track_type=payload.get("track_type"),
-    )
+    try:
+        return await onboarding_service.start_recommended_track(
+            db,
+            mongo,
+            user,
+            request_id=request.headers.get("x-request-id"),
+            subject=payload.get("subject"),
+            track_type=payload.get("track_type"),
+        )
+    except LLMGatewayError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=gateway_error_detail(exc),
+        ) from exc

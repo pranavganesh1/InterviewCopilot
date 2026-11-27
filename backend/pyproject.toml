@@ -27,15 +27,14 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
-    "httpx>=0.28",
     "ruff>=0.9",
     "pre-commit>=4.0",
     "mongomock-motor>=0.0.35",
-    "aiosqlite>=0.20",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = [
     "live: hits the real LLM gateway (skip unless RUN_LIVE_EVAL=1)",

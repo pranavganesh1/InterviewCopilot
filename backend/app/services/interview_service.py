@@ -104,6 +104,9 @@ async def _track_history(db, user_id, track_id, exclude_session_id=None) -> list
     return [row for row in rows if id(row) in kept]
 
 
+_background_tasks: set[asyncio.Task] = set()
+
+
 def _maybe_topup(brief: dict, history: list[dict], track_id) -> None:
     if not isinstance(brief, dict) or not brief.get("pool"):
         return
@@ -113,7 +116,9 @@ def _maybe_topup(brief: dict, history: list[dict], track_id) -> None:
     if not needs_pool_topup(unseen, get_settings().interview_max_turns):
         return
     try:
-        asyncio.get_running_loop().create_task(_run_pool_topup(track_id))
+        task = asyncio.get_running_loop().create_task(_run_pool_topup(track_id))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
     except RuntimeError:
         return
 

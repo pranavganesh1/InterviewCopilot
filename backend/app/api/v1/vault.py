@@ -225,7 +225,7 @@ async def upload_resume(
             "conversation_id": conversation_id,
             "conversation_started": welcome_seeded,
         }
-    except (ResumeUploadError, LLMGatewayError, Exception) as exc:
+    except Exception as exc:
         _resume_http_error(exc, request_id=request_id, user_id=str(user.id))
 
 
@@ -242,7 +242,7 @@ async def reprocess_resume(
         result = await reprocess_latest_resume(db, s3, user, request_id=request_id)
         await _refresh_review_after_vault_change(request, db, user)
         return result
-    except (ResumeUploadError, LLMGatewayError, Exception) as exc:
+    except Exception as exc:
         _resume_http_error(exc, request_id=request_id, user_id=str(user.id))
 
 
